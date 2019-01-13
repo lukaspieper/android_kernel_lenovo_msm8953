@@ -1,0 +1,347 @@
+/*
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8953-pinctrl.dtsi"
+#include "msm8953-camera-sensor-qrd.dtsi"
+
+&soc {
+	gpio_keys {
+		compatible = "gpio-keys";
+		input-name = "gpio-keys";
+		pinctrl-names = "tlmm_gpio_key_active","tlmm_gpio_key_suspend";
+		pinctrl-0 = <&gpio_key_active>;
+		pinctrl-1 = <&gpio_key_suspend>;
+
+		vol_up {
+			label = "volume_up";
+			gpios = <&tlmm 85 0x1>;
+			linux,input-type = <1>;
+			linux,code = <115>;
+			debounce-interval = <15>;
+		};
+	};
+
+
+	goodix_fp {
+		compatible = "goodix,fingerprint";
+		spi-max-frequency = <1000000>;
+		input-device-name = "gf3206";
+		interrupt-parent = <&tlmm>;
+		interrupts = <48 0>;
+		goodix,gpio_reset    = <&tlmm 140 0>;
+		goodix,gpio_irq      = <&tlmm 48 0>;
+			
+		clock-names = "iface_clk", "core_clk";
+		clocks = <&clock_gcc clk_gcc_blsp1_ahb_clk>,
+		<&clock_gcc clk_gcc_blsp1_qup1_spi_apps_clk>;
+
+		pinctrl-names = "goodixfp_spi_active",
+			"goodixfp_reset_reset",
+			"goodixfp_reset_active",
+			"goodixfp_irq_active";
+
+		pinctrl-0 = <&goodix_spi_active>;
+		pinctrl-1 = <&goodix_reset_reset>;
+		pinctrl-2 = <&goodix_reset_active>;
+		pinctrl-3 = <&goodix_irq_active>;
+	};
+
+	i2c@78b7000 { /* BLSP1 QUP3 */
+		status = "okay";
+		goodix_ts@5d {
+			compatible = "goodix,gt9xx";
+			reg = <0x5d>;
+			interrupt-parent = <&tlmm>;
+			interrupts = <65 0x2008>;
+			vdd_ana-supply = <&pm8953_l10>;
+			vcc_i2c-supply = <&pm8953_l6>;
+			goodix,rst-gpio = <&tlmm 64 0x00>;
+			goodix,irq-gpio = <&tlmm 65 0x00>;
+			pinctrl-names = "pmx_ts_active",
+						"pmx_ts_suspend",
+						"pmx_ts_release";
+			pinctrl-0 = <&ts_int_active &ts_reset_active>;
+			pinctrl-1 = <&ts_int_suspend &ts_reset_suspend>;
+			pinctrl-2 = <&ts_release>;
+			goodix,cfg-group0 = [
+                        44 B0 04 80 07 0A 34 12 11 C4 32
+			0D 55 3C 3A 14 00 00 1F AA 11 11
+			00 17 19 1C 14 95 35 FF 33 35 36
+			11 2A 65 00 20 43 1C 15 15 16 9C
+			83 03 37 37 2B 08 1B 28 5A 94 C5
+			F3 23 28 19 04 BE 2B 60 B3 33 AA
+			AD 3C 88 AC 46 20 AB 53 0C AB 64
+			32 78 46 4A 50 30 18 30 12 33 A0
+			22 43 0A 73 43 05 0F 00 00 04 AA
+			68 88 56 65 99 1E 02 28 1E 40 00
+			2D 19 1D 1C 1B 1A 19 18 17 16 15
+			14 13 12 11 10 0F 0E 0D 0C 0B 0A
+			09 08 07 06 05 04 03 02 01 00 2A
+			29 28 27 26 25 24 23 22 21 20 1F
+			1E 1D 1C 1B 19 18 17 16 15 14 13
+			12 11 10 0F 0E 0D 0C 0B 0A 09 08
+			07 06 05 04 03 02 01 00 86 01
+			];
+			goodix,cfg-group2 = [
+                        44 B0 04 80 07 0A 34 12 11 C4 32
+			0D 55 3C 3A 14 00 00 1F AA 11 11
+			00 17 19 1C 14 95 35 FF 33 35 36
+			11 2A 65 00 20 43 1C 15 15 16 9C
+			83 03 37 37 2B 08 1B 28 5A 94 C5
+			F3 23 28 19 04 98 2B 60 8C 33 AA
+			85 3C 88 84 46 20 83 53 0C 83 64
+			32 78 46 4A 50 30 18 30 12 33 A0
+			22 43 0A 73 43 05 0F 00 00 04 AA
+			68 88 56 65 99 1E 02 28 1E 40 00
+			2D 19 1D 1C 1B 1A 19 18 17 16 15
+			14 13 12 11 10 0F 0E 0D 0C 0B 0A
+			09 08 07 06 05 04 03 02 01 00 2A
+			29 28 27 26 25 24 23 22 21 20 1F
+			1E 1D 1C 1B 19 18 17 16 15 14 13
+			12 11 10 0F 0E 0D 0C 0B 0A 09 08
+			07 06 05 04 03 02 01 00 73 01
+			];
+			goodix,cfg-group7 = [
+			53 B0 04 80 07 0A F4 10 11 C8 3C
+			0D 55 3C 3A 14 00 00 09 AA 22 22
+			00 17 19 1C 14 95 35 FF 4B 4D 36
+			11 3A 00 00 42 43 1C 18 16 1E 90
+			82 13 64 64 28 4A 0A 32 5A 94 C5
+			F5 23 28 1E 04 82 35 00 85 3B AC
+			86 43 00 88 4B 00 8F 55 0C 8F 00
+			00 00 00 00 00 00 00 00 00 00 00
+			23 0A A6 52 43 25 07 00 00 04 44
+			00 00 88 A5 99 23 02 00 1E 40 00
+			41 1E 1D 1C 1B 1A 19 18 17 16 15
+			14 13 12 11 10 0F 0E 0D 0C 0B 0A
+			09 08 07 06 05 04 03 02 01 00 2A
+			29 28 27 26 25 24 23 22 21 20 1F
+			1E 1D 1C 1B 19 18 17 16 15 14 13
+			12 11 10 0F 0E 0D 0C 0B 0A 09 08
+			07 06 05 04 03 02 01 00 AB 01
+			];
+		};
+
+	};
+
+};
+
+&wled {
+	qcom,cons-sync-write-delay-us = <1000>;
+};
+
+
+/ {
+	qrd_batterydata: qcom,battery-data {
+		qcom,batt-id-range-pct = <15>;
+		//#include "batterydata-qrd-sku1-4v4-2800mah.dtsi"
+		#include "Huaqin_A609x_7000mAh_averaged_MasterSlave.dtsi"  //合入一供电池高通建模数据
+                #include "Huaqin_A609x_7000mAh_averaged_SecondSlave.dtsi"  //合入二供电池高通建模数据
+	};
+};
+
+&pm8953_typec {
+	ss-mux-supply = <&pm8953_l6>;
+	qcom,ssmux-gpio = <&tlmm 139 GPIO_ACTIVE_LOW>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&typec_ssmux_config>;
+};
+
+&pmi8950_charger {
+	qcom,battery-data = <&qrd_batterydata>;
+	qcom,float-voltage-mv = <4400>;
+	qcom,chg-led-sw-controls;
+	qcom,chg-led-support;
+	qcom,external-typec;
+	qcom,typec-psy-name = "typec";
+	qcom,thermal-mitigation = <3000 2500 2000 2000 2000 2000 2000>;
+	status = "okay";
+};
+
+&pmi8950_fg {
+	qcom,battery-data = <&qrd_batterydata>;
+	qcom,thermal-coefficients = [DA 86 F0 50 08 3C];
+	qcom,cold-bat-decidegc = <(-20)>;	//低于-2度是cold、0-15是cool、15-45是normal、45-52是warm、超过52是hot.
+	qcom,cool-bat-decidegc = <150>;
+	qcom,warm-bat-decidegc = <450>;
+	qcom,hot-bat-decidegc = <520>;
+	qcom,cold-hot-jeita-hysteresis = <15 45>;
+	qcom,bad-battery-detection-enable;
+	qcom,hold-soc-while-full;
+};
+
+&blsp1_uart0 {
+	status = "ok";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart_console_active>;
+};
+
+&sdhc_1 {
+	/* device core power supply */
+	vdd-supply = <&pm8953_l8>;
+	qcom,vdd-voltage-level = <2900000 2900000>;
+	qcom,vdd-current-level = <200 570000>;
+
+	/* device communication power supply */
+	vdd-io-supply = <&pm8953_l5>;
+	qcom,vdd-io-always-on;
+	qcom,vdd-io-lpm-sup;
+	qcom,vdd-io-voltage-level = <1800000 1800000>;
+	qcom,vdd-io-current-level = <200 325000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc1_clk_on &sdc1_cmd_on &sdc1_data_on &sdc1_rclk_on>;
+	pinctrl-1 = <&sdc1_clk_off &sdc1_cmd_off &sdc1_data_off &sdc1_rclk_off>;
+
+	qcom,clk-rates = <400000 20000000 25000000 50000000 100000000 192000000
+								384000000>;
+	qcom,nonremovable;
+	qcom,bus-speed-mode = "HS400_1p8v", "HS200_1p8v", "DDR_1p8v";
+
+	status = "ok";
+};
+
+&sdhc_2 {
+	/* device core power supply */
+	vdd-supply = <&pm8953_l11>;
+	qcom,vdd-voltage-level = <2950000 2950000>;
+	qcom,vdd-current-level = <15000 800000>;
+
+	/* device communication power supply */
+	vdd-io-supply = <&pm8953_l12>;
+	qcom,vdd-io-voltage-level = <1800000 2950000>;
+	qcom,vdd-io-current-level = <200 22000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc2_clk_on &sdc2_cmd_on &sdc2_data_on &sdc2_cd_on>;
+	pinctrl-1 = <&sdc2_clk_off &sdc2_cmd_off &sdc2_data_off &sdc2_cd_off>;
+
+	#address-cells = <0>;
+	interrupt-parent = <&sdhc_2>;
+	interrupts = <0 1 2>;
+	#interrupt-cells = <1>;
+	interrupt-map-mask = <0xffffffff>;
+	interrupt-map = <0 &intc 0 125 0
+		1 &intc 0 221 0
+		2 &tlmm 133 0>;
+	interrupt-names = "hc_irq", "pwr_irq", "status_irq";
+	cd-gpios = <&tlmm 133 0x0>;
+
+	qcom,clk-rates = <400000 20000000 25000000 50000000 100000000
+								200000000>;
+	qcom,bus-speed-mode = "SDR12", "SDR25", "SDR50", "DDR50", "SDR104";
+
+	status = "ok";
+};
+
+&i2c_5 { /* BLSP2 QUP1 (NFC) */
+	nq@28 {
+		compatible = "qcom,nq-nci";
+		reg = <0x28>;
+		qcom,nq-irq = <&tlmm 17 0x00>;
+		qcom,nq-ven = <&tlmm 16 0x00>;
+		qcom,nq-firm = <&tlmm 62 0x00>;
+		qcom,nq-clkreq = <&pm8953_gpios 2 0x00>;
+		interrupt-parent = <&tlmm>;
+		qcom,clk-src = "BBCLK2";
+		interrupts = <17 0>;
+		interrupt-names = "nfc_irq";
+		pinctrl-names = "nfc_active", "nfc_suspend";
+		pinctrl-0 = <&nfc_int_active &nfc_disable_active>;
+		pinctrl-1 = <&nfc_int_suspend &nfc_disable_suspend>;
+		clocks = <&clock_gcc clk_bb_clk2_pin>;
+		clock-names = "ref_clk";
+	};
+
+	fusb30x@22 {						// I2C Slave Address - Always @22
+		compatible = "fairchild,fusb302";		// String must match driver's .compatible string exactly
+		reg = <0x22>;					// I2C Slave address
+		status = "okay";				// The device is enabled, comment out or delete to disable
+		//status = "disabled";				// Uncomment to disable the device from being loaded at boot
+		//fairchild,vbus5v	= <&msm_gpio 39 0>;	// VBus 5V GPIO pin - <&gpio_bus pin# 0>. Do not change "fairchild,vbus5v"
+		//fairchild,vbusOther	= <&msm_gpio 40 0>;	// VBus Other GPIO pin - optional, but if used, name "fairchild,vbusOther" must not change.
+		//fairchild,int_n	= <&pm8994_gpios 4 0>;	// INT_N GPIO pin - <&gpio_bus pin# 0>. Do not change "fairchild,int_n"
+		vdd-supply		= <&pm8953_l15>;
+		qcom,vdd-always-on;
+		//qcom,vdd-voltage-level = <3300000 3300000>;
+		//qcom,vdd-current-level = <15000 50000>;
+		vcc_i2c-supply		= <&pm8953_l6>;
+		//qcom,vcc_i2c-voltage-level = <1800000 1800000>;
+		//qcom,vcc_i2c-current-level = <200 22000>;
+		interrupt-parent	= <&tlmm>;
+		interrupts		= <46 0x00>;
+		fairchild,int_n		= <&tlmm 46 0>;		// INT_N GPIO pin - <&gpio_bus pin# 0>. Do not change "fairchild,int_n"
+                qcom,usb_id		= <&pm8953_gpios 8 0x00>;
+		qcom,vconn_en		= <&tlmm 87 0>;
+	};
+};
+
+&i2c_2  {
+	couloMeter@55 {
+	              compatible = "qcom,couloMeter";
+		      reg = <0x55>;
+		};
+};
+
+
+&pm8953_gpios {
+	/* GPIO 2 (NFC_CLK_REQ) */
+	gpio@c100 {
+		qcom,mode = <0>;
+		qcom,output-type = <0>;
+		qcom,pull = <0>;
+		qcom,vin-sel = <2>;
+		qcom,out-strength = <3>;
+		qcom,src-sel = <0>;
+		qcom,master-en = <1>;
+		status = "okay";
+	};
+
+	/* GPIO 8 (USB_ID) */
+	gpio@c700 {
+		qcom,mode = <1>;		// QPNP_PIN_MODE_DIG_OUT = 1
+		qcom,output-type = <0>;		// QPNP_PIN_OUT_BUF_CMOS = 0
+		qcom,pull = <0>;		// QPNP_PIN_PULL_UP_30 = 0 (uA)
+		qcom,vin-sel = <2>;		// QPNP_PIN_VIN2 = 2
+		qcom,out-strength = <3>;	// QPNP_PIN_OUT_STRENGTH_IGH  = 3
+		qcom,src-sel = <0>;		// QPNP_PIN_SEL_FUNC_CONSTANT = 0
+		qcom,master-en = <1>;		// 1 – Enables features within the pin block based on configuration
+		status = "okay";
+	};
+};
+
+&i2c_3 {
+	status = "ok";
+};
+
+
+&led_flash0{
+	qcom,flash-source = <&pmi8950_flash0>;
+	qcom,torch-source = <&pmi8950_torch0>;
+};
+
+&pm8953_vadc {
+	/delete-node/ chan@13;
+};
+
+&sdc2_cmd_on {
+	config {
+		drive-strength=<12>;
+	};
+};
+
+&sdc2_data_on {
+	config {
+		drive-strength=<12>;
+	};
+};
