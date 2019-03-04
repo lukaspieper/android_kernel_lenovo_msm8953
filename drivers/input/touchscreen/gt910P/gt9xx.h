@@ -49,7 +49,9 @@
 extern int g_chargerState;
 //***************************PART1:ON/OFF define*******************************
 #define GTP_CUSTOM_CFG        1	   
-#define GTP_CHANGE_X2Y        0	   //swap x y
+#define GTP_CHANGE_X2Y        1	   //swap x y
+#define GTP_INVERT_X          0	   //invert x
+#define GTP_INVERT_Y          1	   //invert y
 #define GTP_DRIVER_SEND_CFG   1	   //driver send config
 #define GTP_HAVE_TOUCH_KEY    1
 #define GTP_POWER_CTRL_SLEEP  0    //power off when suspend
