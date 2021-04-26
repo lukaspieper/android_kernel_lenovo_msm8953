@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -90,6 +90,8 @@ htt_t2h_mac_addr_deswizzle(u_int8_t *tgt_mac_addr, u_int8_t *buffer)
 
 #if defined(CONFIG_HL_SUPPORT)
 #define HTT_RX_FRAG_SET_LAST_MSDU(pdev, msg) /* no-op */
+#define HTT_FAIL_NOTIFY_BREAK_CHECK(status) \
+	((status) == htt_tx_status_fail_notify)
 #else
 static void HTT_RX_FRAG_SET_LAST_MSDU(
     struct htt_pdev_t *pdev, adf_nbuf_t msg)
@@ -135,6 +137,8 @@ static void HTT_RX_FRAG_SET_LAST_MSDU(
     rx_desc->msdu_end.last_msdu = 1;
     adf_nbuf_map(pdev->osdev, msdu, ADF_OS_DMA_FROM_DEVICE);
 }
+
+#define HTT_FAIL_NOTIFY_BREAK_CHECK(status)  0
 #endif /* CONFIG_HL_SUPPORT */
 
 #define MAX_TARGET_TX_CREDIT    204800
@@ -371,11 +375,10 @@ htt_t2h_lp_msg_handler(void *context, adf_nbuf_t htt_t2h_msg )
 #if TXRX_STATS_LEVEL != TXRX_STATS_LEVEL_OFF
     case HTT_T2H_MSG_TYPE_STATS_CONF:
         {
-            u_int64_t cookie;
+            u_int8_t cookie;
             u_int8_t *stats_info_list;
 
             cookie = *(msg_word + 1);
-            cookie |= ((u_int64_t) (*(msg_word + 2))) << 32;
 
             stats_info_list = (u_int8_t *) (msg_word + 3);
             htc_pm_runtime_put(pdev->htc_pdev);
@@ -388,7 +391,13 @@ htt_t2h_lp_msg_handler(void *context, adf_nbuf_t htt_t2h_msg )
         {
             u_int32_t *pl_hdr;
             u_int32_t log_type;
+            uint32_t len = adf_nbuf_len(htt_t2h_msg);
+            struct ol_fw_data pl_fw_data;
+
             pl_hdr = (msg_word + 1);
+            pl_fw_data.data = pl_hdr;
+            pl_fw_data.len = len - sizeof(*msg_word);
+
             log_type = (*(pl_hdr + 1) & ATH_PKTLOG_HDR_LOG_TYPE_MASK) >>
                                             ATH_PKTLOG_HDR_LOG_TYPE_SHIFT;
             if (log_type == PKTLOG_TYPE_TX_CTRL ||
@@ -396,14 +405,14 @@ htt_t2h_lp_msg_handler(void *context, adf_nbuf_t htt_t2h_msg )
                (log_type) == PKTLOG_TYPE_TX_MSDU_ID ||
                (log_type) == PKTLOG_TYPE_TX_FRM_HDR ||
                (log_type) == PKTLOG_TYPE_TX_VIRT_ADDR) {
-                wdi_event_handler(WDI_EVENT_TX_STATUS, pdev->txrx_pdev, pl_hdr);
+                wdi_event_handler(WDI_EVENT_TX_STATUS, pdev->txrx_pdev, &pl_fw_data);
             } else if ((log_type) == PKTLOG_TYPE_RC_FIND) {
-                wdi_event_handler(WDI_EVENT_RATE_FIND, pdev->txrx_pdev, pl_hdr);
+                wdi_event_handler(WDI_EVENT_RATE_FIND, pdev->txrx_pdev, &pl_fw_data);
             } else if ((log_type) == PKTLOG_TYPE_RC_UPDATE) {
                 wdi_event_handler(
-                    WDI_EVENT_RATE_UPDATE, pdev->txrx_pdev, pl_hdr);
+                    WDI_EVENT_RATE_UPDATE, pdev->txrx_pdev, &pl_fw_data);
             } else if ((log_type) == PKTLOG_TYPE_RX_STAT) {
-                wdi_event_handler(WDI_EVENT_RX_DESC, pdev->txrx_pdev, pl_hdr);
+                wdi_event_handler(WDI_EVENT_RX_DESC, pdev->txrx_pdev, &pl_fw_data);
             }
             break;
         }
@@ -413,6 +422,7 @@ htt_t2h_lp_msg_handler(void *context, adf_nbuf_t htt_t2h_msg )
         u_int32_t htt_credit_delta_abs;
         int32_t htt_credit_delta;
         int sign, old_credit;
+        int delta2 = 0;
 
         htt_credit_delta_abs = HTT_TX_CREDIT_DELTA_ABS_GET(*msg_word);
         sign = HTT_TX_CREDIT_SIGN_BIT_GET(*msg_word) ? -1 : 1;
@@ -435,6 +445,39 @@ htt_t2h_lp_msg_handler(void *context, adf_nbuf_t htt_t2h_msg )
             adf_os_atomic_add(htt_credit_delta,
                               &pdev->htt_tx_credit.target_delta);
             htt_credit_delta = htt_tx_credit_update(pdev);
+
+
+            if (htt_credit_delta >= 0) {
+                if ((adf_os_atomic_read(&pdev->txrx_pdev->target_tx_credit) +
+                    htt_credit_delta) < HTT_MAX_BUS_CREDIT) {
+                    if (adf_os_atomic_read(&pdev->htt_tx_credit.target_delta) > 0) {
+                        delta2 = HTT_MAX_BUS_CREDIT -
+                                adf_os_atomic_read(&pdev->txrx_pdev->target_tx_credit)
+                                - htt_credit_delta;
+                        delta2 = (adf_os_atomic_read(&pdev->htt_tx_credit.target_delta) < delta2) ?
+                                adf_os_atomic_read(&pdev->htt_tx_credit.target_delta) : delta2;
+
+                        adf_os_atomic_add(-delta2, &pdev->htt_tx_credit.target_delta);
+                        adf_os_atomic_add(delta2, &pdev->txrx_pdev->target_tx_credit);
+                        adf_os_atomic_add(-delta2, &pdev->htt_tx_credit.bus_delta);
+                    }
+                }
+            } else {
+                if (adf_os_atomic_read(&pdev->txrx_pdev->target_tx_credit) < HTT_MAX_BUS_CREDIT) {
+                    if (adf_os_atomic_read(&pdev->htt_tx_credit.target_delta) > 0) {
+                        delta2 = HTT_MAX_BUS_CREDIT -
+                                adf_os_atomic_read(&pdev->txrx_pdev->target_tx_credit);
+                        delta2 = (adf_os_atomic_read(&pdev->htt_tx_credit.target_delta) < delta2) ?
+                                adf_os_atomic_read(&pdev->htt_tx_credit.target_delta) : delta2;
+
+                        adf_os_atomic_add(-delta2, &pdev->htt_tx_credit.target_delta);
+                        adf_os_atomic_add(delta2, &pdev->txrx_pdev->target_tx_credit);
+                        adf_os_atomic_add(-delta2, &pdev->htt_tx_credit.bus_delta);
+                    }
+                }
+            }
+
+
             HTT_TX_MUTEX_RELEASE(&pdev->credit_mutex);
         }
 
@@ -524,6 +567,7 @@ htt_t2h_lp_msg_handler(void *context, adf_nbuf_t htt_t2h_msg )
                 break;
             }
         }
+        break;
     }
     case HTT_T2H_MSG_TYPE_RATE_REPORT:
         {
@@ -569,6 +613,9 @@ htt_t2h_lp_msg_handler(void *context, adf_nbuf_t htt_t2h_msg )
             adf_os_mem_free(report);
             break;
         }
+    case HTT_T2H_MSG_TYPE_PPDU_STATS_IND:
+        ol_ppdu_stats_ind_handler(pdev->txrx_pdev, htt_t2h_msg);
+        break;
     default:
         break;
     };
@@ -651,9 +698,14 @@ if (adf_os_unlikely(pdev->rx_ring.rx_reset)) {
                  * TODO: remove copy after stopping reuse skb on HIF layer
                  * because SDIO HIF may reuse skb before upper layer release it
                  */
-                ol_rx_indication_handler(
-                    pdev->txrx_pdev, htt_t2h_msg, peer_id, tid,
-                    num_mpdu_ranges);
+                if (VOS_MONITOR_MODE == vos_get_conparam())
+                    ol_rx_mon_indication_handler(
+                            pdev->txrx_pdev, htt_t2h_msg, peer_id, tid,
+                            num_mpdu_ranges);
+                else
+                    ol_rx_indication_handler(
+                            pdev->txrx_pdev, htt_t2h_msg, peer_id, tid,
+                            num_mpdu_ranges);
 
                 return;
             } else {
@@ -704,7 +756,25 @@ if (adf_os_unlikely(pdev->rx_ring.rx_reset)) {
                 }
             }
 
+            /* Indicate failure status to user space */
+            ol_tx_failure_indication(pdev->txrx_pdev,
+                                     HTT_TX_COMPL_IND_TID_GET(*msg_word),
+                                     num_msdus, status);
+
             if (pdev->cfg.is_high_latency) {
+                /*
+                 * For regular frms in HL case, frms have already been
+                 * freed and tx credit has been updated. FW indicates
+                 * special message for failure MSDUs with status type
+                 * htt_tx_status_fail_notify. Once such message was
+                 * received, just break here.
+                 */
+                if (ol_cfg_tx_free_at_download(pdev->ctrl_pdev) &&
+                    HTT_FAIL_NOTIFY_BREAK_CHECK(status)) {
+                    adf_os_print("HTT TX COMPL for failed data frm.\n");
+                    break;
+                }
+
                 old_credit = adf_os_atomic_read(&pdev->htt_tx_credit.target_delta);
                 if (((old_credit + num_msdus) > MAX_TARGET_TX_CREDIT) ||
                     ((old_credit + num_msdus) < -MAX_TARGET_TX_CREDIT)) {
@@ -732,7 +802,7 @@ if (adf_os_unlikely(pdev->rx_ring.rx_reset)) {
                 }
             }
             ol_tx_completion_handler(
-                pdev->txrx_pdev, num_msdus, status, msg_word + 1);
+                pdev->txrx_pdev, num_msdus, status, msg_word);
             HTT_TX_SCHED(pdev);
             break;
         }
@@ -836,6 +906,11 @@ if (adf_os_unlikely(pdev->rx_ring.rx_reset)) {
                                                peer_id, tid, offload_ind);
             break;
      }
+    case HTT_T2H_MSG_TYPE_MONITOR_MAC_HEADER_IND:
+        {
+            ol_rx_mon_mac_header_handler(pdev->txrx_pdev, htt_t2h_msg);
+            break;
+        }
 
     default:
         htt_t2h_lp_msg_handler(context, htt_t2h_msg);
@@ -1009,6 +1084,71 @@ htt_rx_ind_rssi_dbm_chain(htt_pdev_handle pdev, adf_nbuf_t rx_ind_msg,
 }
 
 /**
+ * htt_rx_ind_noise_floor_chain() - Return the nosie floor for a chain
+ *              provided in a rx indication message.
+ * @pdev:       the HTT instance the rx data was received on
+ * @rx_ind_msg: the netbuf containing the rx indication message
+ * @chain:      the index of the chain (0-1) for DSRC
+ *
+ * Return the noise floor for a chain from an rx indication message.
+ *
+ * Return: noise floor, or HTT_NOISE_FLOOR_INVALID
+ */
+int8_t
+htt_rx_ind_noise_floor_chain(htt_pdev_handle pdev, adf_nbuf_t rx_ind_msg,
+			     int8_t chain)
+{
+	int8_t noise_floor;
+	u_int32_t *msg_word;
+
+	/* only chain0/1 used with 11p DSRC */
+	if (chain < 0 || chain > 1) {
+		return HTT_NOISE_FLOOR_INVALID;
+	}
+
+	msg_word = (u_int32_t *)
+		(adf_nbuf_data(rx_ind_msg) +
+		 HTT_RX_IND_FW_RX_PPDU_DESC_BYTE_OFFSET);
+
+	/* check if the RX_IND message contains valid rx PPDU start info */
+	if (!HTT_RX_IND_START_VALID_GET(*msg_word)) {
+		return HTT_NOISE_FLOOR_INVALID;
+	}
+
+	msg_word = (u_int32_t *)
+		(adf_nbuf_data(rx_ind_msg) + HTT_RX_IND_HDR_SUFFIX_BYTE_OFFSET);
+
+	if (chain == 0)
+		noise_floor = HTT_RX_IND_NOISE_FLOOR_CHAIN0_GET(*msg_word);
+	else if (chain == 1)
+		noise_floor = HTT_RX_IND_NOISE_FLOOR_CHAIN1_GET(*msg_word);
+
+	return noise_floor;
+}
+
+int htt_rx_ind_sig(htt_pdev_handle pdev, adf_nbuf_t rx_ind_msg,
+		   uint32_t *sig_a1, uint32_t *sig_a2, uint8_t *type)
+{
+	u_int32_t *msg_word;
+
+        msg_word = (u_int32_t *)
+           (adf_nbuf_data(rx_ind_msg) + HTT_RX_IND_FW_RX_PPDU_DESC_BYTE_OFFSET);
+
+	/* check if the RX_IND message contains valid rx PPDU start info */
+	if (!HTT_RX_IND_START_VALID_GET(*msg_word)) {
+		*sig_a1 = -1;
+		*sig_a2 = -1;
+		*type = -1;
+		return -1;
+	}
+
+	*sig_a1 = *(msg_word + 7);
+	*sig_a2 = *(msg_word + 8);
+	*type = HTT_RX_IND_PREAMBLE_TYPE_GET(*sig_a1);
+	return 0;
+}
+
+/**
  * htt_rx_ind_legacy_rate() - Return the data rate
  * @pdev:        the HTT instance the rx data was received on
  * @rx_ind_msg:  the netbuf containing the rx indication message
@@ -1038,7 +1178,7 @@ htt_rx_ind_rssi_dbm_chain(htt_pdev_handle pdev, adf_nbuf_t rx_ind_msg,
  *
  * Return the data rate provided in a rx indication message.
  */
-void
+int
 htt_rx_ind_legacy_rate(htt_pdev_handle pdev, adf_nbuf_t rx_ind_msg,
     uint8_t *legacy_rate, uint8_t *legacy_rate_sel)
 {
@@ -1051,11 +1191,12 @@ htt_rx_ind_legacy_rate(htt_pdev_handle pdev, adf_nbuf_t rx_ind_msg,
     if (!HTT_RX_IND_START_VALID_GET(*msg_word)) {
         *legacy_rate = -1;
         *legacy_rate_sel = -1;
-        return;
+        return -1;
     }
 
     *legacy_rate = HTT_RX_IND_LEGACY_RATE_GET(*msg_word);
     *legacy_rate_sel = HTT_RX_IND_LEGACY_RATE_SEL_GET(*msg_word);
+    return 0;
 }
 
 /**

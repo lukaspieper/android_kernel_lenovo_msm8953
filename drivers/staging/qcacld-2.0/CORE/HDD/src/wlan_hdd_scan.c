@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -211,6 +211,7 @@ static eHalStatus hdd_IndicateScanResult(hdd_scan_info_t *scanInfo, tCsrScanResu
    int error;
    char custom[MAX_CUSTOM_LEN];
    char *p;
+   tANI_U32 status;
 
    hddLog( LOG1, "hdd_IndicateScanResult " MAC_ADDRESS_STR,
           MAC_ADDR_ARRAY(descriptor->bssId));
@@ -339,11 +340,17 @@ static eHalStatus hdd_IndicateScanResult(hdd_scan_info_t *scanInfo, tCsrScanResu
 
        pDot11IEHTCaps = NULL;
 
-       dot11fUnpackBeaconIEs ((tpAniSirGlobal)
+       status = dot11fUnpackBeaconIEs ((tpAniSirGlobal)
            hHal, (tANI_U8 *) descriptor->ieFields, ie_length,  &dot11BeaconIEs);
+       if (DOT11F_FAILED(status))
+       {
+           hddLog(LOGE,
+           FL("unpack failed for Beacon IE status:(0x%08x)"),
+              status);
+           return eHAL_STATUS_FAILURE;
+       }
 
        pDot11SSID = &dot11BeaconIEs.SSID;
-
 
        if (pDot11SSID->present ) {
           last_event = current_event;
@@ -720,8 +727,9 @@ static int __iw_set_scan(struct net_device *dev, struct iw_request_info *info,
    }
 
    /* push addIEScan in scanRequset if exist */
-   if (pAdapter->scan_info.scanAddIE.addIEdata &&
-       pAdapter->scan_info.scanAddIE.length)
+   if (pAdapter->scan_info.scanAddIE.length &&
+       (pAdapter->scan_info.scanAddIE.length <=
+        sizeof(pAdapter->scan_info.scanAddIE.addIEdata)))
    {
        scanRequest.uIEFieldLen = pAdapter->scan_info.scanAddIE.length;
        scanRequest.pIEField = pAdapter->scan_info.scanAddIE.addIEdata;
@@ -1132,8 +1140,9 @@ int iw_set_cscan(struct net_device *dev, struct iw_request_info *info,
         }
 
         /* push addIEScan in scanRequset if exist */
-        if (pAdapter->scan_info.scanAddIE.addIEdata &&
-            pAdapter->scan_info.scanAddIE.length)
+        if (pAdapter->scan_info.scanAddIE.length &&
+            (pAdapter->scan_info.scanAddIE.length <=
+             sizeof(pAdapter->scan_info.scanAddIE.addIEdata)))
         {
             scanRequest.uIEFieldLen = pAdapter->scan_info.scanAddIE.length;
             scanRequest.pIEField = pAdapter->scan_info.scanAddIE.addIEdata;

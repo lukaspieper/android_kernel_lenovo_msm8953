@@ -40,35 +40,6 @@
 &soc {
 	i2c@78b7000 {
 		status = "ok";
-		goodix_ts@5d {
-			compatible = "goodix,gt9xx";
-			reg = <0x5d>;
-			interrupt-parent = <&tlmm>;
-			interrupts = <65 0x2008>;
-			vdd_ana-supply = <&pm8917_l10>;
-			vcc_i2c-supply = <&pm8917_l6>;
-			goodix,rst-gpio = <&tlmm 64 0x0>;
-			goodix,irq-gpio = <&tlmm 65 0x0>;
-			goodix,cfg-group0 = [
-			41 20 03 00 05 0A 05 00 01 08 28 
-			05 50 32 03 05 00 00 00 00 00 00 
-			00 00 00 00 00 95 35 FF 1B 1D 06 
-			17 00 00 00 04 03 1C 00 00 00 00 
-			00 03 64 32 00 00 00 0F 32 94 C5 
-			02 07 00 00 04 CC 10 00 A7 14 00 
-			8E 18 00 78 1D 00 63 24 00 63 00 
-			00 00 00 00 00 00 00 00 00 00 00 
-			00 00 00 00 00 00 00 00 00 00 00 
-			00 00 00 00 00 00 00 00 00 00 00 
-			00 00 1D 1C 1B 1A 19 18 17 16 15
-			14 13 12 11 10 0F 0E 0D 0C 0B 0A
-			09 08 07 06 05 04 03 02 01 00 2A
-			29 28 27 26 25 24 23 22 21 20 1F
-			1E 1D 1C 1B 19 18 17 16 15 14 13
-			12 11 10 0F 0E 0D 0C 0B 0A 09 08
-			07 06 05 04 03 02 01 00 6B 01];
-		};
-
 		focaltech@38 {
 			compatible = "focaltech,5x06";
 			reg = <0x38>;

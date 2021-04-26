@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -223,7 +223,7 @@ void msm_dcvs_init_load(struct msm_vidc_inst *inst)
 	core = inst->core;
 	dcvs = &inst->dcvs;
 	res = &core->resources;
-	dcvs->load = msm_comm_get_inst_load(inst, LOAD_CALC_NO_QUIRKS);
+	dcvs->load = msm_comm_get_inst_load(inst, LOAD_CALC_IGNORE_TURBO_LOAD);
 
 	num_rows = res->dcvs_tbl_size;
 	table = res->dcvs_tbl;
@@ -235,8 +235,8 @@ void msm_dcvs_init_load(struct msm_vidc_inst *inst)
 	}
 
 	fourcc = inst->session_type == MSM_VIDC_DECODER ?
-				inst->fmts[OUTPUT_PORT]->fourcc :
-				inst->fmts[CAPTURE_PORT]->fourcc;
+				inst->fmts[OUTPUT_PORT].fourcc :
+				inst->fmts[CAPTURE_PORT].fourcc;
 
 	for (i = 0; i < num_rows; i++) {
 		bool matches = msm_dcvs_check_codec_supported(
@@ -553,7 +553,7 @@ static bool msm_dcvs_enc_check(struct msm_vidc_inst *inst)
 
 	is_codec_supported =
 		msm_dcvs_check_codec_supported(
-				inst->fmts[CAPTURE_PORT]->fourcc,
+				inst->fmts[CAPTURE_PORT].fourcc,
 				inst->dcvs.supported_codecs,
 				inst->session_type);
 
@@ -613,7 +613,7 @@ static bool msm_dcvs_check_supported(struct msm_vidc_inst *inst)
 			res->dcvs_limit[inst->session_type].fps;
 		is_codec_supported =
 			msm_dcvs_check_codec_supported(
-					inst->fmts[OUTPUT_PORT]->fourcc,
+					inst->fmts[OUTPUT_PORT].fourcc,
 					inst->dcvs.supported_codecs,
 					inst->session_type);
 		if (!is_codec_supported ||

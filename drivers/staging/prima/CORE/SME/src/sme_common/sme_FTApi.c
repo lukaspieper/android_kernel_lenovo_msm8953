@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014, 2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -41,6 +41,11 @@
 #include <csrNeighborRoam.h>
 #include "vos_utils.h"
 
+#ifdef WLAN_FEATURE_LFR_MBB
+#include "csr_roam_mbb.h"
+#endif
+
+
 /*--------------------------------------------------------------------------
   Initialize the FT context. 
   ------------------------------------------------------------------------*/
@@ -60,6 +65,18 @@ void sme_FTOpen(tHalHandle hHal)
         return;
     }                 
     vos_reset_roam_timer_log();
+
+#ifdef WLAN_FEATURE_LFR_MBB
+    status = vos_timer_init(&pMac->ft.ftSmeContext.pre_auth_reassoc_mbb_timer,
+                            VOS_TIMER_TYPE_SW,
+                            csr_preauth_reassoc_mbb_timer_callback,
+                            (void *)pMac);
+
+    if (eHAL_STATUS_SUCCESS != status) {
+        smsLog(pMac, LOGE, FL("pre_auth_reassoc_mbb_timer allocation failed"));
+        return;
+    }
+#endif
 }
 
 /*--------------------------------------------------------------------------
@@ -71,6 +88,10 @@ void sme_FTClose(tHalHandle hHal)
     //Clear the FT Context.
     sme_FTReset(hHal);
     vos_timer_destroy(&pMac->ft.ftSmeContext.preAuthReassocIntvlTimer);
+
+#ifdef WLAN_FEATURE_LFR_MBB
+    vos_timer_destroy(&pMac->ft.ftSmeContext.pre_auth_reassoc_mbb_timer);
+#endif
 }
 
 void sme_SetFTPreAuthState(tHalHandle hHal, v_BOOL_t state)
@@ -107,7 +128,7 @@ void sme_SetFTIEs( tHalHandle hHal, tANI_U8 sessionId, const tANI_U8 *ft_ies,
     }
 
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
-    smsLog( pMac, LOGE, "FT IEs Req is received in state %d",
+    smsLog( pMac, LOG1, "FT IEs Req is received in state %d",
         pMac->ft.ftSmeContext.FTState);
 #endif
 
@@ -152,10 +173,10 @@ void sme_SetFTIEs( tHalHandle hHal, tANI_U8 sessionId, const tANI_U8 *ft_ies,
             // Delete the pre-auth node locally. Set your self back to restart pre-auth
             // TBD
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
-            smsLog( pMac, LOGE,
+            smsLog( pMac, LOG1,
                 "Pre-auth done and now receiving---> AUTH REQ <---- in state %d",
                 pMac->ft.ftSmeContext.FTState);
-            smsLog( pMac, LOGE, "Unhandled reception of FT IES in state %d",
+            smsLog( pMac, LOG1, "Unhandled reception of FT IES in state %d",
                 pMac->ft.ftSmeContext.FTState);
 #endif
             break;
@@ -166,7 +187,7 @@ void sme_SetFTIEs( tHalHandle hHal, tANI_U8 sessionId, const tANI_U8 *ft_ies,
 
             // At this juncture we are ready to start sending Re-Assoc Req.
 #if defined WLAN_FEATURE_VOWIFI_11R_DEBUG
-            smsLog( pMac, LOGE, "New Reassoc Req=%pK in state %d",
+            smsLog( pMac, LOG1, "New Reassoc Req=%pK in state %d",
                 ft_ies, pMac->ft.ftSmeContext.FTState);
 #endif
             if ((pMac->ft.ftSmeContext.reassoc_ft_ies) && 
@@ -392,7 +413,7 @@ void sme_GetFTPreAuthResponse( tHalHandle hHal, tANI_U8 *ft_ies,
     pMac->ft.ftSmeContext.FTState = eFT_REASSOC_REQ_WAIT;
 
 #ifdef WLAN_FEATURE_VOWIFI_11R_DEBUG
-    smsLog( pMac, LOGE, FL(" Filled auth resp = %d"), *ft_ies_length);
+    smsLog( pMac, LOG1, FL(" Filled auth resp = %d"), *ft_ies_length);
 #endif
     sme_ReleaseGlobalLock( &pMac->sme );
     return;
@@ -431,7 +452,7 @@ void sme_GetRICIEs( tHalHandle hHal, tANI_U8 *ric_ies, tANI_U32 ric_ies_ip_len,
     *ric_ies_length = pMac->ft.ftSmeContext.psavedFTPreAuthRsp->ric_ies_length;
 
 #ifdef WLAN_FEATURE_VOWIFI_11R_DEBUG
-    smsLog( pMac, LOGE, FL(" Filled ric ies = %d"), *ric_ies_length);
+    smsLog( pMac, LOG1, FL(" Filled ric ies = %d"), *ric_ies_length);
 #endif
 
     sme_ReleaseGlobalLock( &pMac->sme );

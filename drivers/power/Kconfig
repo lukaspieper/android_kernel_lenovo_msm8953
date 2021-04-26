@@ -406,6 +406,16 @@ config SMB1351_USB_CHARGER
 	 notification support. The driver controls SMB1351 via I2C and
 	 supports device-tree interface.
 
+config SMB1351_USB_CHARGER_LENOVO
+	tristate "smb1351 usb charger (with VBUS detection) (Lenovo variant)"
+	depends on I2C
+	help
+	 Say Y to enable support for the SMB1351 switching mode based charger.
+	 The driver supports charging control (enable/disable) and
+	 charge-current limiting. It also provides USB VBUS detection and
+	 notification support. The driver controls SMB1351 via I2C and
+	 supports device-tree interface.
+
 config SMB350_CHARGER
 	tristate "smb350 charger"
 	depends on I2C
@@ -506,6 +516,16 @@ config QPNP_SMBCHARGER
 	  The driver also offers relevant information to userspace via the
 	  power supply framework.
 
+config QPNP_SMB2
+	tristate "QPNP SMB Charger driver"
+	depends on SPMI || MSM_SPMI
+	depends on OF_SPMI
+	help
+	  Enables support for the SMB2 charging peripheral.
+	  This charger module supports Type-C and uUSB interface with
+	  autonomous charging and APSD for different charging sources.
+	  This module also interfaces USB PD for power-delivery support.
+
 config FUELGAUGE_STC3117
 	tristate "STC3117 fuel gauge driver"
 	default n
@@ -524,6 +544,16 @@ config QPNP_FG
 	  Say Y here to enable the Fuel Gauge driver. This adds support for
 	  battery fuel gauging and state of charge of battery connected to the
 	  fuel gauge. The state of charge is reported through a BMS power
+	  supply property and also sends uevents when the capacity is updated.
+
+config QPNP_FG_GEN3
+	tristate "QPNP GEN3 fuel gauge driver"
+	depends on SPMI || MSM_SPMI
+	depends on OF_SPMI
+	help
+	  Say Y here to enable the GEN3 Fuel Gauge driver. This adds support
+	  for battery fuel gauging and state of charge of battery connected to
+	  the fuel gauge. The state of charge is reported through a BMS power
 	  supply property and also sends uevents when the capacity is updated.
 
 config BATTERY_BCL
@@ -598,6 +628,10 @@ config QPNP_TYPEC
 	  CC-orientation. The module does not support USB power-delivery. The driver
 	  adds support to report these type-C parameters via the power-supply
 	  framework.
+#add by longcheer_liml_2017_03_27
+config USB_FUSB302
+	bool "Enable fusb422 USB Power Delivery"
+	default n
 
 config MSM_BCL_CTL
 	bool "BCL Framework driver"
@@ -623,7 +657,6 @@ config COULO_METER
 	  Say Y to include support for Battery COULO_METER.
 	  COULO_METER is a meter of battery.
 
-
 source "drivers/power/reset/Kconfig"
 
 endif # POWER_SUPPLY
@@ -631,3 +664,4 @@ endif # POWER_SUPPLY
 source "drivers/power/avs/Kconfig"
 source "drivers/power/qcom/Kconfig"
 source "drivers/power/onsemi/Kconfig"
+source "drivers/power/tusb422/Kconfig"

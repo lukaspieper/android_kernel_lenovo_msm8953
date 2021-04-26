@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2019 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -30,6 +30,8 @@
 #include <net/cnss.h>
 #endif
 
+#define DISABLE_KRAIT_IDLE_PS_VAL    1
+
 #if defined(WLAN_OPEN_SOURCE) && !defined(CONFIG_CNSS)
 #include <linux/device.h>
 #include <linux/pm_wakeup.h>
@@ -44,11 +46,18 @@ enum cnss_bus_width_type {
 	CNSS_BUS_WIDTH_HIGH
 };
 
+enum cnss_cc_src {
+	CNSS_SOURCE_CORE,
+	CNSS_SOURCE_11D,
+	CNSS_SOURCE_USER
+};
+#ifdef HIF_PCI
 static inline void vos_wlan_pci_link_down(void){ return; }
 static inline int vos_pcie_shadow_control(struct pci_dev *dev, bool enable)
 {
 	return -ENODEV;
 }
+#endif
 
 static inline u8 *vos_get_cnss_wlan_mac_buff(struct device *dev, uint32_t *num)
 {
@@ -231,6 +240,20 @@ static inline int vos_unregister_oob_irq_handler(void *pm_oob)
 static inline void vos_dump_stack (struct task_struct *task)
 {
 }
+
+static inline void vos_set_cc_source(enum cnss_cc_src cc_source)
+{
+}
+
+static inline enum cnss_cc_src vos_get_cc_source(void)
+{
+	return CNSS_SOURCE_USER;
+}
+
+static inline int vos_set_sleep_power_mode(struct device *dev, int mode)
+{
+	return 0;
+}
 #else /* END WLAN_OPEN_SOURCE and !CONFIG_CNSS */
 static inline void vos_dump_stack (struct task_struct *task)
 {
@@ -323,6 +346,16 @@ static inline int vos_wlan_get_dfs_nol(void *info, u16 info_len)
 static inline void vos_get_boottime_ts(struct timespec *ts)
 {
         cnss_get_boottime(ts);
+}
+
+static inline void vos_set_cc_source(enum cnss_cc_src cc_source)
+{
+	cnss_set_cc_source(cc_source);
+}
+
+static inline enum cnss_cc_src vos_get_cc_source(void)
+{
+	return cnss_get_cc_source();
 }
 
 #ifdef HIF_SDIO
@@ -551,7 +584,48 @@ static inline int vos_cache_boarddata(unsigned int offset,
 }
 #endif
 
+#if defined(CONFIG_CNSS) && defined(FEATURE_DYNAMIC_POWER_CONTROL)
+static inline int vos_set_sleep_power_mode(struct device *dev, int mode)
+{
+	enum cnss_sleep_power_mode power_mode = CNSS_SLEEP_POWER_MODE_NONE;
+
+	switch (mode) {
+	case 0: /* do not power down/up WLAN power */
+		power_mode = CNSS_SLEEP_POWER_MODE_NONE;
+		break;
+	case 1: /* need to power down/up WLAN_EN 1.8v */
+		power_mode = CNSS_SLEEP_POWER_MODE_RESET;
+		break;
+	case 2: /* need to power down/up both WLAN_EN 1.8v and WLAN_VDD 3.3v */
+		power_mode = CNSS_SLEEP_POWER_MODE_CUT_PWR;
+		break;
+	default: /* do not power down/up WLAN power as default */
+		power_mode = CNSS_SLEEP_POWER_MODE_NONE;
+		break;
+	}
+
+	return cnss_common_set_sleep_power_mode(dev, power_mode);
+}
+#else
+static inline int vos_set_sleep_power_mode(struct device *dev, int mode)
+{
+	return 0;
+}
+#endif
+
 #if defined(CONFIG_CNSS) && defined(HIF_SDIO)
+#include <linux/version.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
+static inline bool vos_oob_enabled(void)
+{
+	bool enabled = true;
+
+	if (-EINVAL == cnss_wlan_query_oob_status())
+		enabled = false;
+
+	return enabled;
+}
+#else
 static inline bool vos_oob_enabled(void)
 {
 	bool enabled = true;
@@ -561,6 +635,7 @@ static inline bool vos_oob_enabled(void)
 
 	return enabled;
 }
+#endif
 
 static inline int vos_register_oob_irq_handler(oob_irq_handler_t handler,
 		void *pm_oob)

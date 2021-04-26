@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -61,7 +61,7 @@
 
 #include "pmmApi.h"
 #ifdef WLAN_FEATURE_11W
-#include "wniCfgAp.h"
+#include "wni_cfg.h"
 #endif
 
 #ifdef SAP_AUTH_OFFLOAD
@@ -758,6 +758,9 @@ limCleanupMlm(tpAniSirGlobal pMac)
 
         tx_timer_deactivate(&pMac->lim.limTimers.gLimActiveToPassiveChannelTimer);
         tx_timer_delete(&pMac->lim.limTimers.gLimActiveToPassiveChannelTimer);
+
+        tx_timer_deactivate(&pMac->lim.limTimers.sae_auth_timer);
+        tx_timer_delete(&pMac->lim.limTimers.sae_auth_timer);
 
         pMac->lim.gLimTimersCreated = 0;
     }
@@ -2088,9 +2091,10 @@ void limProcessChannelSwitchTimeout(tpAniSirGlobal pMac)
     tANI_U8    channel; // This is received and stored from channelSwitch Action frame
     tANI_U8 isSessionPowerActive = false;
 
-    if((psessionEntry = peFindSessionBySessionId(pMac, pMac->lim.limTimers.gLimChannelSwitchTimer.sessionId))== NULL)
-    {
-        limLog(pMac, LOGP,FL("Session Does not exist for given sessionID"));
+    psessionEntry = peFindSessionBySessionId(pMac,
+                       pMac->lim.limTimers.gLimChannelSwitchTimer.sessionId);
+    if (!psessionEntry) {
+        limLog(pMac, LOGW, FL("Session Does not exist for given sessionID"));
         return;
     }
 
@@ -2098,6 +2102,13 @@ void limProcessChannelSwitchTimeout(tpAniSirGlobal pMac)
         PELOGW(limLog(pMac, LOGW,
                "Channel switch can be done only in STA role, Current Role = %d",
                GET_LIM_SYSTEM_ROLE(psessionEntry));)
+        return;
+    }
+    if (psessionEntry->gLimSpecMgmt.dot11hChanSwState !=
+                                  eLIM_11H_CHANSW_RUNNING) {
+        limLog(pMac, LOGW,
+            FL("Channel switch timer should not have been running in state %d"),
+            psessionEntry->gLimSpecMgmt.dot11hChanSwState);
         return;
     }
 
@@ -2109,7 +2120,6 @@ void limProcessChannelSwitchTimeout(tpAniSirGlobal pMac)
     {
         isSessionPowerActive = limIsSystemInActiveState(pMac);
     }
-
     channel = psessionEntry->gLimChannelSwitch.primaryChannel;
 
     /*
@@ -2169,13 +2179,19 @@ void limProcessChannelSwitchTimeout(tpAniSirGlobal pMac)
             return;
         }
 
-        /* If the channel-list that AP is asking us to switch is invalid,
+        /*
+         * If the channel-list that AP is asking us to switch is invalid,
          * then we cannot switch the channel. Just disassociate from AP.
          * We will find a better AP !!!
          */
-        limTearDownLinkWithAp(pMac,
+        if ((psessionEntry->limMlmState == eLIM_MLM_LINK_ESTABLISHED_STATE) &&
+           (psessionEntry->limSmeState != eLIM_SME_WT_DISASSOC_STATE)&&
+           (psessionEntry->limSmeState != eLIM_SME_WT_DEAUTH_STATE)) {
+              limLog(pMac, LOGE, FL("Invalid channel!! Disconnect.."));
+              limTearDownLinkWithAp(pMac,
                         pMac->lim.limTimers.gLimChannelSwitchTimer.sessionId,
                         eSIR_MAC_UNSPEC_FAILURE_REASON);
+        }
         return;
     }
     limCovertChannelScanType(pMac, psessionEntry->currentOperChannel, false);
@@ -2800,6 +2816,9 @@ void limSwitchPrimaryChannel(tpAniSirGlobal pMac, tANI_U8 newChannel,tpPESession
     pMac->lim.gpchangeChannelCallback = limSwitchChannelCback;
     pMac->lim.gpchangeChannelData = NULL;
 
+    psessionEntry->sub20_channelwidth =
+         psessionEntry->lim_sub20_channel_switch_bandwidth;
+
 #if defined WLAN_FEATURE_VOWIFI
     limSendSwitchChnlParams(pMac, newChannel, PHY_SINGLE_CHANNEL_CENTERED,
                             psessionEntry->maxTxPower,
@@ -2859,6 +2878,9 @@ void limSwitchPrimarySecondaryChannel(tpAniSirGlobal pMac, tpPESession psessionE
 
     pMac->lim.gpchangeChannelCallback = limSwitchChannelCback;
     pMac->lim.gpchangeChannelData = NULL;
+
+    psessionEntry->sub20_channelwidth =
+         psessionEntry->lim_sub20_channel_switch_bandwidth;
 
 #if defined WLAN_FEATURE_VOWIFI
                 limSendSwitchChnlParams(pMac, newChannel, subband,
@@ -4081,7 +4103,8 @@ limEnableHT20Protection(tpAniSirGlobal pMac, tANI_U8 enable,
         return eSIR_SUCCESS; // this protection  is only for HT stations.
 
     //overlapping protection configuration check.
-    if (!overlap) {
+    if(overlap) {
+    } else {
         //normal protection config check
         if (LIM_IS_AP_ROLE(psessionEntry) &&
             !psessionEntry->cfgProtection.ht20) {
@@ -4284,7 +4307,8 @@ limEnableHTNonGfProtection(tpAniSirGlobal pMac, tANI_U8 enable,
         return eSIR_SUCCESS; // this protection  is only for HT stations.
 
     //overlapping protection configuration check.
-    if (!overlap) {
+    if(overlap) {
+    } else {
         //normal protection config check
         if (LIM_IS_AP_ROLE(psessionEntry) &&
             !psessionEntry->cfgProtection.nonGf) {
@@ -4348,7 +4372,8 @@ limEnableHTLsigTxopProtection(tpAniSirGlobal pMac, tANI_U8 enable,
         return eSIR_SUCCESS; // this protection  is only for HT stations.
 
     //overlapping protection configuration check.
-    if (!overlap) {
+    if(overlap) {
+    } else {
         //normal protection config check
         if (LIM_IS_AP_ROLE(psessionEntry) &&
            !psessionEntry->cfgProtection.lsigTxop) {
@@ -4413,8 +4438,9 @@ limEnableHtRifsProtection(tpAniSirGlobal pMac, tANI_U8 enable,
 
 
     //overlapping protection configuration check.
-    if (!overlap) {
-        //normal protection config check
+    if(overlap) {
+    } else {
+         //normal protection config check
         if (LIM_IS_AP_ROLE(psessionEntry) &&
            !psessionEntry->cfgProtection.rifs) {
             // protection disabled.
@@ -4626,6 +4652,13 @@ void limUpdateStaRunTimeHTSwitchChnlParams( tpAniSirGlobal   pMac,
    //If self capability is set to '20Mhz only', then do not change the CB mode.
    if( !limGetHTCapability( pMac, eHT_SUPPORTED_CHANNEL_WIDTH_SET, psessionEntry ))
         return;
+
+   if ((RF_CHAN_14 >= psessionEntry->currentOperChannel) &&
+       psessionEntry->force_24ghz_in_ht20) {
+        limLog(pMac, LOG1,
+               FL("force_24_gh_in_ht20 is set and channel is 2.4 Ghz"));
+        return;
+   }
 
 #if !defined WLAN_FEATURE_VOWIFI
     if(wlan_cfgGetInt(pMac, WNI_CFG_LOCAL_POWER_CONSTRAINT, &localPwrConstraint) != eSIR_SUCCESS) {
@@ -5249,6 +5282,71 @@ void limAddScanChannelInfo(tpAniSirGlobal pMac, tANI_U8 channelId)
     }
 }
 
+/**
+ * lim_add_channel_status_info() - store
+ * 	chan status info into Global MAC structure
+ * @p_mac: Pointer to Global MAC structure
+ * @channel_stat: Pointer to chan status info reported by firmware
+ * @channel_id: current channel id
+ *
+ * Return: None
+ */
+void lim_add_channel_status_info(tpAniSirGlobal p_mac,
+	struct lim_channel_status *channel_stat, uint8_t channel_id)
+{
+	uint8_t i;
+	boolean found = false;
+	struct lim_scan_channel_status *channel_info =
+		&p_mac->lim.scan_channel_status;
+	struct lim_channel_status *channel_status_list =
+		channel_info->channel_status_list;
+	uint8_t total_channel = channel_info->total_channel;
+
+	if (ACS_FW_REPORT_PARAM_CONFIGURED) {
+	    for (i = 0; i < total_channel; i++) {
+		if (channel_status_list[i].channel_id == channel_id) {
+		    if (channel_stat->cmd_flags ==
+			    WMI_CHAN_INFO_END_RESP &&
+			    channel_status_list[i].cmd_flags ==
+			    WMI_CHAN_INFO_START_RESP) {
+			/* adjust to delta value for counts */
+			channel_stat->rx_clear_count -=
+			    channel_status_list[i].rx_clear_count;
+			channel_stat->cycle_count -=
+			    channel_status_list[i].cycle_count;
+			channel_stat->rx_frame_count -=
+			    channel_status_list[i].rx_frame_count;
+			channel_stat->tx_frame_count -=
+			    channel_status_list[i].tx_frame_count;
+			channel_stat->bss_rx_cycle_count -=
+			    channel_status_list[i].bss_rx_cycle_count;
+		    }
+		    vos_mem_copy(
+			    &channel_status_list[i],
+			    channel_stat,
+			    sizeof(*channel_status_list));
+		    found = true;
+		    break;
+		}
+	    }
+	    if (!found) {
+		if (total_channel <
+			SIR_MAX_SUPPORTED_ACS_CHANNEL_LIST) {
+		    vos_mem_copy(
+			    &channel_status_list[total_channel++],
+			    channel_stat,
+			    sizeof(*channel_status_list));
+		    channel_info->total_channel = total_channel;
+		} else {
+		    PELOGW(limLog(p_mac, LOGW,
+				FL("Chan cnt exceed, channel_id=%d"),
+				channel_id);)
+		}
+	    }
+	}
+	return;
+}
+
 
 /**
  * @function :  limIsChannelValidForChannelSwitch()
@@ -5273,7 +5371,12 @@ limIsChannelValidForChannelSwitch(tpAniSirGlobal pMac, tANI_U8 channel)
     tANI_U8  index;
     tANI_U32    validChannelListLen = WNI_CFG_VALID_CHANNEL_LIST_LEN;
     tSirMacChanNum   validChannelList[WNI_CFG_VALID_CHANNEL_LIST_LEN];
-
+#ifdef FEATURE_WLAN_DISABLE_CHANNEL_SWITCH
+    if (!vos_is_chan_ok_for_dnbs(channel)) {
+        PELOGE(limLog(pMac, LOGE, FL("channel is not valid for dnbs"));)
+        return (eSIR_FALSE);
+    }
+#endif
     if (wlan_cfgGetStr(pMac, WNI_CFG_VALID_CHANNEL_LIST,
           (tANI_U8 *)validChannelList,
           (tANI_U32 *)&validChannelListLen) != eSIR_SUCCESS)
@@ -6105,6 +6208,7 @@ void limHandleDeferMsgError(tpAniSirGlobal pMac, tpSirMsgQ pLimMsg)
 {
     if(SIR_BB_XPORT_MGMT_MSG == pLimMsg->type)
     {
+        lim_decrement_pending_mgmt_count(pMac);
         vos_pkt_return_packet((vos_pkt_t*)pLimMsg->bodyptr);
         pLimMsg->bodyptr = NULL;
     }
@@ -8117,3 +8221,36 @@ void lim_parse_beacon_for_tim(tpAniSirGlobal mac_ctx,
 	return;
 }
 
+bool lim_check_if_vendor_oui_match(tpAniSirGlobal mac_ctx,
+                    uint8_t *oui, uint8_t oui_len,
+                   uint8_t *ie, uint8_t ie_len)
+{
+    uint8_t *ptr = ie;
+    uint8_t elem_id = 0;
+
+    if (NULL == ie || 0 == ie_len) {
+        limLog(mac_ctx, LOG1, FL("IE Null or ie len zero %d"), ie_len);
+        return false;
+    }
+
+    elem_id = *ie;
+
+    if (elem_id == IE_EID_VENDOR &&
+        !adf_os_mem_cmp(&ptr[2], oui, oui_len))
+        return true;
+    else
+        return false;
+}
+
+void lim_decrement_pending_mgmt_count(tpAniSirGlobal mac_ctx)
+{
+       adf_os_spin_lock(&mac_ctx->sys.bbt_mgmt_lock);
+       if (!mac_ctx->sys.sys_bbt_pending_mgmt_count) {
+               adf_os_spin_unlock(&mac_ctx->sys.bbt_mgmt_lock);
+               limLog(mac_ctx, LOGW,
+                       FL("sys_bbt_pending_mgmt_count value is 0"));
+               return;
+       }
+       mac_ctx->sys.sys_bbt_pending_mgmt_count--;
+       adf_os_spin_unlock(&mac_ctx->sys.bbt_mgmt_lock);
+}

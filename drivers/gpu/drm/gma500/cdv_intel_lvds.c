@@ -505,7 +505,7 @@ static int cdv_intel_lvds_set_property(struct drm_connector *connector,
 		else
                         gma_backlight_set(encoder->dev, value);
 	} else if (!strcmp(property->name, "DPMS") && encoder) {
-		struct drm_encoder_helper_funcs *helpers =
+		const struct drm_encoder_helper_funcs *helpers =
 					encoder->helper_private;
 		helpers->dpms(encoder, value);
 	}
@@ -619,6 +619,9 @@ void cdv_intel_lvds_init(struct drm_device *dev,
 	u32 lvds;
 	int pipe;
 	u8 pin;
+
+	if (!dev_priv->lvds_enabled_in_vbt)
+		return;
 
 	pin = GMBUS_PORT_PANEL;
 	if (!lvds_is_present_in_vbt(dev, &pin)) {

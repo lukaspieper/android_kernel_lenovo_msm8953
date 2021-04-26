@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -67,6 +67,7 @@
 #include "vos_nvitem.h"
 #include "wlan_qct_wda.h"
 #include "wlan_hdd_main.h"
+#include "wlan_hdd_tsf.h"
 #include <linux/vmalloc.h>
 #include "wlan_hdd_cfg80211.h"
 #include "vos_cnss.h"
@@ -92,6 +93,7 @@
 #include "wma.h"
 
 #include "vos_utils.h"
+#include<adf_os_module.h>
 
 /*---------------------------------------------------------------------------
  * Preprocessor Definitions and Constants
@@ -237,6 +239,17 @@ static inline void vos_runtime_pm_config(struct ol_softc *scn,
 		hdd_context_t *pHddCtx) { }
 #endif
 
+#ifdef FEATURE_USB_WARM_RESET
+static inline void vos_usb_warm_reset_config(struct ol_softc *scn,
+		hdd_context_t *pHddCtx)
+{
+	scn->enable_usb_warm_reset = pHddCtx->cfg_ini->enable_usb_warm_reset;
+}
+#else
+static inline void vos_usb_warm_reset_config(struct ol_softc *scn,
+		hdd_context_t *pHddCtx) { }
+#endif
+
 #if defined (FEATURE_SECURE_FIRMWARE) && defined (FEATURE_FW_HASH_CHECK)
 static inline void vos_fw_hash_check_config(struct ol_softc *scn,
 					hdd_context_t *pHddCtx)
@@ -252,6 +265,27 @@ static inline void vos_fw_hash_check_config(struct ol_softc *scn,
 #else
 static inline void vos_fw_hash_check_config(struct ol_softc *scn,
 					hdd_context_t *pHddCtx) { }
+#endif
+
+#ifdef WLAN_FEATURE_TSF_PLUS
+/**
+ * vos_set_ptp_enable() - set ptp enable flag in mac open param
+ * @wma_handle: Pointer to mac open param
+ * @hdd_ctx: Pointer to hdd context
+ *
+ * Return: none
+ */
+static void vos_set_ptp_enable(tMacOpenParameters *param,
+					hdd_context_t *hdd_ctx)
+{
+	param->is_ptp_enabled =
+		(hdd_ctx->cfg_ini->tsf_ptp_options != 0);
+}
+#else
+static void vos_set_ptp_enable(tMacOpenParameters *param,
+					hdd_context_t *pHddCtx)
+{
+}
 #endif
 
 #ifdef WLAN_FEATURE_NAN
@@ -270,6 +304,22 @@ static void vos_set_nan_enable(tMacOpenParameters *param,
 #else
 static void vos_set_nan_enable(tMacOpenParameters *param,
 					hdd_context_t *pHddCtx)
+{
+}
+#endif
+
+#ifdef QCA_SUPPORT_TXRX_DRIVER_TCP_DEL_ACK
+static void vos_set_del_ack_params(tMacOpenParameters *param,
+					hdd_context_t *hdd_ctx)
+{
+	param->del_ack_enable =
+		hdd_ctx->cfg_ini->del_ack_enable;
+	param->del_ack_timer_value = hdd_ctx->cfg_ini->del_ack_timer_value;
+	param->del_ack_pkt_count = hdd_ctx->cfg_ini->del_ack_pkt_count;
+}
+#else
+static void vos_set_del_ack_params(tMacOpenParameters *param,
+					hdd_context_t *hdd_ctx)
 {
 }
 #endif
@@ -364,7 +414,24 @@ static void vos_set_ac_specs_params(tMacOpenParameters *param,
 	}
 }
 
-
+/**
+ * set_oob_gpio_config() - set oob gpio config
+ * @scn: pointer to scn
+ * @hdd_ctx: pointer to hdd_ctx
+ *
+ * Return NULL
+ */
+#ifdef CONFIG_GPIO_OOB
+static void set_oob_gpio_config(struct ol_softc *scn, hdd_context_t *hdd_ctx)
+{
+   scn->oob_gpio_num = hdd_ctx->cfg_ini->oob_gpio_num;
+   scn->oob_gpio_flag = hdd_ctx->cfg_ini->oob_gpio_flag;
+}
+#else
+static void set_oob_gpio_config(struct ol_softc *scn, hdd_context_t *hdd_ctx)
+{
+}
+#endif
 /*---------------------------------------------------------------------------
 
   \brief vos_open() - Open the vOSS Module
@@ -422,8 +489,6 @@ VOS_STATUS vos_open( v_CONTEXT_t *pVosContext, v_SIZE_t hddContextSize )
 
    /* Initialize the timer module */
    vos_timer_module_init();
-
-   vos_wdthread_init_timer_work(vos_process_wd_timer);
 
    /* Initialize bug reporting structure */
    vos_init_log_completion();
@@ -498,13 +563,16 @@ VOS_STATUS vos_open( v_CONTEXT_t *pVosContext, v_SIZE_t hddContextSize )
    scn->enableuartprint = pHddCtx->cfg_ini->enablefwprint;
    scn->enablefwlog     = pHddCtx->cfg_ini->enablefwlog;
    scn->enableFwSelfRecovery = pHddCtx->cfg_ini->enableFwSelfRecovery;
+   scn->fastfwdump_host = pHddCtx->cfg_ini->fastfwdump;
    scn->max_no_of_peers = pHddCtx->max_peers;
+   set_oob_gpio_config(scn, pHddCtx);
 #ifdef WLAN_FEATURE_LPSS
    scn->enablelpasssupport = pHddCtx->cfg_ini->enablelpasssupport;
 #endif
    scn->enableRamdumpCollection = pHddCtx->cfg_ini->is_ramdump_enabled;
    scn->enable_self_recovery = pHddCtx->cfg_ini->enableSelfRecovery;
 
+   vos_usb_warm_reset_config(scn, pHddCtx);
    vos_fw_hash_check_config(scn, pHddCtx);
    vos_runtime_pm_config(scn, pHddCtx);
 
@@ -525,7 +593,6 @@ VOS_STATUS vos_open( v_CONTEXT_t *pVosContext, v_SIZE_t hddContextSize )
         VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
                   "%s: Failed to Create HTC", __func__);
            goto err_bmi_close;
-           goto err_sched_close;
    }
 
    if (bmi_done(scn)) {
@@ -640,17 +707,23 @@ VOS_STATUS vos_open( v_CONTEXT_t *pVosContext, v_SIZE_t hddContextSize )
     macOpenParms.max_mgmt_tx_fail_count =
                      pHddCtx->cfg_ini->max_mgmt_tx_fail_count;
 
+    macOpenParms.keep_dwell_time_passive =
+                     pHddCtx->cfg_ini->keeppassivedwelltime;
+
 #ifdef WLAN_FEATURE_LPSS
     macOpenParms.is_lpass_enabled = pHddCtx->cfg_ini->enablelpasssupport;
 #endif
 
    vos_set_nan_enable(&macOpenParms, pHddCtx);
    vos_set_bundle_params(&macOpenParms, pHddCtx);
+   vos_set_del_ack_params(&macOpenParms, pHddCtx);
    vos_set_ac_specs_params(&macOpenParms, pHddCtx);
+   vos_set_ptp_enable(&macOpenParms, pHddCtx);
 
    vStatus = WDA_open( gpVosContext, gpVosContext->pHDDContext,
                        hdd_update_tgt_cfg,
                        hdd_dfs_indicate_radar,
+                       hdd_update_dfs_cac_block_tx_flag,
                        &macOpenParms );
 
    if (!VOS_IS_STATUS_SUCCESS(vStatus))
@@ -756,7 +829,7 @@ VOS_STATUS vos_open( v_CONTEXT_t *pVosContext, v_SIZE_t hddContextSize )
                "%s: VOSS successfully Opened", __func__);
 
    *pVosContext = gpVosContext;
-
+   gpVosContext->is_closed = false;
    return VOS_STATUS_SUCCESS;
 
 
@@ -1117,6 +1190,12 @@ VOS_STATUS vos_stop( v_CONTEXT_t vosContext )
 {
   VOS_STATUS vosStatus;
 
+  if (gpVosContext->is_closed) {
+      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO,
+                "%s: vos is already closed", __func__);
+      return VOS_STATUS_SUCCESS;
+  }
+
   /* WDA_Stop is called before the SYS so that the processing of Riva
   pending responces will not be handled during uninitialization of WLAN driver */
   vos_event_reset( &(gpVosContext->wdaCompleteEvent) );
@@ -1159,6 +1238,12 @@ VOS_STATUS vos_stop( v_CONTEXT_t vosContext )
 VOS_STATUS vos_close( v_CONTEXT_t vosContext )
 {
   VOS_STATUS vosStatus;
+
+  if (gpVosContext->is_closed) {
+      VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO,
+                "%s: already closed", __func__);
+      return VOS_STATUS_SUCCESS;
+  }
 
   vosStatus = wma_wmi_work_close( vosContext );
   if (!VOS_IS_STATUS_SUCCESS(vosStatus)) {
@@ -1212,9 +1297,10 @@ VOS_STATUS vos_close( v_CONTEXT_t vosContext )
   {
      /* if WDA stop failed, call WDA shutdown to cleanup WDA/WDI */
      vosStatus = WDA_shutdown( vosContext, VOS_TRUE );
-     if (VOS_IS_STATUS_SUCCESS( vosStatus ) )
+     if (VOS_IS_STATUS_SUCCESS(vosStatus))
      {
-        hdd_set_ssr_required( HDD_SSR_REQUIRED );
+        if (!vos_is_logp_in_progress(VOS_MODULE_ID_VOSS, NULL))
+            hdd_set_ssr_required( HDD_SSR_REQUIRED );
      }
      else
      {
@@ -1265,6 +1351,7 @@ VOS_STATUS vos_close( v_CONTEXT_t vosContext )
 
   vos_wdthread_flush_timer_work();
 
+  gpVosContext->is_closed = true;
   return VOS_STATUS_SUCCESS;
 }
 
@@ -1395,6 +1482,93 @@ v_VOID_t* vos_get_context( VOS_MODULE_ID moduleId,
 
 } /* vos_get_context()*/
 
+/**---------------------------------------------------------------------------
+
+  \brief vos_set_context() - set context data area
+
+  Each module in the system has a context / data area that is allocated
+  and maanged by voss.  This API allows any user to set the context data
+  area in the VOSS global context.
+
+  \param module_id - the module ID, who's context data are is being changed.
+
+  \param mod_context - context data area of the specified module.
+
+  \return VOS_STATUS_SUCCESS - context was successfully changed.
+
+          VOS_STATUS_E_INVAL - global context is null or module id is invalid.
+
+  --------------------------------------------------------------------------*/
+VOS_STATUS vos_set_context(VOS_MODULE_ID module_id,
+                           v_PVOID_t mod_context)
+{
+	if (VOS_MODULE_ID_VOSS == module_id) {
+		gpVosContext = mod_context;
+		return VOS_STATUS_SUCCESS;
+	}
+
+	if (!gpVosContext) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+			  "%s: vos context is null", __func__);
+		return VOS_STATUS_E_INVAL;
+	}
+
+	switch (module_id) {
+	case VOS_MODULE_ID_TL:
+		gpVosContext->pTLContext = mod_context;
+		break;
+
+#ifndef WLAN_FEATURE_MBSSID
+	case VOS_MODULE_ID_SAP:
+		gpVosContext->pSAPContext = mod_context;
+		break;
+#endif
+
+	case VOS_MODULE_ID_HDD:
+		gpVosContext->pHDDContext = mod_context;
+		break;
+
+	case VOS_MODULE_ID_SME:
+	case VOS_MODULE_ID_PE:
+	case VOS_MODULE_ID_PMC:
+		/* In all these cases, we just set the MAC Context */
+		gpVosContext->pMACContext = mod_context;
+		break;
+
+	case VOS_MODULE_ID_WDA:
+		/* For WDA module */
+		gpVosContext->pWDAContext = mod_context;
+		break;
+
+	case VOS_MODULE_ID_HIF:
+		gpVosContext->pHIFContext = mod_context;
+		break;
+
+	case VOS_MODULE_ID_HTC:
+		gpVosContext->htc_ctx = mod_context;
+		break;
+
+	case VOS_MODULE_ID_ADF:
+		gpVosContext->adf_ctx = mod_context;
+		break;
+
+	case VOS_MODULE_ID_TXRX:
+		gpVosContext->pdev_txrx_ctx = mod_context;
+		break;
+
+	case VOS_MODULE_ID_CFG:
+		gpVosContext->cfg_ctx = mod_context;
+		break;
+
+	default:
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+			  "%s: do not have context for module id: %i",
+			  __func__, module_id);
+		return VOS_STATUS_E_INVAL;
+	}
+
+	return VOS_STATUS_SUCCESS;
+} /* vos_set_context()*/
 
 /**---------------------------------------------------------------------------
 
@@ -1449,6 +1623,9 @@ void vos_set_logp_in_progress(VOS_MODULE_ID moduleId, v_U8_t value)
         "%s: global voss context is NULL", __func__);
     return;
   }
+
+  VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_DEBUG,
+           "%s:%pS setting value %d",__func__, (void *)_RET_IP_, value);
   gpVosContext->isLogpInProgress = value;
 
   /* HDD uses it's own context variable to check if SSR in progress,
@@ -1461,6 +1638,30 @@ void vos_set_logp_in_progress(VOS_MODULE_ID moduleId, v_U8_t value)
       return;
    }
    pHddCtx->isLogpInProgress = value;
+}
+
+v_U8_t vos_is_ssr_failed(void)
+{
+	if (!gpVosContext) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+			  "%s: global voss context is NULL", __func__);
+		return 1;
+	}
+
+	return gpVosContext->is_ssr_failed;
+}
+
+void vos_set_ssr_failed(v_U8_t value)
+{
+	if (!gpVosContext) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+			  "%s: global voss context is NULL", __func__);
+		return;
+	}
+
+	VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_DEBUG,
+		  "%s:%pS setting value %d", __func__, (void *)_RET_IP_, value);
+	gpVosContext->is_ssr_failed = value;
 }
 
 v_U8_t vos_is_load_unload_in_progress(VOS_MODULE_ID moduleId, v_VOID_t *moduleContext)
@@ -2101,7 +2302,20 @@ vos_fetch_tl_cfg_parms
 VOS_STATUS vos_shutdown(v_CONTEXT_t vosContext)
 {
   VOS_STATUS vosStatus;
-  tpAniSirGlobal pMac = (((pVosContextType)vosContext)->pMACContext);
+
+  vosStatus = wma_wmi_work_close(vosContext);
+  if (!VOS_IS_STATUS_SUCCESS(vosStatus)) {
+     VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+               "%s: Fail to close wma_wmi_work!", __func__);
+     VOS_ASSERT(VOS_IS_STATUS_SUCCESS(vosStatus));
+  }
+
+  if (gpVosContext->htc_ctx)
+  {
+    HTCStop(gpVosContext->htc_ctx);
+    HTCDestroy(gpVosContext->htc_ctx);
+    gpVosContext->htc_ctx = NULL;
+  }
 
   vosStatus = WLANTL_Close(vosContext);
   if (!VOS_IS_STATUS_SUCCESS(vosStatus))
@@ -2117,16 +2331,6 @@ VOS_STATUS vos_shutdown(v_CONTEXT_t vosContext)
      VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
          "%s: Failed to close SME", __func__);
      VOS_ASSERT( VOS_IS_STATUS_SUCCESS( vosStatus ) );
-  }
-
-  /* CAC timer will be initiated and started only when SAP starts on
-  * DFS channel and it will be stopped and destroyed immediately once the
-  * radar detected or timedout. So as per design CAC timer should be
-  * destroyed after stop.*/
-  if (pMac->sap.SapDfsInfo.is_dfs_cac_timer_running) {
-     vos_timer_stop(&pMac->sap.SapDfsInfo.sap_dfs_cac_timer);
-     pMac->sap.SapDfsInfo.is_dfs_cac_timer_running = 0;
-     vos_timer_destroy(&pMac->sap.SapDfsInfo.sap_dfs_cac_timer);
   }
 
   vosStatus = macClose( ((pVosContextType)vosContext)->pMACContext);
@@ -2169,20 +2373,6 @@ VOS_STATUS vos_shutdown(v_CONTEXT_t vosContext)
     }
   }
 
-  vosStatus = wma_wmi_work_close(vosContext);
-  if (!VOS_IS_STATUS_SUCCESS(vosStatus)) {
-     VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-               "%s: Failed to close wma_wmi_work!", __func__);
-     VOS_ASSERT(VOS_IS_STATUS_SUCCESS(vosStatus));
-  }
-
-  if (gpVosContext->htc_ctx)
-  {
-    HTCStop(gpVosContext->htc_ctx);
-    HTCDestroy(gpVosContext->htc_ctx);
-    gpVosContext->htc_ctx = NULL;
-  }
-
   vosStatus = wma_wmi_service_close(vosContext);
   if (!VOS_IS_STATUS_SUCCESS(vosStatus))
   {
@@ -2190,7 +2380,6 @@ VOS_STATUS vos_shutdown(v_CONTEXT_t vosContext)
                "%s: Failed to close wma_wmi_service!", __func__);
                VOS_ASSERT(VOS_IS_STATUS_SUCCESS(vosStatus));
   }
-
 
   vos_mq_deinit(&((pVosContextType)vosContext)->freeVosMq);
 
@@ -2415,6 +2604,94 @@ v_BOOL_t vos_is_packet_log_enabled(void)
    }
 
    return pHddCtx->cfg_ini->enablePacketLog;
+}
+
+v_BOOL_t vos_config_is_no_ack(void)
+{
+   hdd_context_t *pHddCtx;
+
+   pHddCtx = (hdd_context_t*)(gpVosContext->pHDDContext);
+   if((NULL == pHddCtx) ||
+      (NULL == pHddCtx->cfg_ini))
+   {
+     VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+               "%s: Hdd Context is Null", __func__);
+     return FALSE;
+   }
+
+   return pHddCtx->cfg_ini->gEnableNoAck;
+}
+
+#ifdef WLAN_FEATURE_TSF_PLUS
+bool vos_is_ptp_rx_opt_enabled(void)
+{
+	hdd_context_t *hdd_ctx;
+
+	hdd_ctx = (hdd_context_t *)(gpVosContext->pHDDContext);
+	if ((NULL == hdd_ctx) || (NULL == hdd_ctx->cfg_ini)) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+			  "%s: Hdd Context is Null", __func__);
+		return false;
+	}
+
+	return HDD_TSF_IS_RX_SET(hdd_ctx);
+}
+
+bool vos_is_ptp_tx_opt_enabled(void)
+{
+	hdd_context_t *hdd_ctx;
+
+	hdd_ctx = (hdd_context_t *)(gpVosContext->pHDDContext);
+	if ((NULL == hdd_ctx) || (NULL == hdd_ctx->cfg_ini)) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+			  "%s: Hdd Context is Null", __func__);
+		return false;
+	}
+
+	return HDD_TSF_IS_TX_SET(hdd_ctx);
+}
+#endif
+
+#ifdef WLAN_FEATURE_DSRC
+bool vos_is_ocb_tx_per_pkt_stats_enabled(void)
+{
+	hdd_context_t *hdd_ctx;
+
+	hdd_ctx = (hdd_context_t *)(gpVosContext->pHDDContext);
+
+	if ((NULL == hdd_ctx) || (NULL == hdd_ctx->cfg_ini)) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+			  "%s: Hdd Context is Null", __func__);
+		return false;
+	}
+
+	return hdd_ctx->cfg_ini->ocb_tx_per_pkt_stats_enabled;
+}
+#endif
+
+/**
+ * vos_is_self_recovery_enabled() - API to get self recovery enabled
+ *
+ * Return: true if self recovery enabled, false otherwise
+ */
+bool vos_is_self_recovery_enabled(void)
+{
+	hdd_context_t *hdd_ctx;
+
+	if (gpVosContext == NULL) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+			  "%s: global voss context is NULL", __func__);
+		return false;
+	}
+
+	hdd_ctx = (hdd_context_t *)(gpVosContext->pHDDContext);
+	if ((NULL == hdd_ctx) || (NULL == hdd_ctx->cfg_ini)) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+			  "%s: Hdd Context is Null", __func__);
+		return false;
+	}
+
+	return hdd_ctx->cfg_ini->enableSelfRecovery;
 }
 
 VOS_STATUS vos_config_silent_recovery(pVosContextType vos_context)
@@ -2805,7 +3082,8 @@ void vos_get_log_and_reset_completion(uint32_t *is_fatal,
 	if ((WLAN_LOG_INDICATOR_HOST_DRIVER == *indicator) &&
 	    ((WLAN_LOG_REASON_SME_OUT_OF_CMD_BUF == *reason_code) ||
 		 (WLAN_LOG_REASON_SME_COMMAND_STUCK == *reason_code) ||
-		 (WLAN_LOG_REASON_STALE_SESSION_FOUND == *reason_code)))
+		 (WLAN_LOG_REASON_STALE_SESSION_FOUND == *reason_code) ||
+		 (WLAN_LOG_REASON_SCAN_NOT_ALLOWED == *reason_code)))
 		*is_ssr_needed = true;
 	else
 		*is_ssr_needed = false;
@@ -2874,8 +3152,8 @@ uint32_t vos_get_log_indicator(void)
 	if (vos_context->isLoadUnloadInProgress ||
 		vos_context->isLogpInProgress ||
 		vos_context->isReInitInProgress) {
-		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-			  FL("vos context initialization is in progress LoadUnload: %u LogP: %u ReInit: %u"),
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO,
+			  FL("In LoadUnload: %u LogP: %u ReInit: %u"),
 			     vos_context->isLoadUnloadInProgress,
 			     vos_context->isLogpInProgress,
 			     vos_context->isReInitInProgress);
@@ -3100,3 +3378,373 @@ void vos_svc_fw_shutdown_ind(struct device *dev)
 {
 	hdd_svc_fw_shutdown_ind(dev);
 }
+
+v_U64_t vos_get_monotonic_boottime_ns(void)
+{
+	struct timespec ts;
+
+	ktime_get_ts(&ts);
+	return timespec_to_ns(&ts);
+}
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 17, 0))
+v_U64_t vos_get_bootbased_boottime_ns(void)
+{
+	return ktime_get_boot_ns();
+}
+
+#else
+v_U64_t vos_get_bootbased_boottime_ns(void)
+{
+	return ktime_to_ns(ktime_get_boottime());
+}
+#endif
+
+/**
+ * vos_do_div() - wrapper function for kernel macro(do_div).
+ *
+ * @dividend: Dividend value
+ * @divisor : Divisor value
+ *
+ * Return: Quotient
+ */
+uint64_t vos_do_div(uint64_t dividend, uint32_t divisor)
+{
+	do_div(dividend, divisor);
+	/*do_div macro updates dividend with Quotient of dividend/divisor */
+	return dividend;
+}
+
+uint64_t vos_do_div64(uint64_t dividend, uint64_t divisor)
+{
+	uint64_t n = dividend;
+	uint64_t base = divisor;
+	if ((base & 0xffffffff00000000ULL) != 0) {
+		n >>= 16;
+		base >>= 16;
+
+		if ((base & 0xffff00000000ULL) != 0) {
+			n >>= 16;
+			base >>= 16;
+		}
+		return vos_do_div(n, (uint32_t)base);
+	} else {
+		return vos_do_div(n, base);
+	}
+}
+
+/**
+ * vos_force_fw_dump() - force target to dump
+ *
+ *return
+ * VOS_STATUS_SUCCESS   - Operation completed successfully.
+ * VOS_STATUS_E_FAILURE - Operation failed.
+ */
+VOS_STATUS vos_force_fw_dump(void)
+{
+	struct ol_softc *scn;
+
+	scn = vos_get_context(VOS_MODULE_ID_HIF, gpVosContext);
+	if (!scn) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+			  "%s: scn is null!", __func__);
+		return VOS_STATUS_E_FAILURE;
+	}
+	VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+		  "%s:enter!", __func__);
+
+	ol_target_failure(scn, A_ERROR);
+
+	return VOS_STATUS_SUCCESS;
+}
+
+/**
+ * vos_is_probe_rsp_offload_enabled - API to check if probe response offload
+ *                                    feature is enabled from ini
+ *
+ * return - false: probe response offload is disabled/any-error
+ *          true: probe response offload is enabled
+ */
+bool vos_is_probe_rsp_offload_enabled(void)
+{
+	hdd_context_t *pHddCtx = NULL;
+
+	if (gpVosContext == NULL) {
+		pr_err("global voss context is NULL\n");
+		return false;
+	}
+
+	pHddCtx = (hdd_context_t *)vos_get_context(VOS_MODULE_ID_HDD,
+						   gpVosContext);
+	if (!pHddCtx) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+			  "%s: HDD context is Null", __func__);
+		return false;
+	}
+
+	return pHddCtx->cfg_ini->sap_probe_resp_offload;
+}
+
+bool vos_is_mon_enable(void)
+{
+	hdd_context_t *phdd_ctx = NULL;
+
+	if (gpVosContext == NULL) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+			  "%s: global voss context is NULL", __func__);
+		return false;
+	}
+
+	phdd_ctx = (hdd_context_t *)vos_get_context(VOS_MODULE_ID_HDD,
+						   gpVosContext);
+	if (!phdd_ctx) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+			  "%s: HDD context is Null", __func__);
+		return false;
+	}
+
+	return phdd_ctx->is_mon_enable;
+}
+#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+v_BOOL_t vos_is_ch_switch_with_csa_enabled(void)
+{
+   hdd_context_t *pHddCtx;
+
+   pHddCtx = (hdd_context_t*)(gpVosContext->pHDDContext);
+   if((NULL == pHddCtx) ||
+      (NULL == pHddCtx->cfg_ini))
+   {
+     VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+               "%s: Hdd Context is Null", __func__);
+     return FALSE;
+   }
+   return pHddCtx->cfg_ini->sap_ch_switch_with_csa;
+}
+#else
+v_BOOL_t vos_is_ch_switch_with_csa_enabled(void)
+{
+	return FALSE;
+}
+#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+
+#ifdef FEATURE_WLAN_DISABLE_CHANNEL_SWITCH
+/**
+ * vos_is_chan_ok_for_dnbs() - check if the channel is valid for dnbs
+ *
+ * @channel: the given channel to be compared
+ *
+ * This function check if the channel is valid for dnbs. If the disable channel
+ * switch is enabled and the channel is same as SAP's channel, return true, if
+ * the channel is not same as SAP's channel or there's no SAP, return false. If
+ * the disable channel switch is not enabled, return true.
+ *
+ * Return: bool
+ */
+bool vos_is_chan_ok_for_dnbs(uint8_t channel)
+{
+	hdd_context_t *pHddCtx;
+	bool equal = false;
+
+	if (!channel) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+				"%s: Invalid parameter", __func__);
+		return false;
+	}
+
+	pHddCtx = (hdd_context_t*)(gpVosContext->pHDDContext);
+	if(NULL == pHddCtx)
+	{
+	  VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
+				"%s: Hdd Context is Null", __func__);
+	  return false;
+	}
+
+	adf_os_spin_lock_bh(&pHddCtx->restrict_offchan_lock);
+	if (pHddCtx->restrict_offchan_flag) {
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO,
+				"%s: flag is set", __func__);
+		wlansap_channel_compare(gpVosContext->pMACContext, channel, &equal);
+		adf_os_spin_unlock_bh(&pHddCtx->restrict_offchan_lock);
+		return equal;
+	}
+	else
+		VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO,
+				"%s: flag is not set", __func__);
+	adf_os_spin_unlock_bh(&pHddCtx->restrict_offchan_lock);
+	return true;
+}
+#endif
+
+#ifdef CUSTOMIZED_FIRMWARE_PATH
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
+#define GET_INODE_FROM_FILEP(filp) \
+    (filp)->f_path.dentry->d_inode
+#else
+#define GET_INODE_FROM_FILEP(filp) \
+    (filp)->f_dentry->d_inode
+#endif
+#define A_ROUND_UP(x, y)  ((((x) + ((y) - 1)) / (y)) * (y))
+char *qca_fw_path= "";
+#define DEFAULT_QCA_FW_PATH     "/system/etc/wifi/qca9379"
+static int qca_readwrite_file(const char *filename,
+			char *rbuf,
+			const char *wbuf,
+			size_t length)
+{
+    int ret = 0;
+    struct file *filp = (struct file *)-ENOENT;
+    mm_segment_t oldfs;
+    oldfs = get_fs();
+    set_fs(KERNEL_DS);
+
+    hddLog(VOS_TRACE_LEVEL_INFO, "%s: filename %s \n", __func__, filename);
+
+    do {
+        int mode = (wbuf) ? O_RDWR : O_RDONLY;
+        filp = filp_open(filename, mode, S_IRUSR);
+        if (IS_ERR(filp) || !filp->f_op) {
+            hddLog(VOS_TRACE_LEVEL_ERROR, "%s: filename %s \n", __func__, filename);
+            ret = -ENOENT;
+            break;
+        }
+
+        if (length == 0) {
+            /* Read the length of the file only */
+            struct inode    *inode;
+
+            inode = GET_INODE_FROM_FILEP(filp);
+            if (!inode) {
+                hddLog(VOS_TRACE_LEVEL_ERROR, "%s: Get inode from %s failed \n",
+					__func__, filename);
+                ret = -ENOENT;
+                break;
+            }
+            ret = i_size_read(inode->i_mapping->host);
+            break;
+        }
+
+        if (wbuf) {
+           if ( (ret=filp->f_op->write(filp, wbuf, length, &filp->f_pos)) < 0) {
+                hddLog(VOS_TRACE_LEVEL_ERROR, "%s: Write %u bytes to file %s error %d\n",
+                                __FUNCTION__,
+                                (unsigned int)length, filename, ret);
+                break;
+            }
+        } else {
+            if ( (ret=filp->f_op->read(filp, rbuf, length, &filp->f_pos)) < 0) {
+                hddLog(VOS_TRACE_LEVEL_ERROR,"%s: Read %u bytes from file %s error %d\n",
+                                __FUNCTION__,
+                                (unsigned int)length, filename, ret);
+                break;
+            }
+        }
+    } while (0);
+
+    if (!IS_ERR(filp)) {
+        filp_close(filp, NULL);
+    }
+    set_fs(oldfs);
+
+    return ret;
+}
+
+static int customized_request_firmware(const struct firmware **firmware_p,
+	const char *name,
+	struct device *device)
+{
+    int ret = 0;
+    struct firmware *firmware;
+    char filename[256];
+    const char *raw_filename = name;
+    int customized = 1;
+    *firmware_p = firmware = A_MALLOC(sizeof(*firmware));
+    if (!firmware)
+        return -ENOMEM;
+    A_MEMZERO(firmware, sizeof(*firmware));
+    do {
+        size_t length, bufsize, bmisize;
+
+        if (strcmp(qca_fw_path, "") == 0)
+            customized = 0;
+        if (snprintf(filename, sizeof(filename), "%s/%s",
+                                customized?qca_fw_path:DEFAULT_QCA_FW_PATH,
+                                raw_filename) >= sizeof(filename)) {
+            hddLog(VOS_TRACE_LEVEL_ERROR, "snprintf: %s/%s\n",
+                customized?qca_fw_path:DEFAULT_QCA_FW_PATH, raw_filename);
+            ret = -1;
+            break;
+        }
+        if ( (ret=qca_readwrite_file(filename, NULL, NULL, 0)) < 0) {
+            break;
+        } else {
+            length = ret;
+        }
+
+        if (strcmp(raw_filename, "softmac") == 0) {
+            bufsize = length = 17;
+        } else {
+            bufsize = ALIGN(length, PAGE_SIZE);
+            bmisize = A_ROUND_UP(length, 4);
+            bufsize = max(bmisize, bufsize);
+        }
+        firmware->data = vmalloc(bufsize);
+        firmware->size = length;
+
+        if (!firmware->data) {
+            hddLog(VOS_TRACE_LEVEL_ERROR, "%s: Cannot allocate buffer for firmware\n",
+                             __FUNCTION__);
+            ret = -ENOMEM;
+            break;
+        }
+
+        if ( (ret=qca_readwrite_file(filename, (char*)firmware->data, NULL, length)) != length) {
+            hddLog(VOS_TRACE_LEVEL_ERROR, "%s: file read error, ret %d request %d\n",
+                            __FUNCTION__,ret,(int)length);
+            ret = -1;
+            break;
+        }
+
+    } while (0);
+
+    if (ret<0) {
+        if (firmware) {
+        if (firmware->data)
+                vfree(firmware->data);
+            A_FREE(firmware);
+        }
+        *firmware_p = NULL;
+    } else {
+        ret = 0;
+    }
+    return ret;
+}
+
+module_param(qca_fw_path, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+
+#endif
+
+int qca_request_firmware(const struct firmware **firmware_p,
+                const char *name,
+                struct device *device)
+{
+#ifdef CUSTOMIZED_FIRMWARE_PATH
+    return customized_request_firmware(firmware_p, name,device);
+#else
+    return request_firmware(firmware_p, name,device);
+#endif
+}
+
+#ifdef WLAN_SMART_ANTENNA_FEATURE
+uint32_t vos_get_smart_ant_cfg(void)
+{
+	hdd_context_t *hdd_ctx;
+	v_CONTEXT_t vos_context = vos_get_global_context(0, NULL);
+
+	hdd_ctx = vos_get_context(VOS_MODULE_ID_HDD, vos_context);
+	if (!hdd_ctx)
+		return 0;
+	else
+		return hdd_ctx->cfg_ini->smart_antenna_cfg;
+}
+#endif

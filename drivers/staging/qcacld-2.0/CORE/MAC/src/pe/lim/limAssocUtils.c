@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -42,7 +42,7 @@
 #include "wniApi.h"
 #include "sirCommon.h"
 
-#include "wniCfgSta.h"
+#include "wni_cfg.h"
 #include "pmmApi.h"
 #include "cfgApi.h"
 
@@ -64,6 +64,7 @@
 #include "vos_types.h"
 #include "wlan_qct_wda.h"
 
+#include "if_smart_antenna.h"
 /*
  * fill up the rate info properly based on what is actually supported by the peer
  * TBD TBD TBD
@@ -407,8 +408,8 @@ limCheckMCSSet(tpAniSirGlobal pMac, tANI_U8* supportedMCSSet)
  *
  * @param  rxRSNIe - received RSN IE in (Re)Assco req
  *
- * @return status - true if ALL BSS basic rates are present in the
- *                  received rateset else false.
+ * @return status - true if ALL supported cipher suites are present in the
+ *                  received rsn IE else false.
  */
 
 tANI_U8
@@ -530,8 +531,8 @@ limCheckRxRSNIeMatch(tpAniSirGlobal pMac, tDot11fIERSN rxRSNIe,tpPESession pSess
  *
  * @param  rxWPAIe - Received WPA IE in (Re)Assco req
  *
- * @return status - true if ALL BSS basic rates are present in the
- *                  received rateset else false.
+ * @return status - true if ALL supported cipher suites are present in the
+ *                  received wpa IE else false.
  */
 
 tANI_U8
@@ -880,15 +881,15 @@ limSendDelStaCnf(tpAniSirGlobal pMac, tSirMacAddr staDsAddr,
                                     mlmStaContext.resultCode,
                                     mlmStaContext.protStatusCode,
                                     psessionEntry->peSessionId);
+
+            limSendSmeJoinReassocRsp(pMac, eWNI_SME_REASSOC_RSP,
+                               mlmStaContext.resultCode, mlmStaContext.protStatusCode, psessionEntry,
+                               smesessionId, smetransactionId);
             if(mlmStaContext.resultCode != eSIR_SME_SUCCESS )
             {
                 peDeleteSession(pMac, psessionEntry);
                 psessionEntry = NULL;
             }
-
-            limSendSmeJoinReassocRsp(pMac, eWNI_SME_REASSOC_RSP,
-                               mlmStaContext.resultCode, mlmStaContext.protStatusCode, psessionEntry,
-                               smesessionId, smetransactionId);
         }
         else
         {
@@ -902,17 +903,17 @@ limSendDelStaCnf(tpAniSirGlobal pMac, tSirMacAddr staDsAddr,
                                     mlmStaContext.protStatusCode,
                                     psessionEntry->peSessionId);
 
-            if(mlmStaContext.resultCode != eSIR_SME_SUCCESS)
-            {
-                peDeleteSession(pMac,psessionEntry);
-                psessionEntry = NULL;
-            }
 
             limSendSmeJoinReassocRsp(pMac, eWNI_SME_JOIN_RSP,
                                      mlmStaContext.resultCode,
                                      mlmStaContext.protStatusCode,
                                      psessionEntry, smesessionId,
                                      smetransactionId);
+            if(mlmStaContext.resultCode != eSIR_SME_SUCCESS)
+            {
+                peDeleteSession(pMac,psessionEntry);
+                psessionEntry = NULL;
+            }
         }
 
     }
@@ -2277,8 +2278,83 @@ limPopulateMatchingRateSet(tpAniSirGlobal pMac,
     return eSIR_FAILURE;
 } /*** limPopulateMatchingRateSet() ***/
 
+#ifdef WLAN_SMART_ANTENNA_FEATURE
+/**
+ * lim_sa_assoc_ind() - Indicate node connection to SA module
+ * @stads: Node description
+ */
+void lim_sa_assoc_ind(tpDphHashNode stads)
+{
+	uint32_t i, rate_num;
+	tpSirSupportedRates rate_cap;
+	struct sa_node_info node_info;
 
+	vos_mem_copy(node_info.mac_addr, stads->staAddr, sizeof(stads->staAddr));
+	rate_cap = &stads->supportedRates;
+	rate_num = 0;
+	for (i = 0; i < SIR_NUM_11B_RATES; i++) {
+		if (!rate_cap->llbRates[i])
+			continue;
+		node_info.rate_cap.ratecode_legacy[rate_num] =
+						rate_cap->llbRates[i];
+		rate_num++;
+	}
 
+	for (i = 0; i < SIR_NUM_11A_RATES; i++) {
+		if (!rate_cap->llaRates[i])
+			continue;
+		node_info.rate_cap.ratecode_legacy[rate_num] =
+						rate_cap->llaRates[i];
+		rate_num++;
+	}
+	node_info.rate_cap.ratecount[RATE_INDEX_CCK_OFDM] = rate_num;
+
+	rate_num = 0;
+	for (i = 0; i < SIR_MAC_MAX_SUPPORTED_MCS_SET; i++) {
+		if (rate_cap->supportedMCSSet[i / 8] & (1 << (i % 8))) {
+			node_info.rate_cap.mcs[rate_num++] = i;
+		}
+	}
+	node_info.rate_cap.ratecount[RATE_INDEX_MCS] = rate_num;
+
+	/* 20M bandwidth is the default mode */
+	node_info.node_caps |= SMART_ANT_BW_20MHZ;
+
+	if (stads->htSupportedChannelWidthSet)
+		node_info.node_caps |= SMART_ANT_NODE_HT | SMART_ANT_BW_40MHZ;
+
+	if (stads->vhtSupportedChannelWidthSet ==
+			WNI_CFG_VHT_CHANNEL_WIDTH_80MHZ)
+		node_info.node_caps |= SMART_ANT_NODE_VHT | SMART_ANT_BW_80MHZ;
+
+	if (stads->sub20_dynamic_channelwidth & SUB20_MODE_5MHZ)
+		node_info.node_caps |= SMART_ANT_BW_5MHZ;
+
+	if (stads->sub20_dynamic_channelwidth & SUB20_MODE_10MHZ)
+		node_info.node_caps |= SMART_ANT_BW_10MHZ;
+
+	node_info.nss = stads->nss;
+
+	smart_antenna_node_connected(&node_info);
+}
+
+/**
+ * lim_sa_disassoc_ind() - Indicate node disconnection to SA module
+ * @stads: Node description
+ */
+void lim_sa_disassoc_ind(tpDphHashNode stads)
+{
+	smart_antenna_node_disconnected(stads->staAddr);
+}
+#else
+static inline void lim_sa_assoc_ind(tpDphHashNode stads)
+{
+}
+
+static inline void lim_sa_disassoc_ind(tpDphHashNode stads)
+{
+}
+#endif
 /**
  * limAddSta()
  *
@@ -2358,6 +2434,9 @@ limAddSta(
     //Copy legacy rates
     vos_mem_copy ((tANI_U8*)&pAddStaParams->supportedRates,
                   (tANI_U8*)&pStaDs->supportedRates, sizeof(tSirSupportedRates));
+
+    if (pMac->mcs_tx_force2chain == true)
+        pAddStaParams->supportedRates.mcs_txforce2chain = true;
 
     pAddStaParams->assocId = pStaDs->assocId;
 
@@ -2733,6 +2812,7 @@ limAddSta(
         vos_mem_free(pAddStaParams);
     }
 
+    lim_sa_assoc_ind(pStaDs);
   return retCode;
 }
 
@@ -2858,6 +2938,7 @@ limDelSta(
         vos_mem_free(pDelStaParams);
     }
 
+    lim_sa_disassoc_ind(pStaDs);
     return retCode;
 }
 
@@ -3322,6 +3403,19 @@ limDeleteDphHashEntry(tpAniSirGlobal pMac, tSirMacAddr staAddr, tANI_U16 staId,t
                 }
             }
 
+            if (pStaDs->non_ecsa_capable) {
+                    if (psessionEntry->lim_non_ecsa_cap_num == 0) {
+                            limLog(pMac, LOGE,
+                                   FL("Non ECSA sta cnt 0, sta: %d is ecsa\n"),
+                                   staId);
+                    } else {
+                            psessionEntry->lim_non_ecsa_cap_num--;
+                            limLog(pMac, LOGE,
+                                   FL("reducing the non ECSA num to %d"),
+                                   psessionEntry->lim_non_ecsa_cap_num);
+                    }
+            }
+
             if (LIM_IS_IBSS_ROLE(psessionEntry))
                 limIbssDecideProtectionOnDelete(pMac, pStaDs, &beaconParams, psessionEntry);
 
@@ -3348,8 +3442,6 @@ limDeleteDphHashEntry(tpAniSirGlobal pMac, tSirMacAddr staAddr, tANI_U16 staId,t
 #endif
     }
 }
-
-
 
 /**
  * limCheckAndAnnounceJoinSuccess()
@@ -3499,6 +3591,8 @@ limCheckAndAnnounceJoinSuccess(tpAniSirGlobal pMac,
                     "VHT caps are present in vendor specific IE"));
     }
 
+    /* Update HS 2.0 Information Element */
+    sir_copy_hs20_ie(&psessionEntry->hs20vendor_ie, &pBPR->hs20vendor_ie);
 }
 
 /**
@@ -3755,6 +3849,7 @@ tSirRetStatus limStaSendAddBss( tpAniSirGlobal pMac, tpSirAssocRsp pAssocRsp,
     tSirRetStatus retCode = eSIR_SUCCESS;
     tpDphHashNode pStaDs = NULL;
     tANI_U8 chanWidthSupp = 0;
+    tANI_U8 isVHTCapInVendorIE = 0;
     tANI_U32 shortGi20MhzSupport;
     tANI_U32 shortGi40MhzSupport;
     tANI_U32 enableTxBF20MHz;
@@ -3998,7 +4093,7 @@ tSirRetStatus limStaSendAddBss( tpAniSirGlobal pMac, tpSirAssocRsp pAssocRsp,
                               &pAssocRsp->vendor2_ie.VHTCaps;
                       limLog(pMac, LOG1,
                               FL("VHT Caps is present in vendor Specfic IE"));
-
+                      isVHTCapInVendorIE = 1;
                 }
                 if ((vht_caps != NULL) && (vht_caps->suBeamFormerCap ||
                       vht_caps->muBeamformerCap) &&
@@ -4123,11 +4218,16 @@ tSirRetStatus limStaSendAddBss( tpAniSirGlobal pMac, tpSirAssocRsp pAssocRsp,
                             (tANI_U8)pAssocRsp->HTCaps.advCodingCap;
                 else
                     pAddBssParams->staContext.htLdpcCapable = 0;
-                if (psessionEntry->txLdpcIniFeatureEnabled & 0x2)
-                    pAddBssParams->staContext.vhtLdpcCapable =
-                        (tANI_U8)pAssocRsp->VHTCaps.ldpcCodingCap;
-                else
+                if (psessionEntry->txLdpcIniFeatureEnabled & 0x2) {
+                    if (!isVHTCapInVendorIE)
+                        pAddBssParams->staContext.vhtLdpcCapable =
+                            (tANI_U8)pAssocRsp->VHTCaps.ldpcCodingCap;
+                    else
+                        pAddBssParams->staContext.vhtLdpcCapable =
+                            (tANI_U8)vht_caps->ldpcCodingCap;
+                } else {
                     pAddBssParams->staContext.vhtLdpcCapable = 0;
+                }
             }
 
             if( pBeaconStruct->HTInfo.present )
@@ -4185,6 +4285,9 @@ tSirRetStatus limStaSendAddBss( tpAniSirGlobal pMac, tpSirAssocRsp pAssocRsp,
             vos_mem_copy((tANI_U8*)&pAddBssParams->staContext.supportedRates,
                                                 (tANI_U8*)&pStaDs->supportedRates,
                                                 sizeof(tSirSupportedRates));
+            if (pMac->mcs_tx_force2chain == true)
+                pAddBssParams->staContext.supportedRates.mcs_txforce2chain
+                 = true;
         }
         else
             PELOGE(limLog(pMac, LOGE, FL("could not Update the supported rates."));)
@@ -4252,6 +4355,11 @@ tSirRetStatus limStaSendAddBss( tpAniSirGlobal pMac, tpSirAssocRsp pAssocRsp,
     }
     //we need to defer the message until we get the response back from HAL.
     SET_LIM_PROCESS_DEFD_MESGS(pMac, false);
+
+    if (psessionEntry->sub20_channelwidth == SUB20_MODE_5MHZ)
+            pAddBssParams->channelwidth = CH_WIDTH_5MHZ;
+    else if (psessionEntry->sub20_channelwidth == SUB20_MODE_10MHZ)
+            pAddBssParams->channelwidth = CH_WIDTH_10MHZ;
 
     msgQ.type = WDA_ADD_BSS_REQ;
     /** @ToDo : Update the Global counter to keeptrack of the PE <--> HAL messages*/
@@ -4323,11 +4431,10 @@ tSirRetStatus limStaSendAddBssPreAssoc( tpAniSirGlobal pMac, tANI_U8 updateEntry
                             GET_IE_LEN_IN_BSS(bssDescription->length),
                             pBeaconStruct);
 
-    if (pMac->lim.gLimProtectionControl != WNI_CFG_FORCE_POLICY_PROTECTION_DISABLE) {
+    if(pMac->lim.gLimProtectionControl != WNI_CFG_FORCE_POLICY_PROTECTION_DISABLE)
         limDecideStaProtectionOnAssoc(pMac, pBeaconStruct, psessionEntry);
-        vos_mem_copy(pAddBssParams->bssId, bssDescription->bssId,
+    vos_mem_copy(pAddBssParams->bssId, bssDescription->bssId,
                      sizeof(tSirMacAddr));
-    }
 
     // Fill in tAddBssParams selfMacAddr
     vos_mem_copy(pAddBssParams->selfMacAddr,
@@ -4710,6 +4817,11 @@ tSirRetStatus limStaSendAddBssPreAssoc( tpAniSirGlobal pMac, tANI_U8 updateEntry
 
     //we need to defer the message until we get the response back from HAL.
     SET_LIM_PROCESS_DEFD_MESGS(pMac, false);
+
+    if (psessionEntry->sub20_channelwidth == SUB20_MODE_5MHZ)
+            pAddBssParams->channelwidth = CH_WIDTH_5MHZ;
+    else if (psessionEntry->sub20_channelwidth == SUB20_MODE_10MHZ)
+            pAddBssParams->channelwidth = CH_WIDTH_10MHZ;
 
     msgQ.type = WDA_ADD_BSS_REQ;
     /** @ToDo : Update the Global counter to keeptrack of the PE <--> HAL messages*/

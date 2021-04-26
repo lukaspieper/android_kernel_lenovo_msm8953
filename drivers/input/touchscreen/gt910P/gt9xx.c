@@ -19,7 +19,6 @@
  */
 
 #include <linux/irq.h>
-#include <linux/hqsysfs.h>
 #include "gt9xx.h"
 
 #if GTP_ICS_SLOT_REPORT
@@ -783,9 +782,9 @@ static void goodix_ts_work_func(struct work_struct *work)
                     GTP_INFO("Wakeup by gesture(^), light up the screen!");
                 }
                 doze_status = DOZE_WAKEUP;
-                input_report_key(ts->input_dev, KEY_POWER, 1);
+                input_report_key(ts->input_dev, KEY_WAKEUP, 1);
                 input_sync(ts->input_dev);
-                input_report_key(ts->input_dev, KEY_POWER, 0);
+                input_report_key(ts->input_dev, KEY_WAKEUP, 0);
                 input_sync(ts->input_dev);
                 // clear 0x814B
                 doze_buf[2] = 0x00;
@@ -799,9 +798,9 @@ static void goodix_ts_work_func(struct work_struct *work)
                 
                 GTP_INFO("%s slide to light up the screen!", direction[type]);
                 doze_status = DOZE_WAKEUP;
-                input_report_key(ts->input_dev, KEY_POWER, 1);
+                input_report_key(ts->input_dev, KEY_WAKEUP, 1);
                 input_sync(ts->input_dev);
-                input_report_key(ts->input_dev, KEY_POWER, 0);
+                input_report_key(ts->input_dev, KEY_WAKEUP, 0);
                 input_sync(ts->input_dev);
                 // clear 0x814B
                 doze_buf[2] = 0x00;
@@ -811,9 +810,9 @@ static void goodix_ts_work_func(struct work_struct *work)
             {
                 GTP_INFO("Double click to light up the screen!");
                 doze_status = DOZE_WAKEUP;
-                input_report_key(ts->input_dev, KEY_POWER, 1);
+                input_report_key(ts->input_dev, KEY_WAKEUP, 1);
                 input_sync(ts->input_dev);
-                input_report_key(ts->input_dev, KEY_POWER, 0);
+                input_report_key(ts->input_dev, KEY_WAKEUP, 0);
                 input_sync(ts->input_dev);
                 // clear 0x814B
                 doze_buf[2] = 0x00;
@@ -1647,18 +1646,16 @@ static s32 gtp_init_panel(struct goodix_ts_data *ts)
 	        return -1;
 	    }
 	}
-         GTP_INFO("Sensor_ID: %d", sensor_id);
-        if (sensor_id == 0){//ofilm
-        snprintf(hw_info, 40, "gt9110P Ofilm Config_Version:%d,0x%02x", config[GTP_ADDR_LENGTH], config[GTP_ADDR_LENGTH]);
-        GTP_DEBUG("%s\n",hw_info);
-        hq_regiser_hw_info(HWID_CTP,hw_info);
-        }
-        else if (sensor_id == 2){//avc
-        snprintf(hw_info, 40, "gt9110P avc Config_Version:%d,0x%02x", config[GTP_ADDR_LENGTH], config[GTP_ADDR_LENGTH]);
-        GTP_DEBUG("%s\n",hw_info);
-        hq_regiser_hw_info(HWID_CTP,hw_info);
-        }  //add hw info for CTP
-        
+	GTP_INFO("Sensor_ID: %d", sensor_id);
+	if (sensor_id == 0) {//ofilm
+		snprintf(hw_info, 40, "gt9110P Ofilm Config_Version:%d,0x%02x", config[GTP_ADDR_LENGTH], config[GTP_ADDR_LENGTH]);
+		GTP_DEBUG("%s\n",hw_info);
+	}
+	else if (sensor_id == 2){//avc
+		snprintf(hw_info, 40, "gt9110P avc Config_Version:%d,0x%02x", config[GTP_ADDR_LENGTH], config[GTP_ADDR_LENGTH]);
+		GTP_DEBUG("%s\n",hw_info);
+	}  //add hw info for CTP
+
 #if GTP_CUSTOM_CFG
     config[RESOLUTION_LOC]     = (u8)GTP_MAX_WIDTH;
     config[RESOLUTION_LOC + 1] = (u8)(GTP_MAX_WIDTH>>8);
@@ -2028,7 +2025,7 @@ static s8 gtp_request_input_dev(struct goodix_ts_data *ts)
 #endif
 
 #if GTP_GESTURE_WAKEUP
-    input_set_capability(ts->input_dev, EV_KEY, KEY_POWER);
+    input_set_capability(ts->input_dev, EV_KEY, KEY_WAKEUP);
 	gesture_create_sysfs(ts->client);
 #endif 
 

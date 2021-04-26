@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014, 2016-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -296,6 +296,24 @@ VOS_STATUS vos_timer_start( vos_timer_t *timer, v_U32_t expirationTime );
   ------------------------------------------------------------------------*/
 VOS_STATUS vos_timer_stop( vos_timer_t *timer );
 
+/*--------------------------------------------------------------------------
+
+  \brief vos_timer_deinit() - De-init a vOSS Timer
+
+  The \a vos_timer_deinit() function stop (if the timer is in running state)
+  and destroy a timer.
+
+  \param timer - the timer object to be stopped
+
+  \return VOS_STATUS_SUCCESS - timer was successfully de-initialized.
+
+          VOS_STATUS_E_INVAL - The value specified by timer is invalid.
+
+          VOS_STATUS_E_FAULT  - timer is an invalid pointer.
+  \sa
+
+  ------------------------------------------------------------------------*/
+VOS_STATUS vos_timer_deinit(vos_timer_t *timer);
 
 /*--------------------------------------------------------------------------
 
@@ -348,6 +366,19 @@ static inline vos_time_t vos_system_ticks(void)
 static inline uint32_t vos_system_ticks_to_msecs(vos_time_t ticks)
 {
 	return __vos_system_ticks_to_msecs(ticks);
+}
+
+/**
+ * vos_system_time_after() - Check if a is later than b
+ * @a: Time stamp value a
+ * @b: Time stamp value b
+ *
+ * Return:
+ * true if a is after b else false
+ */
+static inline bool vos_system_time_after(vos_time_t a, vos_time_t b)
+{
+	return (long)(b) - (long)(a) < 0;
 }
 
 unsigned long vos_get_time_of_the_day_ms(void);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, 2018-2019 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,6 +17,8 @@
 #include <linux/uaccess.h>
 #include <linux/mutex.h>
 #include <sound/audio_cal_utils.h>
+
+static DEFINE_MUTEX(destroy_cal_lock);
 
 static int unmap_memory(struct cal_type_data *cal_type,
 			struct cal_block_data *cal_block);
@@ -154,9 +156,6 @@ size_t get_cal_info_size(int32_t cal_type)
 		break;
 	case ULP_LSM_CAL_TYPE:
 		size = sizeof(struct audio_cal_info_lsm);
-		break;
-	case DTS_EAGLE_CAL_TYPE:
-		size = 0;
 		break;
 	case AUDIO_CORE_METAINFO_CAL_TYPE:
 		size = sizeof(struct audio_cal_info_metainfo);
@@ -301,9 +300,6 @@ size_t get_user_cal_type_size(int32_t cal_type)
 	case ULP_LSM_CAL_TYPE:
 		size = sizeof(struct audio_cal_type_lsm);
 		break;
-	case DTS_EAGLE_CAL_TYPE:
-		size = 0;
-		break;
 	case AUDIO_CORE_METAINFO_CAL_TYPE:
 		size = sizeof(struct audio_cal_type_metainfo);
 		break;
@@ -441,6 +437,7 @@ static void destroy_all_cal_blocks(struct cal_type_data *cal_type)
 	struct list_head		*ptr, *next;
 	struct cal_block_data		*cal_block;
 
+	mutex_lock(&destroy_cal_lock);
 	list_for_each_safe(ptr, next,
 		&cal_type->cal_blocks) {
 
@@ -457,6 +454,7 @@ static void destroy_all_cal_blocks(struct cal_type_data *cal_type)
 		delete_cal_block(cal_block);
 		cal_block = NULL;
 	}
+	mutex_unlock(&destroy_cal_lock);
 
 	return;
 }
@@ -489,11 +487,13 @@ void cal_utils_destroy_cal_types(int num_cal_types,
 		goto done;
 	}
 
+	mutex_lock(&destroy_cal_lock);
 	for (i = 0; i < num_cal_types; i++) {
 		audio_cal_deregister(1, &cal_type[i]->info.reg);
 		destroy_cal_type_data(cal_type[i]);
 		cal_type[i] = NULL;
 	}
+	mutex_unlock(&destroy_cal_lock);
 done:
 	return;
 }
@@ -601,7 +601,6 @@ static struct cal_block_data *create_cal_block(struct cal_type_data *cal_type,
 	}
 
 	INIT_LIST_HEAD(&cal_block->list);
-	list_add_tail(&cal_block->list, &cal_type->cal_blocks);
 
 	cal_block->map_data.ion_map_handle = basic_cal->cal_data.mem_handle;
 	if (basic_cal->cal_data.mem_handle > 0) {
@@ -633,6 +632,7 @@ static struct cal_block_data *create_cal_block(struct cal_type_data *cal_type,
 		goto err;
 	}
 	cal_block->buffer_number = basic_cal->cal_hdr.buffer_number;
+	list_add_tail(&cal_block->list, &cal_type->cal_blocks);
 	pr_debug("%s: created block for cal type %d, buf num %d, map handle %d, map size %zd paddr 0x%pK!\n",
 		__func__, cal_type->info.reg.cal_type,
 		cal_block->buffer_number,
@@ -642,6 +642,10 @@ static struct cal_block_data *create_cal_block(struct cal_type_data *cal_type,
 done:
 	return cal_block;
 err:
+	kfree(cal_block->cal_info);
+	cal_block->cal_info = NULL;
+	kfree(cal_block->client_info);
+	cal_block->client_info = NULL;
 	kfree(cal_block);
 	cal_block = NULL;
 	return cal_block;
@@ -665,21 +669,22 @@ void cal_utils_clear_cal_block_q6maps(int num_cal_types,
 		goto done;
 	}
 
+	mutex_lock(&destroy_cal_lock);
 	for (; i < num_cal_types; i++) {
 		if (cal_type[i] == NULL)
 			continue;
 
-		mutex_lock(&cal_type[i]->lock);
 		list_for_each_safe(ptr, next,
 			&cal_type[i]->cal_blocks) {
 
 			cal_block = list_entry(ptr,
 				struct cal_block_data, list);
 
-			cal_block->map_data.q6map_handle = 0;
+			if (cal_block != NULL)
+				cal_block->map_data.q6map_handle = 0;
 		}
-		mutex_unlock(&cal_type[i]->lock);
 	}
+	mutex_unlock(&destroy_cal_lock);
 done:
 	return;
 }

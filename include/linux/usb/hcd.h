@@ -169,6 +169,7 @@ struct usb_hcd {
 	 * bandwidth_mutex should be dropped after a successful control message
 	 * to the device, or resetting the bandwidth after a failed attempt.
 	 */
+	struct mutex		*address0_mutex;
 	struct mutex		*bandwidth_mutex;
 	struct usb_hcd		*shared_hcd;
 	struct usb_hcd		*primary_hcd;
@@ -387,15 +388,6 @@ struct hc_driver {
 	void	(*dump_regs)(struct usb_hcd *);
 	void	(*set_autosuspend_delay)(struct usb_device *);
 	void	(*reset_sof_bug_handler)(struct usb_hcd *hcd, u32 val);
-
-	int (*sec_event_ring_setup)(struct usb_hcd *hcd, unsigned intr_num);
-	int (*sec_event_ring_cleanup)(struct usb_hcd *hcd, unsigned intr_num);
-	dma_addr_t (*get_sec_event_ring_dma_addr)(struct usb_hcd *hcd,
-			unsigned intr_num);
-	dma_addr_t (*get_xfer_ring_dma_addr)(struct usb_hcd *hcd,
-			struct usb_device *udev, struct usb_host_endpoint *ep);
-	dma_addr_t (*get_dcba_dma_addr)(struct usb_hcd *hcd,
-			struct usb_device *udev);
 };
 
 static inline int hcd_giveback_urb_in_bh(struct usb_hcd *hcd)
@@ -434,17 +426,6 @@ extern int usb_hcd_alloc_bandwidth(struct usb_device *udev,
 		struct usb_host_interface *old_alt,
 		struct usb_host_interface *new_alt);
 extern int usb_hcd_get_frame_number(struct usb_device *udev);
-extern int usb_hcd_sec_event_ring_setup(struct usb_device *udev,
-	unsigned intr_num);
-extern int usb_hcd_sec_event_ring_cleanup(struct usb_device *udev,
-	unsigned intr_num);
-extern dma_addr_t
-usb_hcd_get_sec_event_ring_dma_addr(struct usb_device *udev,
-		unsigned intr_num);
-extern dma_addr_t usb_hcd_get_dcba_dma_addr(struct usb_device *udev);
-extern dma_addr_t
-usb_hcd_get_xfer_ring_dma_addr(struct usb_device *udev,
-	struct usb_host_endpoint *ep);
 
 extern struct usb_hcd *usb_create_hcd(const struct hc_driver *driver,
 		struct device *dev, const char *bus_name);
@@ -454,9 +435,6 @@ extern struct usb_hcd *usb_create_shared_hcd(const struct hc_driver *driver,
 extern struct usb_hcd *usb_get_hcd(struct usb_hcd *hcd);
 extern void usb_put_hcd(struct usb_hcd *hcd);
 extern int usb_hcd_is_primary_hcd(struct usb_hcd *hcd);
-extern int usb_add_hcd(struct usb_hcd *hcd,
-		unsigned int irqnum, unsigned long irqflags);
-extern void usb_remove_hcd(struct usb_hcd *hcd);
 extern int usb_hcd_find_raw_port_number(struct usb_hcd *hcd, int port1);
 
 struct platform_device;
@@ -656,15 +634,6 @@ extern int hcd_bus_suspend(struct usb_device *rhdev, pm_message_t msg);
 extern int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg);
 #endif /* CONFIG_PM */
 
-#ifdef CONFIG_PM_RUNTIME
-extern void usb_hcd_resume_root_hub(struct usb_hcd *hcd);
-#else
-static inline void usb_hcd_resume_root_hub(struct usb_hcd *hcd)
-{
-	return;
-}
-#endif /* CONFIG_PM_RUNTIME */
-
 /*-------------------------------------------------------------------------*/
 
 #if defined(CONFIG_USB_MON) || defined(CONFIG_USB_MON_MODULE)
@@ -729,6 +698,29 @@ extern struct rw_semaphore ehci_cf_port_reset_rwsem;
 #define USB_OHCI_LOADED		1
 #define USB_EHCI_LOADED		2
 extern unsigned long usb_hcds_loaded;
+
+#ifdef CONFIG_USB
+extern int usb_add_hcd(struct usb_hcd *hcd,
+		unsigned int irqnum, unsigned long irqflags);
+extern void usb_remove_hcd(struct usb_hcd *hcd);
+#ifdef CONFIG_PM_RUNTIME
+extern void usb_hcd_resume_root_hub(struct usb_hcd *hcd);
+#else
+static inline void usb_hcd_resume_root_hub(struct usb_hcd *hcd) {}
+#endif /* CONFIG_PM_RUNTIME */
+
+#else  /* CONFIG_USB */
+
+static inline int usb_add_hcd(struct usb_hcd *hcd,
+		unsigned int irqnum, unsigned long irqflags)
+{
+	return 0;
+}
+
+static inline void usb_remove_hcd(struct usb_hcd *hcd) {}
+static inline void usb_hcd_resume_root_hub(struct usb_hcd *hcd) {}
+
+#endif /* CONFIG_USB */
 
 #endif /* __KERNEL__ */
 

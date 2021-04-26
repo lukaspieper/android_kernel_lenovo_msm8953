@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2014, 2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -39,7 +39,7 @@
  */
 
 #include "wniApi.h"
-#include "wniCfgSta.h"
+#include "wni_cfg.h"
 #include "aniGlobal.h"
 #include "cfgApi.h"
 
@@ -52,7 +52,7 @@
 #include "limFT.h"
 #endif
 #include "vos_utils.h"
-
+#include "lim_process_fils.h"
 
 /**
  * isAuthValid
@@ -105,6 +105,46 @@ isAuthValid(tpAniSirGlobal pMac, tpSirMacAuthFrameBody auth,
     return valid;
 }
 
+#ifdef WLAN_FEATURE_SAE
+/**
+ * lim_process_sae_auth_frame()-Process SAE authentication frame
+ * @mac_ctx: MAC context
+ * @rx_pkt_info: Rx packet
+ * @pe_session: PE session
+ *
+ * Return: None
+ */
+static void lim_process_sae_auth_frame(tpAniSirGlobal mac_ctx,
+				uint8_t *rx_pkt_info, tpPESession pe_session)
+{
+	tpSirMacMgmtHdr mac_hdr;
+	uint32_t frame_len;
+	uint8_t *body_ptr;
+
+	mac_hdr = WDA_GET_RX_MAC_HEADER(rx_pkt_info);
+	body_ptr = WDA_GET_RX_MPDU_DATA(rx_pkt_info);
+	frame_len = WDA_GET_RX_PAYLOAD_LEN(rx_pkt_info);
+
+	limLog(mac_ctx, LOG1,
+		FL("Received SAE Auth frame type %d subtype %d"),
+		mac_hdr->fc.type, mac_hdr->fc.subType);
+
+	if (pe_session->limMlmState != eLIM_MLM_WT_SAE_AUTH_STATE)
+		limLog(mac_ctx, LOGE,
+			FL("received SAE auth response in unexpected state %x"),
+			pe_session->limMlmState);
+
+	limSendSmeMgmtFrameInd(mac_ctx, mac_hdr->fc.subType,
+			(uint8_t *) mac_hdr,
+			frame_len + sizeof(tSirMacMgmtHdr), 0,
+			WDA_GET_RX_CH(rx_pkt_info), pe_session,
+			WDA_GET_RX_RSSI_NORMALIZED(rx_pkt_info));
+}
+#else
+static void lim_process_sae_auth_frame(tpAniSirGlobal mac_ctx,
+				uint8_t *rx_pkt_info, tpPESession pe_session)
+{}
+#endif
 
 /**
  * limProcessAuthFrame
@@ -165,6 +205,7 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
     tpDphHashNode           pStaDs = NULL;
     tANI_U16                assocId = 0;
     tANI_U16                currSeqNum = 0;
+    tANI_U16                auth_alg = 0;
 
     // Get pointer to Authentication frame header and body
     pHdr = WDA_GET_RX_MAC_HEADER(pRxPacketInfo);
@@ -178,7 +219,7 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
                FL("received Authentication frame with no body from "));
         limPrintMacAddr(pMac, pHdr->sa, LOGE);
 
-        goto free;
+        return;
     }
 
     if (limIsGroupAddr(pHdr->sa))
@@ -189,7 +230,7 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
                FL("received Auth frame from a BC/MC address - "));)
         PELOGE( limPrintMacAddr(pMac, pHdr->sa, LOGE);)
 
-        goto free;
+        return;
     }
     currSeqNum = (pHdr->seqControl.seqNumHi << 4) |
                     (pHdr->seqControl.seqNumLo);
@@ -200,8 +241,27 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
                psessionEntry->limMlmState, MAC_ADDR_ARRAY(pHdr->bssId),
               (uint)abs((tANI_S8)WDA_GET_RX_RSSI_NORMALIZED(pRxPacketInfo)));
 
+    /*
+     * IOT AP configured in WEP open type sends auth frame with
+     * same sequence number. DUT sends auth frame, first with auth
+     * algo as shared key and then as open system. Since, AP sends
+     * auth frame with same sequence number, DUT drops the second
+     * auth frame from AP which results in authentication failure.
+     */
+    if (psessionEntry->prev_auth_seq_num == currSeqNum && pHdr->fc.retry) {
+        limLog(pMac, LOGE,
+               FL("auth frame, seq num: %d is already processed, drop it"),
+               currSeqNum);
+        return;
+    }
+
+    /* save seq number in pe_session */
+    psessionEntry->prev_auth_seq_num = currSeqNum;
+
     pBody = WDA_GET_RX_MPDU_DATA(pRxPacketInfo);
 
+    auth_alg = *(uint16_t *)pBody;
+    limLog(pMac, LOG1, FL("auth_alg %d "), auth_alg);
     //Restore default failure timeout
     if (VOS_P2P_CLIENT_MODE == psessionEntry->pePersona && psessionEntry->defaultAuthFailureTimeout)
     {
@@ -290,9 +350,9 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
             goto free;
         }
 
-	if ((frameLen < LIM_ENCR_AUTH_BODY_LEN_SAP) ||
-	    (frameLen > LIM_ENCR_AUTH_BODY_LEN))
-	{
+        if ((frameLen < LIM_ENCR_AUTH_BODY_LEN_SAP) ||
+            (frameLen > LIM_ENCR_AUTH_BODY_LEN))
+        {
             // Log error
             limLog(pMac, LOGE,
                    FL("Not enough size [%d] to decrypt received Auth frame"),
@@ -573,6 +633,10 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
                                  eSIR_FALSE);
             goto free;
         } // else if (wlan_cfgGetInt(CFG_PRIVACY_OPTION_IMPLEMENTED))
+    } else if ((auth_alg ==
+        eSIR_AUTH_TYPE_SAE) && (LIM_IS_STA_ROLE(psessionEntry))) {
+        lim_process_sae_auth_frame(pMac, pRxPacketInfo, psessionEntry);
+        goto free;
     } // if (fc.wep)
     else
     {
@@ -589,12 +653,16 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
 
     pRxAuthFrameBody = rxAuthFrame;
 
-   PELOGW(limLog(pMac, LOGW,
+    PELOGW(limLog(pMac, LOGW,
            FL("Received Auth frame with type=%d seqnum=%d, status=%d (%d)"),
            (tANI_U32) pRxAuthFrameBody->authAlgoNumber,
            (tANI_U32) pRxAuthFrameBody->authTransactionSeqNumber,
            (tANI_U32) pRxAuthFrameBody->authStatusCode,(tANI_U32)pMac->lim.gLimNumPreAuthContexts);)
-
+    if (!lim_is_valid_fils_auth_frame(pMac, psessionEntry, pRxAuthFrameBody))
+    {
+        limLog(pMac, LOGE, FL("Received invalid FILS auth packet"));
+        goto free;
+    }
     // IOT Workaround: with invalid WEP password, some APs reply AUTH frame 4
     // with invalid seqNumber. This AUTH frame will be dropped by driver,
     // thus driver sends the generic status code instead of protocol status code.
@@ -658,11 +726,11 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
                  * SA-Query procedure determines that the original SA is
                  * invalid.
                  */
-                if (isConnected
+                if (isConnected && pStaDs->PrevAuthSeqno != currSeqNum
 #ifdef WLAN_FEATURE_11W
                     && !pStaDs->rmfEnabled
 #endif
-                                          )
+                   )
                 {
                     limLog(pMac, LOGE,
                             FL("STA is already connected but received auth frame"
@@ -679,7 +747,7 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
             if (pAuthNode)
             {
                 /// Pre-auth context exists for the STA
-                if (pHdr->fc.retry == 0 || pAuthNode->seqNum != currSeqNum)
+                if (pAuthNode->seqNum != currSeqNum)
                 {
                     /**
                      * STA is initiating brand-new Authentication
@@ -967,7 +1035,7 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
                             pAuthNode->fTimerStarted = 1;
 
                             /*
-                             * get random bytes and use as challenge text.
+                             * get random bytes and use as challenge text
                              */
                             if( !VOS_IS_STATUS_SUCCESS( vos_rand_get_bytes( 0, (tANI_U8 *)challengeTextArray, SIR_MAC_SAP_AUTH_CHALLENGE_LENGTH ) ) )
                             {
@@ -979,7 +1047,7 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
 
                             vos_mem_copy(pChallenge,
                                         (tANI_U8 *) challengeTextArray,
-                                         sizeof(challengeTextArray));
+                                        SIR_MAC_SAP_AUTH_CHALLENGE_LENGTH);
 
                             /**
                              * Sending Authenticaton frame with challenge.
@@ -1158,24 +1226,41 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
             if (pRxAuthFrameBody->authAlgoNumber !=
                 pMac->lim.gpLimMlmAuthReq->authType)
             {
-                /**
-                 * Received Authentication frame with an auth
-                 * algorithm other than one requested.
-                 * Wait until Authentication Failure Timeout.
+                /*
+                 * Auth algo is open in rx auth frame when auth type is SAE and
+                 * PMK is cached as driver sent auth algo as open in tx frame
+                 * as well.
                  */
+                if ((pMac->lim.gpLimMlmAuthReq->authType ==
+                    eSIR_AUTH_TYPE_SAE) && psessionEntry->sae_pmk_cached) {
+                    limLog(pMac, LOGW,
+                        FL("rx Auth frame2 auth algo %d in SAE PMK case"),
+                        pRxAuthFrameBody->authAlgoNumber);
+                } else {
+                    /**
+                     * Received Authentication frame with an auth
+                     * algorithm other than one requested.
+                     * Wait until Authentication Failure Timeout.
+                     */
 
-                // Log error
-                PELOGW(limLog(pMac, LOGW,
-                       FL("received Auth frame2 for unexpected auth algo number %d "
-                       MAC_ADDRESS_STR), pRxAuthFrameBody->authAlgoNumber,
-                       MAC_ADDR_ARRAY(pHdr->sa));)
-
-                break;
+                    // Log error
+                    PELOGW(limLog(pMac, LOGW,
+                           FL("received Auth frame2 for unexpected auth algo number %d"
+                           MAC_ADDRESS_STR), pRxAuthFrameBody->authAlgoNumber,
+                           MAC_ADDR_ARRAY(pHdr->sa));)
+                    break;
+                }
             }
 
             if (pRxAuthFrameBody->authStatusCode ==
                 eSIR_MAC_SUCCESS_STATUS)
             {
+                if (lim_process_fils_auth_frame2(pMac, psessionEntry, pRxAuthFrameBody))
+                {
+                    limRestoreFromAuthState(pMac, eSIR_SME_SUCCESS,
+                                           pRxAuthFrameBody->authStatusCode, psessionEntry);
+                    goto free;
+                }
                 if (pRxAuthFrameBody->authAlgoNumber ==
                     eSIR_OPEN_SYSTEM)
                 {
@@ -1275,38 +1360,6 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
 
                         if (pKeyMapEntry)
                         {
-                            if (pKeyMapEntry->key == NULL)
-                            {
-                                // Log error
-                                PELOGE(limLog(pMac, LOGE,
-                                       FL("received Auth frame from peer when key mapping key is NULL"
-                                       MAC_ADDRESS_STR),MAC_ADDR_ARRAY(pHdr->sa));)
-
-                                /**
-                                 * Key Mapping entry has null key.
-                                 * Send Auth frame with
-                                 * challenge failure status code
-                                 */
-                                authFrame->authAlgoNumber =
-                                pRxAuthFrameBody->authAlgoNumber;
-                                authFrame->authTransactionSeqNumber =
-                                pRxAuthFrameBody->authTransactionSeqNumber + 1;
-                                authFrame->authStatusCode =
-                                eSIR_MAC_CHALLENGE_FAILURE_STATUS;
-
-                                limSendAuthMgmtFrame(pMac, authFrame,
-                                                     pHdr->sa,
-                                                     LIM_NO_WEP_IN_FC,
-                                                     psessionEntry,
-                                                     eSIR_FALSE);
-
-                                limRestoreFromAuthState(pMac, eSIR_SME_NO_KEY_MAPPING_KEY_FOR_PEER,
-                                                              eSIR_MAC_UNSPEC_FAILURE_REASON,psessionEntry);
-
-                                goto free;
-                            } // if (pKeyMapEntry->key == NULL)
-                            else
-                            {
                                 ((tpSirMacAuthFrameBody) plainBody)->authAlgoNumber =
                                 sirSwapU16ifNeeded(pRxAuthFrameBody->authAlgoNumber);
                                 ((tpSirMacAuthFrameBody) plainBody)->authTransactionSeqNumber =
@@ -1342,7 +1395,6 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
                                                      eSIR_FALSE);
 
                                 break;
-                            } // end if (pKeyMapEntry->key == NULL)
                         } // if (pKeyMapEntry)
                         else
                         {
@@ -1427,7 +1479,6 @@ limProcessAuthFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo, tpPESession pse
                                                      pRxAuthFrameBody->length,
                                                      psessionEntry,
                                                      eSIR_FALSE);
-
                                 break;
                         } // end if (pKeyMapEntry)
                     } // end if (!wlan_cfgGetInt(CFG_PRIVACY_OPTION_IMPLEMENTED))
@@ -1842,7 +1893,7 @@ tSirRetStatus limProcessAuthFrameNoSession(tpAniSirGlobal pMac, tANI_U8 *pBd, vo
     tpPESession psessionEntry = NULL;
     tANI_U8 *pBody;
     tANI_U16  frameLen;
-    tSirMacAuthFrameBody rxAuthFrame;
+    tSirMacAuthFrameBody *rxAuthFrame = NULL;
     tSirMacAuthFrameBody *pRxAuthFrameBody = NULL;
     tSirRetStatus ret_status = eSIR_FAILURE;
     int i;
@@ -1950,15 +2001,22 @@ tSirRetStatus limProcessAuthFrameNoSession(tpAniSirGlobal pMac, tANI_U8 *pBd, vo
     // of our choice.
     limDeactivateAndChangeTimer(pMac, eLIM_FT_PREAUTH_RSP_TIMER);
 
+    rxAuthFrame = vos_mem_malloc(sizeof(tSirMacAuthFrameBody));
+    if (!rxAuthFrame) {
+        limLog(pMac, LOGE, FL("Failed to allocate memory"));
+        return eSIR_MEM_ALLOC_FAILED;
+    }
+
 
     // Save off the auth resp.
-    if ((sirConvertAuthFrame2Struct(pMac, pBody, frameLen, &rxAuthFrame) != eSIR_SUCCESS))
+    if ((sirConvertAuthFrame2Struct(pMac, pBody, frameLen, rxAuthFrame) != eSIR_SUCCESS))
     {
         limLog(pMac, LOGE, FL("failed to convert Auth frame to struct"));
         limHandleFTPreAuthRsp(pMac, eSIR_FAILURE, NULL, 0, psessionEntry);
-        return eSIR_FAILURE;
+        ret_status = eSIR_FAILURE;
+        goto free;
     }
-    pRxAuthFrameBody = &rxAuthFrame;
+    pRxAuthFrameBody = rxAuthFrame;
 
 #ifdef WLAN_FEATURE_VOWIFI_11R_DEBUG
     PELOGE(limLog(pMac, LOG1,
@@ -1996,6 +2054,9 @@ tSirRetStatus limProcessAuthFrameNoSession(tpAniSirGlobal pMac, tANI_U8 *pBd, vo
 
     // Send the Auth response to SME
     limHandleFTPreAuthRsp(pMac, ret_status, pBody, frameLen, psessionEntry);
+free:
+    if (rxAuthFrame)
+        vos_mem_free(rxAuthFrame);
 
     return ret_status;
 }

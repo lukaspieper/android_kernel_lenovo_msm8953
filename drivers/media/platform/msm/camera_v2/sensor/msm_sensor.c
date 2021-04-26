@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,7 +21,9 @@
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 
-extern int lsc_group_avail;
+static struct msm_camera_i2c_fn_t msm_sensor_cci_func_tbl;
+static struct msm_camera_i2c_fn_t msm_sensor_secure_func_tbl;
+
 static void msm_sensor_adjust_mclk(struct msm_camera_power_ctrl_t *ctrl)
 {
 	int idx;
@@ -86,6 +88,7 @@ int32_t msm_sensor_free_sensor_data(struct msm_sensor_ctrl_t *s_ctrl)
 	kfree(s_ctrl->sensordata->actuator_info);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf->gpio_num_info);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_req_tbl);
+	kfree(s_ctrl->sensordata->power_info.gpio_conf->cam_gpio_set_tbl);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf);
 	kfree(s_ctrl->sensordata->power_info.cam_vreg);
 	kfree(s_ctrl->sensordata->power_info.power_setting);
@@ -133,10 +136,14 @@ int msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 			__func__, __LINE__, power_info, sensor_i2c_client);
 		return -EINVAL;
 	}
+
+	/* Power down secure session if it exist*/
+	if (s_ctrl->is_secure)
+		msm_camera_tz_i2c_power_down(sensor_i2c_client);
+
 	return msm_camera_power_down(power_info, sensor_device_type,
 		sensor_i2c_client);
 }
-
 
 int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 {
@@ -172,7 +179,27 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 	if (s_ctrl->set_mclk_23880000)
 		msm_sensor_adjust_mclk(power_info);
 
+	CDBG("Sensor %d tagged as %s\n", s_ctrl->id,
+		(s_ctrl->is_secure)?"SECURE":"NON-SECURE");
+
 	for (retry = 0; retry < 3; retry++) {
+		if (s_ctrl->is_secure) {
+			rc = msm_camera_tz_i2c_power_up(sensor_i2c_client);
+			if (rc < 0) {
+#ifdef CONFIG_MSM_SEC_CCI_DEBUG
+				CDBG("Secure Sensor %d use cci\n", s_ctrl->id);
+				/* session is not secure */
+				s_ctrl->sensor_i2c_client->i2c_func_tbl =
+					&msm_sensor_cci_func_tbl;
+#else  /* CONFIG_MSM_SEC_CCI_DEBUG */
+				return rc;
+#endif /* CONFIG_MSM_SEC_CCI_DEBUG */
+			} else {
+				/* session is secure */
+				s_ctrl->sensor_i2c_client->i2c_func_tbl =
+					&msm_sensor_secure_func_tbl;
+			}
+		}
 		rc = msm_camera_power_up(power_info, s_ctrl->sensor_device_type,
 			sensor_i2c_client);
 		if (rc < 0)
@@ -210,193 +237,46 @@ static uint16_t msm_sensor_id_by_mask(struct msm_sensor_ctrl_t *s_ctrl,
 	return sensor_id;
 }
 
-struct otp_struct {
-    uint16_t enable;
-    uint16_t flag;
-    uint16_t module_integrator_id;
-    uint16_t lens_id;
-    uint16_t rg_ratio;
-    uint16_t bg_ratio;
-    uint16_t infinity;
-    uint16_t macro;
-    uint16_t  lenc[240];
-    uint16_t checksum;
-};
-struct otp_struct otp_ptr;
-
-int read_otp(struct msm_sensor_ctrl_t *e_ctrl, struct otp_struct *otp_ptr) {
-    int lsc_addr = 0;
-    uint16_t otp_awb_flag = 0;
-    uint16_t data = 0;
-    uint16_t chipid = 0;
-    struct msm_camera_i2c_client *sensor_i2c_client = e_ctrl->sensor_i2c_client;
-    int32_t i = 0;
-    int rc = 0;
-    int nChecksum = 0;
-
-    sensor_i2c_client->addr_type = MSM_CAMERA_I2C_WORD_ADDR;
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x0100, 0x01, MSM_CAMERA_I2C_BYTE_DATA);
-
-    rc = sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, 0x300b,
-                                                   &chipid, MSM_CAMERA_I2C_WORD_DATA);
-    if (rc < 0) {
-        pr_err("%s, read i2c err\n", __func__);
-        return rc;
-    }
-    rc = sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, 0x5001,
-                                                   &data, MSM_CAMERA_I2C_BYTE_DATA);
-    pr_err("%s, chipid--- %x, data1----%x, rc %d\n", __func__, chipid, data, rc);
-
-    data = data & 0xf7;
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x5001, data, MSM_CAMERA_I2C_BYTE_DATA);
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x3d84, 0xc0, MSM_CAMERA_I2C_BYTE_DATA);
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x3d88, 0x70, MSM_CAMERA_I2C_BYTE_DATA);
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x3d89, 0x10, MSM_CAMERA_I2C_BYTE_DATA);
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x3d8a, 0x72, MSM_CAMERA_I2C_BYTE_DATA);
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x3d8b, 0x0d, MSM_CAMERA_I2C_BYTE_DATA);
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x3d81, 0x01, MSM_CAMERA_I2C_BYTE_DATA);
-    //delay(5);
-    sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, 0x5001,
-                                              &data, MSM_CAMERA_I2C_BYTE_DATA);
-    rc = sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, 0x7010,
-                        &otp_awb_flag, MSM_CAMERA_I2C_BYTE_DATA);
-    if ((otp_awb_flag & 0xc0) == 0x40) {
-
-        lsc_addr = 0x701A;
-    } else if ((otp_awb_flag & 0x30) == 0x10) {
-        lsc_addr = 0x7114;
-    }
-
-    if (lsc_addr != 0) {
-    uint16_t nTemp = 0;
-    for (i = 0; i < 9; i++) {
-            sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, lsc_addr -9 + i,
-                                                      &nTemp, MSM_CAMERA_I2C_BYTE_DATA);
-            nChecksum += nTemp;
-        nChecksum %= 255;
-        }
-        for (i = 0; i < 240; i++) {
-            sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, lsc_addr + i,
-                                                      &(otp_ptr->lenc[i]), MSM_CAMERA_I2C_BYTE_DATA);
-            nChecksum += otp_ptr->lenc[i];
-        nChecksum %= 255;
-        }
-
-        sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, lsc_addr + 240,
-                                                  &(otp_ptr->checksum), MSM_CAMERA_I2C_BYTE_DATA);
-        pr_err("sbing________read=====%d,checksum = %d\n", otp_ptr->checksum,nChecksum + 1);
-        // if((* otp_ptr).checksum == checksum2){
-        otp_ptr->flag |= 0x10;
-        // }
-    } else {
-        for (i = 0; i < 240; i++)
-        otp_ptr->lenc[i] = 0;
-    }
-
-
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x5001, data || 0x08, MSM_CAMERA_I2C_BYTE_DATA);
-    sensor_i2c_client->i2c_func_tbl->i2c_write(
-        sensor_i2c_client, 0x0100, 0x00, MSM_CAMERA_I2C_BYTE_DATA);
-    otp_ptr->enable = 1;
-    return 0;
-}
-
-int apply_otp(struct msm_sensor_ctrl_t *e_ctrl, struct otp_struct *otp_ptr) {
-    uint16_t temp;
-    int i;
-    struct msm_camera_i2c_client *sensor_i2c_client = e_ctrl->sensor_i2c_client;
-    pr_err("apply_otp start\n");
-    if (otp_ptr->flag & 0x10) {
-
-        sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client, 0x5000,
-                                                  &temp, MSM_CAMERA_I2C_BYTE_DATA);
-        temp = 0x20 | temp;
-
-        sensor_i2c_client->i2c_func_tbl->i2c_write(
-            sensor_i2c_client, 0x5000, temp, MSM_CAMERA_I2C_BYTE_DATA);
-
-        for (i = 0; i < 240; i++) {
-            sensor_i2c_client->i2c_func_tbl->i2c_write(
-                sensor_i2c_client, 0x5900 + i, otp_ptr->lenc[i], MSM_CAMERA_I2C_BYTE_DATA);
-        }
-    }
-    return otp_ptr->flag;
-}
-
 int msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 {
-    int rc = 0;
-    uint16_t chipid = 0;
-    struct msm_camera_i2c_client *sensor_i2c_client;
-    struct msm_camera_slave_info *slave_info;
-    const char *sensor_name;
+	int rc = 0;
+	uint16_t chipid = 0;
+	struct msm_camera_i2c_client *sensor_i2c_client;
+	struct msm_camera_slave_info *slave_info;
+	const char *sensor_name;
 
-    if (!s_ctrl)
-    {
-        pr_err("%s:%d failed: %pK\n",
-               __func__, __LINE__, s_ctrl);
-        return -EINVAL;
-    }
-    sensor_i2c_client = s_ctrl->sensor_i2c_client;
-    slave_info = s_ctrl->sensordata->slave_info;
-    sensor_name = s_ctrl->sensordata->sensor_name;
+	if (!s_ctrl) {
+		pr_err("%s:%d failed: %pK\n",
+			__func__, __LINE__, s_ctrl);
+		return -EINVAL;
+	}
+	sensor_i2c_client = s_ctrl->sensor_i2c_client;
+	slave_info = s_ctrl->sensordata->slave_info;
+	sensor_name = s_ctrl->sensordata->sensor_name;
 
-    if (!sensor_i2c_client || !slave_info || !sensor_name)
-    {
-        pr_err("%s:%d failed: %pK %pK %pK\n",
-               __func__, __LINE__, sensor_i2c_client, slave_info,
-               sensor_name);
-        return -EINVAL;
-    }
+	if (!sensor_i2c_client || !slave_info || !sensor_name) {
+		pr_err("%s:%d failed: %pK %pK %pK\n",
+			__func__, __LINE__, sensor_i2c_client, slave_info,
+			sensor_name);
+		return -EINVAL;
+	}
 
-    rc = sensor_i2c_client->i2c_func_tbl->i2c_read(
-        sensor_i2c_client, slave_info->sensor_id_reg_addr,
-        &chipid, MSM_CAMERA_I2C_WORD_DATA);
-    if (rc < 0)
-    {
-        pr_err("%s: %s: read id failed\n", __func__, sensor_name);
-        return rc;
-    }
+	rc = sensor_i2c_client->i2c_func_tbl->i2c_read(
+		sensor_i2c_client, slave_info->sensor_id_reg_addr,
+		&chipid, MSM_CAMERA_I2C_WORD_DATA);
+	if (rc < 0) {
+		pr_err("%s: %s: read id failed\n", __func__, sensor_name);
+		return rc;
+	}
 
-    pr_debug("%s: read id: 0x%x expected id 0x%x:\n",
-             __func__, chipid, slave_info->sensor_id);
-    if (msm_sensor_id_by_mask(s_ctrl, chipid) != slave_info->sensor_id)
-    {
-        pr_err("%s chip id %x does not match %x\n",
-               __func__, chipid, slave_info->sensor_id);
-        return -ENODEV;
-    } 
-    if (chipid == 0x0219)
-    {
-        if (lsc_group_avail != -1)
-        {
-            s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write(
-                s_ctrl->sensor_i2c_client, 0x0190, 0x01, MSM_CAMERA_I2C_BYTE_ADDR);
-            s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write(
-                s_ctrl->sensor_i2c_client, 0x0192, lsc_group_avail, MSM_CAMERA_I2C_BYTE_ADDR);
-            pr_err("%s,%d,lsc_group_avail = %d\n", __func__, __LINE__, lsc_group_avail);
-            s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write(
-                s_ctrl->sensor_i2c_client, 0x0191, 0x00, MSM_CAMERA_I2C_BYTE_ADDR);
-            s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write(
-                s_ctrl->sensor_i2c_client, 0x0193, 0x00, MSM_CAMERA_I2C_BYTE_ADDR);
-            s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write(
-                s_ctrl->sensor_i2c_client, 0x01A4, 0x03, MSM_CAMERA_I2C_BYTE_ADDR);
-        }
-    }
-    else if (chipid == 0x885a) {
-        read_otp(s_ctrl,&otp_ptr);
-        apply_otp(s_ctrl,&otp_ptr);
-    }
-    return rc;
+	pr_debug("%s: read id: 0x%x expected id 0x%x:\n",
+			__func__, chipid, slave_info->sensor_id);
+	if (msm_sensor_id_by_mask(s_ctrl, chipid) != slave_info->sensor_id) {
+		pr_err("%s chip id %x does not match %x\n",
+				__func__, chipid, slave_info->sensor_id);
+		return -ENODEV;
+	}
+	return rc;
 }
 
 static struct msm_sensor_ctrl_t *get_sctrl(struct v4l2_subdev *sd)
@@ -497,96 +377,6 @@ long msm_sensor_subdev_fops_ioctl(struct file *file,
 	unsigned int cmd, unsigned long arg)
 {
 	return video_usercopy(file, cmd, arg, msm_sensor_subdev_do_ioctl);
-}
-
-uint16_t otp_data[83] = {0};
-bool otp_data_init = false;
-
-#define IICWRITE_BYTE(addr,data)    s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write(s_ctrl->sensor_i2c_client,addr, data,MSM_CAMERA_I2C_BYTE_DATA);
-#define IICREAD_BYTE(addr,data)    s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_read(s_ctrl->sensor_i2c_client, addr,data, MSM_CAMERA_I2C_BYTE_DATA);
-#define OTP_START           0x401
-#define OTP_WB_START        0x423
-#define OTP_END             0x44A
-
-int hi556_otp_apply(struct msm_sensor_ctrl_t *s_ctrl) {
-    //int wbcheck = 0, checksum = 0;
-    int R_gain = 1, G_gain = 1, B_gain = 1;
-    int RG_ratio_unit = 0;
-    int BG_ratio_unit = 0;
-    int RG_ratio_golden = 0x142;
-    int BG_ratio_golden = 0x12e;
-    int wbflag = otp_data[OTP_WB_START - OTP_START];
-    int wbaddr = 0;
-    uint16_t dataH = 0;
-    uint16_t dataL = 0;
-    pr_err("[OTP_Module_Info] hi556_otp_apply \n");
-
-    if (wbflag == 0x01) {
-        wbaddr = 0x424 - OTP_START;
-    } else if (wbflag == 0x13) {
-        wbaddr = 0x431 - OTP_START;
-    } else if (wbflag == 0x37) {
-        wbaddr = 0x43E - OTP_START;
-    } else {
-        pr_err("hi556_otp_apply read wb data failed\n");
-        return -1;
-    }
-
-    RG_ratio_unit = (otp_data[wbaddr] << 8 | otp_data[wbaddr + 1]) & 0x03FF;
-    BG_ratio_unit = (otp_data[wbaddr + 2] << 8 | otp_data[wbaddr + 3]) & 0x03FF;
-    RG_ratio_golden = (otp_data[wbaddr + 6] << 8 | otp_data[wbaddr + 7]) & 0x03FF;
-    BG_ratio_golden = (otp_data[wbaddr + 8] << 8 | otp_data[wbaddr + 9]) & 0x03FF;
-
-    pr_err("SP_OTP,%s,%d,rg = %d,bg = %d,rg_golden = %d,bg_golden = %d\n", __func__, __LINE__, RG_ratio_unit, BG_ratio_unit, RG_ratio_golden, BG_ratio_golden);
-
-    R_gain = (0x100 * RG_ratio_golden / RG_ratio_unit);
-    B_gain = (0x100 * BG_ratio_golden / BG_ratio_unit);
-    G_gain = 0x100;
-
-    if (R_gain < B_gain) {
-        if (R_gain < 0x100) {
-            B_gain = 0x100 *  B_gain / R_gain;
-            G_gain = 0x100 *  G_gain / R_gain;
-            R_gain = 0x100;
-        }
-    } else {
-        if (B_gain < 0x100) {
-            R_gain = 0x100 * R_gain / B_gain;
-            G_gain = 0x100 * G_gain / B_gain;
-            B_gain = 0x100;
-        }
-    }
-
-    IICREAD_BYTE(0x0078, &dataH);
-    IICREAD_BYTE(0x0079, &dataL);
-    pr_err("SP_OTP,[OTP_Module_Info] Before apply otp G_gain = 0x%x\n", ((dataH << 8) | dataL) & 0xFFFF);
-    IICREAD_BYTE(0x007c, &dataH);
-    IICREAD_BYTE(0x007d, &dataL);
-    pr_err("SP_OTP,[OTP_Module_Info] Before apply otp R_gain = 0x%x\n", ((dataH << 8) | dataL) & 0xFFFF);
-    IICREAD_BYTE(0x007e, &dataH);
-    IICREAD_BYTE(0x007f, &dataL);
-    pr_err("SP_OTP,[OTP_Module_Info] Before apply otp B_gain = 0x%x\n", ((dataH << 8) | dataL) & 0xFFFF);
-
-    IICWRITE_BYTE(0x0078, (G_gain) >> 8);
-    IICWRITE_BYTE(0x0079, (G_gain)&0xFFFF);
-    IICWRITE_BYTE(0x007a, (G_gain) >> 8);
-    IICWRITE_BYTE(0x007b, (G_gain)&0xFFFF);
-    IICWRITE_BYTE(0x007c, (R_gain) >> 8);
-    IICWRITE_BYTE(0x007d, (R_gain)&0xFFFF);
-    IICWRITE_BYTE(0x007e, (B_gain) >> 8);
-    IICWRITE_BYTE(0x007f, (B_gain)&0xFFFF);
-
-    IICREAD_BYTE(0x0078, &dataH);
-    IICREAD_BYTE(0x0079, &dataL);
-    pr_err("SP_OTP,[OTP_Module_Info] after apply otp G_gain = 0x%x\n", ((dataH << 8) | dataL) & 0xFFFF);
-    IICREAD_BYTE(0x007c, &dataH);
-    IICREAD_BYTE(0x007d, &dataL);
-    pr_err("SP_OTP,[OTP_Module_Info] after apply otp R_gain = 0x%x\n", ((dataH << 8) | dataL) & 0xFFFF);
-    IICREAD_BYTE(0x007e, &dataH);
-    IICREAD_BYTE(0x007f, &dataL);
-    pr_err("SP_OTP,[OTP_Module_Info] after apply otp B_gain = 0x%x\n", ((dataH << 8) | dataL) & 0xFFFF);
-
-    return 1;
 }
 
 static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
@@ -722,40 +512,6 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->
 				i2c_write_table_sync(s_ctrl->sensor_i2c_client,
 				&conf_array);
-
-                if (!strcmp(s_ctrl->sensordata->sensor_name, "hi556") && conf_array.size == 222) {
-                    if (!otp_data_init) {
-                        int i = 0;
-                        int res = 0;
-
-                        res |= IICWRITE_BYTE(0x0a02, 0x01); //Fast sleep on
-                        res |= IICWRITE_BYTE(0x0a00, 0x00); // stand by on
-                        msleep(10);
-                        res |= IICWRITE_BYTE(0x0f02, 0x00); // pll disable
-                        res |= IICWRITE_BYTE(0x011a, 0x01); // CP TRIM_H
-                        res |= IICWRITE_BYTE(0x011b, 0x09); // IPGM TRIM_H
-                        res |= IICWRITE_BYTE(0x0d04, 0x01); // Fsync(OTP busy) Output Enable
-                        res |= IICWRITE_BYTE(0x0d00, 0x07); // Fsync(OTP busy) Output Drivability
-                        res |= IICWRITE_BYTE(0x003e, 0x10); // OTP R/W mode
-                        res |= IICWRITE_BYTE(0x0a00, 0x01); // stand by off
-
-                        for (i = 0; i <= (OTP_END - OTP_START); i++) {
-                            res |= IICWRITE_BYTE(0x10a, ((OTP_START + i) >> 8) & 0xff); // start address H
-                            res |= IICWRITE_BYTE(0x10b, (OTP_START + i) & 0xff); // start address L
-                            res |= IICWRITE_BYTE(0x102, 0x01); // single read
-
-                            res |= IICREAD_BYTE(0x108, &otp_data[i]);
-                        }
-
-                        pr_err("SP_OTP,%s,%d,res = %d\n", __func__, __LINE__, res);
-
-                        hi556_otp_apply(s_ctrl);
-
-                        otp_data_init = true;
-                    } else {
-                        hi556_otp_apply(s_ctrl);
-                    }
-                }
 
 		kfree(reg_setting);
 		break;
@@ -1158,7 +914,6 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 	int32_t rc = 0;
 	int32_t i = 0;
 	mutex_lock(s_ctrl->msm_sensor_mutex);
-        printk("sbing===========sensor_config\n");
 	CDBG("%s:%d %s cfgtype = %d\n", __func__, __LINE__,
 		s_ctrl->sensordata->sensor_name, cdata->cfgtype);
 	switch (cdata->cfgtype) {
@@ -1277,6 +1032,7 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->
 				i2c_write_table_sync(s_ctrl->sensor_i2c_client,
 					&conf_array);
+
 		kfree(reg_setting);
 		break;
 	}
@@ -1725,6 +1481,21 @@ static struct msm_camera_i2c_fn_t msm_sensor_qup_func_tbl = {
 	.i2c_write_table_sync_block = msm_camera_qup_i2c_write_table,
 };
 
+static struct msm_camera_i2c_fn_t msm_sensor_secure_func_tbl = {
+	.i2c_read = msm_camera_tz_i2c_read,
+	.i2c_read_seq = msm_camera_tz_i2c_read_seq,
+	.i2c_write = msm_camera_tz_i2c_write,
+	.i2c_write_table = msm_camera_tz_i2c_write_table,
+	.i2c_write_seq_table = msm_camera_tz_i2c_write_seq_table,
+	.i2c_write_table_w_microdelay =
+		msm_camera_tz_i2c_write_table_w_microdelay,
+	.i2c_util = msm_sensor_tz_i2c_util,
+	.i2c_write_conf_tbl = msm_camera_tz_i2c_write_conf_tbl,
+	.i2c_write_table_async = msm_camera_tz_i2c_write_table_async,
+	.i2c_write_table_sync = msm_camera_tz_i2c_write_table_sync,
+	.i2c_write_table_sync_block = msm_camera_tz_i2c_write_table_sync_block,
+};
+
 int32_t msm_sensor_init_default_params(struct msm_sensor_ctrl_t *s_ctrl)
 {
 	struct msm_camera_cci_client *cci_client = NULL;
@@ -1757,6 +1528,9 @@ int32_t msm_sensor_init_default_params(struct msm_sensor_ctrl_t *s_ctrl)
 
 		/* Get CCI subdev */
 		cci_client->cci_subdev = msm_cci_get_subdev();
+
+		if (s_ctrl->is_secure)
+			msm_camera_tz_i2c_register_sensor((void *)s_ctrl);
 
 		/* Update CCI / I2C function table */
 		if (!s_ctrl->sensor_i2c_client->i2c_func_tbl)

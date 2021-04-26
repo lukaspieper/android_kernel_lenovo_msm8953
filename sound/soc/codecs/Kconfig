@@ -100,6 +100,7 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_STA529 if I2C
 	select SND_SOC_STAC9766 if SND_SOC_AC97_BUS
 	select SND_SOC_TAS2552 if I2C
+	select SND_SOC_TAS2555 if I2C
 	select SND_SOC_TAS5086 if I2C
 	select SND_SOC_TLV320AIC23_I2C if I2C
 	select SND_SOC_TLV320AIC23_SPI if SPI_MASTER
@@ -573,6 +574,10 @@ config SND_SOC_TAS2552
 	tristate "Texas Instruments TAS2552 Mono Audio amplifier"
 	depends on I2C
 
+config SND_SOC_TAS2555
+	tristate "Texas Instruments TAS2555 Mono Audio Amplifier with DSP"
+	depends on I2C
+
 config SND_SOC_TAS5086
 	tristate "Texas Instruments TAS5086 speaker amplifier"
 	depends on I2C
@@ -628,10 +633,13 @@ config SND_SOC_WCD9320
 
 config SND_SOC_WCD9330
         tristate
-	depends on WCD9330_CODEC
 
 config SND_SOC_WCD9335
         tristate
+
+config SND_SOC_BG_CODEC
+	tristate
+	default m if MSM_BG_GLINK=y
 
 config SND_SOC_WSA881X_SENSORS
 	tristate
@@ -648,6 +656,10 @@ config SND_SOC_WSA881X_ANALOG
 
 config SND_SOC_MSM8X16_WCD
 	tristate
+
+config SND_SOC_DIGITAL_CDC
+	tristate
+	select REGMAP_MMIO
 
 config SND_SOC_WCD9XXX
 	tristate
@@ -668,7 +680,7 @@ config AUDIO_EXT_CLK
 
 config SND_SOC_WCD_MBHC
 	tristate
-	default y if (SND_SOC_MSM8909_WCD=y || SND_SOC_MSM8X16_WCD=y || SND_SOC_WCD9335=y) && SND_SOC_MDMCALIFORNIUM!=y
+	default y if (SND_SOC_MSM8909_WCD=y || SND_SOC_MSM8X16_WCD=y || SND_SOC_WCD9335=y) && SND_SOC_MDM9650!=y
 
 config SND_SOC_WL1273
 	tristate
@@ -872,4 +884,10 @@ config SND_SOC_MSM_HDMI_CODEC_RX
 config SND_SOC_MSM_HDMI_DBA_CODEC_RX
 	bool "HDMI DBA Audio Playback"
 	depends on MSM_DBA
+
+#ts3a225e P3592_PCB
+config HEADSET_EUO_US_SWITCH_P3592
+	tristate "Headset euo us Switch"
+	help
+	If you say yes here, you get support for Headset euo us Switch control device
 endmenu

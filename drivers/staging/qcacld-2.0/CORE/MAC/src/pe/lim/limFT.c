@@ -336,16 +336,22 @@ void limPerformFTPreAuth(tpAniSirGlobal pMac, eHalStatus status,
                          tANI_U32 *data, tpPESession psessionEntry)
 {
     tSirMacAuthFrameBody authFrame;
+    tANI_U32 session_id;
+    eCsrAuthType auth_type;
 
     if (NULL == psessionEntry) {
         PELOGE(limLog(pMac, LOGE, FL("psessionEntry is NULL"));)
         return;
     }
 
+    session_id = psessionEntry->smeSessionId;
+    auth_type = pMac->roam.roamSession[session_id].connectedProfile.AuthType;
+
     if (psessionEntry->is11Rconnection &&
         psessionEntry->ftPEContext.pFTPreAuthReq) {
         /* Only 11r assoc has FT IEs */
-        if (psessionEntry->ftPEContext.pFTPreAuthReq->ft_ies_length == 0) {
+        if ((auth_type != eCSR_AUTH_TYPE_OPEN_SYSTEM) &&
+            (psessionEntry->ftPEContext.pFTPreAuthReq->ft_ies_length == 0)) {
             PELOGE(limLog( pMac, LOGE,
                            "%s: FTIEs for Auth Req Seq 1 is absent",
                            __func__);)
@@ -816,7 +822,6 @@ void limFillFTSession(tpAniSirGlobal pMac,
    tPowerdBm         localPowerConstraint;
    tPowerdBm         regMax;
    tSchBeaconStruct  *pBeaconStruct;
-   tANI_U32          selfDot11Mode;
    ePhyChanBondState cbEnabledMode;
 #ifdef WLAN_FEATURE_11W
    VOS_STATUS vosStatus;
@@ -863,9 +868,10 @@ void limFillFTSession(tpAniSirGlobal pMac,
    vos_mem_copy(pftSessionEntry->ssId.ssId, pBeaconStruct->ssId.ssId,
          pftSessionEntry->ssId.length);
 
-   wlan_cfgGetInt(pMac, WNI_CFG_DOT11_MODE, &selfDot11Mode);
-   limLog(pMac, LOG1, FL("selfDot11Mode %d"),selfDot11Mode );
-   pftSessionEntry->dot11mode = selfDot11Mode;
+
+   pftSessionEntry->dot11mode =
+                  psessionEntry->ftPEContext.pFTPreAuthReq->dot11mode;
+   limLog(pMac, LOG1, FL("dot11mode %d"), pftSessionEntry->dot11mode);
    pftSessionEntry->vhtCapability =
          (IS_DOT11_MODE_VHT(pftSessionEntry->dot11mode)
          && IS_BSS_VHT_CAPABLE(pBeaconStruct->VHTCaps));

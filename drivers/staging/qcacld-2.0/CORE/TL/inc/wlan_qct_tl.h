@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2014, 2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2014, 2016-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -643,6 +643,14 @@ typedef struct
  * -------------------------------------------------------------------------*/
 
 void *tlshim_peer_validity(void *vos_ctx, uint8_t sta_id);
+
+/**
+ * tlshim_selfpeer_vdev() - get vdev of self peer
+ * @vos_ctx		vos context
+ *
+ * Return: on success return vdev, NULL when self peer is invalid/NULL
+ */
+void *tlshim_selfpeer_vdev(void *vos_ctx);
 
 /*==========================================================================
 
@@ -2939,7 +2947,38 @@ bool WLANTL_disable_intrabss_fwd(void *vdev);
 VOS_STATUS WLANTL_RegisterOCBPeer(void *vos_ctx, uint8_t *mac_addr,
     uint8_t *peer_id);
 
+/**
+ * tl_register_vir_mon_cb() - register the HDD monitor callback to TL.
+ * @vos_ctx: pointer to vos context
+ * @rxcb: HDD rx callback function
+ *
+ * Return:VOS_STATUS_SUCCESS on success, or others failure.
+ */
+VOS_STATUS
+tl_register_vir_mon_cb(void *vos_ctx, WLANTL_STARxCBType rxcb);
+
+/**
+ * tl_deregister_vir_mon_cb() - deregister the HDD monitor callback to TL.
+ * @vos_ctx: pointer to vos context
+ *
+ * Return:VOS_STATUS_SUCCESS on success, or others failure.
+ */
+VOS_STATUS
+tl_deregister_vir_mon_cb(void *vos_ctx);
+
 void WLANTL_display_datapath_stats(void *vos_ctx, uint16_t bitmap);
 void WLANTL_clear_datapath_stats(void *vos_ctx, uint16_t bitmap);
 
+#ifdef QCA_SUPPORT_TXRX_LOCAL_PEER_ID
+/**
+ * tl_shim_get_sta_id_by_addr() - get peer local id given the MAC address.
+ * @vos_context: pointer to vos context
+ * @mac_addr: pointer to mac address
+ *
+ * Return: local id of the peer given the MAC address.
+ */
+uint16_t tl_shim_get_sta_id_by_addr(void *vos_context, uint8_t *mac_addr);
+#else
+#define tl_shim_get_sta_id_by_addr(vos_context,mac_addr) 0
+#endif
 #endif /* #ifndef WLAN_QCT_WLANTL_H */

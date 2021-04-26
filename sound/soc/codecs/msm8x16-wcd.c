@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,6 +9,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+//#define DEBUG
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/firmware.h>
@@ -49,7 +50,8 @@
 			SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_48000)
 #define MSM8X16_WCD_FORMATS (SNDRV_PCM_FMTBIT_S16_LE |\
 		SNDRV_PCM_FMTBIT_S24_LE |\
-		SNDRV_PCM_FMTBIT_S24_3LE)
+		SNDRV_PCM_FMTBIT_S24_3LE |\
+		SNDRV_PCM_FMTBIT_S32_LE)
 
 #define NUM_INTERPOLATORS	3
 #define BITS_PER_REG		8
@@ -74,6 +76,7 @@
 #define MCLK_RATE_12P288MHZ	12288000
 
 #define BUS_DOWN 1
+
 
 /*
  *50 Milliseconds sufficient for DSP bring up in the modem
@@ -140,7 +143,15 @@ static bool spkr_boost_en = true;
 
 #define MSM8X16_WCD_RELEASE_LOCK(x) mutex_unlock(&x)
 
-
+#if defined(CONFIG_SPEAKER_EXT_PA)
+static int external_spk_control = 1;
+#endif
+#if defined(CONFIG_SPEAKER_HEADPHONE_SWITCH)
+static int external_hs_control = 0;
+#endif
+#if defined(CONFIG_RECEIVER_EXT_PA)
+static int external_rec_control = 0;
+#endif
 /* Codec supports 2 IIR filters */
 enum {
 	IIR1 = 0,
@@ -308,7 +319,15 @@ static void msm8x16_wcd_configure_cap(struct snd_soc_codec *codec,
 static bool msm8x16_wcd_use_mb(struct snd_soc_codec *codec);
 
 struct msm8x16_wcd_spmi msm8x16_wcd_modules[MAX_MSM8X16_WCD_DEVICE];
-
+#if defined(CONFIG_SPEAKER_EXT_PA)
+extern int msm8x16_spk_ext_pa_ctrl(struct msm8916_asoc_mach_data *pdatadata, bool value);
+#endif
+#if defined(CONFIG_SPEAKER_HEADPHONE_SWITCH)
+int msm8x16_hs_ext_pa_ctrl(struct msm8916_asoc_mach_data *pdatadata, bool value);
+#endif
+#if defined(CONFIG_RECEIVER_EXT_PA)
+int msm8x16_rec_ext_pa_ctrl(struct msm8916_asoc_mach_data *pdatadata, bool value);
+#endif
 static void *adsp_state_notifier;
 
 static struct snd_soc_codec *registered_codec;
@@ -2270,6 +2289,72 @@ static int msm8x16_wcd_ext_spk_boost_set(struct snd_kcontrol *kcontrol,
 		__func__, msm8x16_wcd->spk_boost_set);
 	return 0;
 }
+#if defined(CONFIG_SPEAKER_EXT_PA)
+static int get_external_spk_pa(struct snd_kcontrol *kcontrol,
+		       struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("At %d In (%s),external_spk_control=%d\n",__LINE__, __FUNCTION__,external_spk_control);
+	ucontrol->value.integer.value[0] = external_spk_control;
+	return 0;
+}
+static int set_external_spk_pa(struct snd_kcontrol *kcontrol,
+		       struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct msm8916_asoc_mach_data *pdata = NULL;
+	pdata = snd_soc_card_get_drvdata(codec->component.card);
+	pr_debug("At %d In (%s),external_spk_control=%d,value.integer.value[0]=%ld\n",__LINE__, __FUNCTION__,external_spk_control,ucontrol->value.integer.value[0]);
+	if (external_spk_control == ucontrol->value.integer.value[0])
+		return 0;
+	external_spk_control = ucontrol->value.integer.value[0];
+	msm8x16_spk_ext_pa_ctrl(pdata, external_spk_control);
+	return 1;
+}
+#endif
+#if defined(CONFIG_SPEAKER_HEADPHONE_SWITCH)
+static int get_external_hs_pa(struct snd_kcontrol *kcontrol,
+		       struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("At %d In (%s),external_hs_control=%d\n",__LINE__, __FUNCTION__,external_hs_control);
+	ucontrol->value.integer.value[0] = external_hs_control;
+	return 0;
+}
+static int set_external_hs_pa(struct snd_kcontrol *kcontrol,
+		       struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct msm8916_asoc_mach_data *pdata = NULL;
+	pdata = snd_soc_card_get_drvdata(codec->component.card);
+	pr_debug("At %d In (%s),external_hs_control=%d,value.integer.value[0]=%ld\n",__LINE__, __FUNCTION__,external_hs_control,ucontrol->value.integer.value[0]);
+	if (external_hs_control == ucontrol->value.integer.value[0])
+		return 0;
+	external_hs_control = ucontrol->value.integer.value[0];
+	msm8x16_hs_ext_pa_ctrl(pdata, external_hs_control);
+	return 1;
+}
+#endif
+#if defined(CONFIG_RECEIVER_EXT_PA)
+static int get_external_rec_pa(struct snd_kcontrol *kcontrol,
+		       struct snd_ctl_elem_value *ucontrol)
+{
+	pr_debug("At %d In (%s),external_rec_control=%d\n",__LINE__, __FUNCTION__,external_rec_control);
+	ucontrol->value.integer.value[0] = external_rec_control;
+	return 0;
+}
+static int set_external_rec_pa(struct snd_kcontrol *kcontrol,
+		       struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct msm8916_asoc_mach_data *pdata = NULL;
+	pdata = snd_soc_card_get_drvdata(codec->component.card);
+	pr_debug("At %d In (%s),external_rec_control=%d,value.integer.value[0]=%ld\n",__LINE__, __FUNCTION__,external_rec_control,ucontrol->value.integer.value[0]);
+	if (external_rec_control == ucontrol->value.integer.value[0])
+		return 0;
+	external_rec_control = ucontrol->value.integer.value[0];
+	msm8x16_rec_ext_pa_ctrl(pdata, external_rec_control);
+	return 1;
+}
+#endif
 static int msm8x16_wcd_get_iir_enable_audio_mixer(
 					struct snd_kcontrol *kcontrol,
 					struct snd_ctl_elem_value *ucontrol)
@@ -2547,6 +2632,27 @@ static const struct soc_enum msm8x16_wcd_spk_boost_ctl_enum[] = {
 		SOC_ENUM_SINGLE_EXT(2, msm8x16_wcd_spk_boost_ctrl_text),
 };
 
+#if defined(CONFIG_SPEAKER_EXT_PA)
+static const char * const msm8x16_external_spk_pa_text[] = {
+		"OFF", "ON"};
+static const struct soc_enum msm8x16_external_spk_pa_enum[] = {
+		SOC_ENUM_SINGLE_EXT(2, msm8x16_external_spk_pa_text),
+};
+#endif
+#if defined(CONFIG_SPEAKER_HEADPHONE_SWITCH)
+static const char * const msm8x16_external_hs_pa_text[] = {
+		"OFF", "ON"};
+static const struct soc_enum msm8x16_external_hs_pa_enum[] = {
+		SOC_ENUM_SINGLE_EXT(2, msm8x16_external_hs_pa_text),
+};
+#endif
+#if defined(CONFIG_RECEIVER_EXT_PA)
+static const char * const msm8x16_external_rec_pa_text[] = {
+		"OFF", "ON"};
+static const struct soc_enum msm8x16_external_rec_pa_enum[] = {
+		SOC_ENUM_SINGLE_EXT(2, msm8x16_external_rec_pa_text),
+};
+#endif
 static const char * const msm8x16_wcd_ext_spk_boost_ctrl_text[] = {
 		"DISABLE", "ENABLE"};
 static const struct soc_enum msm8x16_wcd_ext_spk_boost_ctl_enum[] = {
@@ -2593,6 +2699,18 @@ static const struct snd_kcontrol_new msm8x16_wcd_snd_controls[] = {
 
 	SOC_ENUM_EXT("EAR PA Gain", msm8x16_wcd_ear_pa_gain_enum[0],
 		msm8x16_wcd_pa_gain_get, msm8x16_wcd_pa_gain_put),
+#if defined(CONFIG_SPEAKER_EXT_PA)
+	SOC_ENUM_EXT("Speaker PA Open", msm8x16_external_spk_pa_enum[0],
+		get_external_spk_pa, set_external_spk_pa),
+#endif
+#if defined(CONFIG_SPEAKER_HEADPHONE_SWITCH)
+	SOC_ENUM_EXT("HS PA Open", msm8x16_external_hs_pa_enum[0],
+		get_external_hs_pa, set_external_hs_pa),
+#endif
+#if defined(CONFIG_RECEIVER_EXT_PA)
+	SOC_ENUM_EXT("Receiver PA Open", msm8x16_external_rec_pa_enum[0],
+		get_external_rec_pa, set_external_rec_pa),
+#endif
 
 	SOC_ENUM_EXT("Speaker Boost", msm8x16_wcd_spk_boost_ctl_enum[0],
 		msm8x16_wcd_spk_boost_get, msm8x16_wcd_spk_boost_set),
@@ -2642,6 +2760,10 @@ static const struct snd_kcontrol_new msm8x16_wcd_snd_controls[] = {
 	SOC_SINGLE_SX_TLV("IIR2 INP1 Volume",
 			  MSM8X16_WCD_A_CDC_IIR2_GAIN_B1_CTL,
 			0,  -84, 40, digital_gain),
+#if  defined(CONFIG_MACH_LENOVO_TB8703) || defined(CONFIG_MACH_LENOVO_TB8804) ||  defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8504)
+	SOC_SINGLE("MICBIAS CAPLESS Switch",
+			 MSM8X16_WCD_A_ANALOG_MICB_1_EN, 6, 1, 0),
+#endif
 
 	SOC_ENUM("TX1 HPF cut off", cf_dec1_enum),
 	SOC_ENUM("TX2 HPF cut off", cf_dec2_enum),
@@ -2959,6 +3081,7 @@ static const struct snd_kcontrol_new rx2_mix2_inp1_mux =
 static const struct snd_kcontrol_new tx_adc2_mux =
 	SOC_DAPM_ENUM("ADC2 MUX Mux", adc2_enum);
 
+
 static int msm8x16_wcd_put_dec_enum(struct snd_kcontrol *kcontrol,
 			      struct snd_ctl_elem_value *ucontrol)
 {
@@ -3037,7 +3160,6 @@ static int msm8x16_wcd_put_dec_enum(struct snd_kcontrol *kcontrol,
 		MSM8X16_WCD_A_CDC_TX1_MUX_CTL + 32 * (decimator - 1);
 
 	snd_soc_update_bits(codec, tx_mux_ctl_reg, 0x1, adc_dmic_sel);
-
 	ret = snd_soc_dapm_put_enum_double(kcontrol, ucontrol);
 
 out:
@@ -3117,6 +3239,170 @@ static const struct soc_enum lo_enum =
 static const struct snd_kcontrol_new lo_mux[] = {
 	SOC_DAPM_ENUM("LINE_OUT", lo_enum)
 };
+#if defined(CONFIG_SPEAKER_HEADPHONE_SWITCH)
+ int msm8x16_hs_ext_pa_ctrl(struct msm8916_asoc_mach_data *pdatadata, bool value)
+{
+	struct msm8916_asoc_mach_data *pdata = pdatadata; //snd_soc_card_get_drvdata(data);
+	bool on_off = value;
+	int ret = 0;
+
+	pr_debug("%s, hs_is_on=%d,spk_hs_switch_gpio=%d, on_off=%d\n", __func__, pdata->hs_is_on,pdata->spk_hs_switch_gpio, on_off);
+	if (gpio_is_valid(pdata->spk_hs_switch_gpio))
+	{
+		if (on_off)
+		{
+            gpio_direction_output(pdata->spk_hs_switch_gpio, 0);
+            gpio_set_value_cansleep(pdata->spk_hs_switch_gpio, false);
+            msleep(3);
+			pr_debug("At %d In (%s),after set,spk_hs_switch_gpio=%d\n",__LINE__, __FUNCTION__,gpio_get_value(pdata->spk_hs_switch_gpio));
+		}
+		else {
+            gpio_direction_output(pdata->spk_hs_switch_gpio, 1);
+            gpio_set_value_cansleep(pdata->spk_hs_switch_gpio, true);
+            msleep(3);
+			pr_debug("At %d In (%s),after close,spk_hs_switch_gpio=%d\n",__LINE__, __FUNCTION__,gpio_get_value(pdata->spk_hs_switch_gpio));
+		}
+	}
+	else
+	{
+		pr_debug("%s, error\n", __func__);
+		ret = -EINVAL;
+	}
+
+	return ret;
+}
+
+#endif
+#if defined(CONFIG_RECEIVER_EXT_PA)
+ int msm8x16_rec_ext_pa_ctrl(struct msm8916_asoc_mach_data *pdatadata, bool value)
+{
+	struct msm8916_asoc_mach_data *pdata = pdatadata; //snd_soc_card_get_drvdata(data);
+	bool on_off = value;
+	int ret = 0;
+
+#if  defined(CONFIG_MACH_LENOVO_TB8804) ||  defined(CONFIG_MACH_LENOVO_TB8704)
+	pr_debug("%s, on_off=%d, spk_ext_pa_l_gpio=%d\n", __func__, on_off, pdata->spk_ext_pa_l_gpio);
+	//AW87318 is two-in-one IC for speaker & receiver.
+	if (gpio_is_valid(pdata->spk_ext_pa_l_gpio))
+	{
+		if (on_off)
+		{
+			//Use mode 8 for receiver.
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			msleep(1);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			msleep(50);
+		}
+		else {
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+		}
+	}
+	else
+	{
+		pr_debug("%s, error\n", __func__);
+		ret = -EINVAL;
+	}
+
+	return ret;
+#elif  defined(CONFIG_MACH_LENOVO_TB8504)
+	pr_debug("%s, on_off=%d, spk_ext_pa_l_gpio=%d\n",
+		__func__, on_off, pdata->spk_ext_pa_l_gpio);
+	//AW87317  receiver mode 5
+	if (gpio_is_valid(pdata->spk_ext_pa_l_gpio))
+	{
+		if (on_off)
+		{
+			//Use mode 5 for receiver.
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			mdelay(1);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+			udelay(2);
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, true);
+			msleep(50);
+		}
+		else {
+			gpio_set_value_cansleep(pdata->spk_ext_pa_l_gpio, false);
+		}
+	}
+	else
+	{
+		pr_debug("%s, error\n", __func__);
+		ret = -EINVAL;
+	}
+
+	return ret;
+#else
+	pr_debug("%s, rec_is_on=%d,spk_rec_switch_gpio_lc=%d, on_off=%d\n", __func__, pdata->rec_is_on,pdata->spk_rec_switch_gpio_lc, on_off);
+	if (gpio_is_valid(pdata->spk_rec_switch_gpio_lc))
+	{
+		if (on_off)
+		{
+			gpio_direction_output(pdata->spk_rec_switch_gpio_lc, 0);
+			gpio_set_value_cansleep(pdata->spk_rec_switch_gpio_lc, false);
+			//pr_debug("At %d In (%s),will delay\n",__LINE__, __FUNCTION__);
+			msleep(3);
+			pr_debug("At %d In (%s),after set,spk_rec_switch_gpio_lc=%d\n",__LINE__, __FUNCTION__,gpio_get_value(pdata->spk_rec_switch_gpio_lc));
+
+		}
+		else {
+			//pr_debug("At %d In (%s),close pa\n",__LINE__, __FUNCTION__);
+			gpio_direction_output(pdata->spk_rec_switch_gpio_lc, 1);
+			gpio_set_value_cansleep(pdata->spk_rec_switch_gpio_lc, true);
+			pr_debug("At %d In (%s),after close,spk_rec_switch_gpio_lc=%d\n",__LINE__, __FUNCTION__,gpio_get_value(pdata->spk_rec_switch_gpio_lc));
+			}
+	}
+	else
+	{
+		pr_debug("%s, error\n", __func__);
+		ret = -EINVAL;
+	}
+
+	return ret;
+#endif
+}
+#endif
 
 static void msm8x16_wcd_codec_enable_adc_block(struct snd_soc_codec *codec,
 					 int enable)
@@ -3561,13 +3847,31 @@ static int msm8x16_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_PRE_PMU:
 		if (strnstr(w->name, internal1_text, strlen(w->name))) {
 			if (get_codec_version(msm8x16_wcd) >= CAJON)
+#if defined(CONFIG_MACH_LENOVO_TB8804) || defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8504)
+				snd_soc_update_bits(codec,
+					MSM8X16_WCD_A_ANALOG_TX_1_2_ATEST_CTL_2,
+					0x03, 0x03);
+				snd_soc_update_bits(codec,
+					MSM8X16_WCD_A_ANALOG_MICB_1_INT_RBIAS,
+					0x80, 0x80);
+#else
 				snd_soc_update_bits(codec,
 					MSM8X16_WCD_A_ANALOG_TX_1_2_ATEST_CTL_2,
 					0x02, 0x02);
+#endif
 			snd_soc_update_bits(codec, micb_int_reg, 0x80, 0x80);
+
 		} else if (strnstr(w->name, internal2_text, strlen(w->name))) {
 			snd_soc_update_bits(codec, micb_int_reg, 0x10, 0x10);
 			snd_soc_update_bits(codec, w->reg, 0x60, 0x00);
+#if defined(CONFIG_MACH_LENOVO_TB8804) || defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8504)
+			snd_soc_update_bits(codec,
+				MSM8X16_WCD_A_ANALOG_TX_1_2_ATEST_CTL_2,
+				0x03, 0x03);
+			snd_soc_update_bits(codec,
+				MSM8X16_WCD_A_ANALOG_MICB_1_INT_RBIAS,
+				0x80, 0x80);
+#endif
 		} else if (strnstr(w->name, internal3_text, strlen(w->name))) {
 			snd_soc_update_bits(codec, micb_int_reg, 0x2, 0x2);
 		/*
@@ -3577,9 +3881,18 @@ static int msm8x16_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 		} else if (!strnstr(w->name, external2_text, strlen(w->name)) &&
 					strnstr(w->name, external_text,
 						strlen(w->name))) {
+#if defined(CONFIG_MACH_LENOVO_TB8804) || defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8504)
+			snd_soc_update_bits(codec,
+					MSM8X16_WCD_A_ANALOG_TX_1_2_ATEST_CTL_2,
+					0x03, 0x03);
+			snd_soc_update_bits(codec,
+					MSM8X16_WCD_A_ANALOG_MICB_1_INT_RBIAS,
+					0x80, 0x80);
+#else
 			snd_soc_update_bits(codec,
 					MSM8X16_WCD_A_ANALOG_TX_1_2_ATEST_CTL_2,
 					0x02, 0x02);
+#endif
 		}
 		if (!strnstr(w->name, external_text, strlen(w->name)))
 			snd_soc_update_bits(codec,
@@ -3597,7 +3910,7 @@ static int msm8x16_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 			snd_soc_update_bits(codec, micb_int_reg, 0x08, 0x08);
 			msm8x16_notifier_call(codec,
 					WCD_EVENT_POST_MICBIAS_2_ON);
-		} else if (strnstr(w->name, internal3_text, 30)) {
+		} else if (strnstr(w->name, internal3_text, strlen(w->name))) {
 			snd_soc_update_bits(codec, micb_int_reg, 0x01, 0x01);
 		} else if (strnstr(w->name, external2_text, strlen(w->name))) {
 			msm8x16_notifier_call(codec,
@@ -3610,7 +3923,7 @@ static int msm8x16_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 		} else if (strnstr(w->name, internal2_text, strlen(w->name))) {
 			msm8x16_notifier_call(codec,
 					WCD_EVENT_POST_MICBIAS_2_OFF);
-		} else if (strnstr(w->name, internal3_text, 30)) {
+		} else if (strnstr(w->name, internal3_text, strlen(w->name))) {
 			snd_soc_update_bits(codec, micb_int_reg, 0x2, 0x0);
 		} else if (strnstr(w->name, external2_text, strlen(w->name))) {
 			/*
@@ -3884,60 +4197,74 @@ static int msm8x16_wcd_codec_config_compander(struct snd_soc_codec *codec,
 					int interp_n, int event)
 {
 	struct msm8x16_wcd_priv *msm8x16_wcd = snd_soc_codec_get_drvdata(codec);
+	int comp_ch_bits_set = 0x03;
 
 	dev_dbg(codec->dev, "%s: event %d shift %d, enabled %d\n",
 		__func__, event, interp_n,
 		msm8x16_wcd->comp_enabled[interp_n]);
 
-	/* compander is not enabled */
-	if (!msm8x16_wcd->comp_enabled[interp_n])
+	/* compander is invalid */
+	if (msm8x16_wcd->comp_enabled[interp_n] != COMPANDER_1 &&
+	    msm8x16_wcd->comp_enabled[interp_n]) {
+		dev_dbg(codec->dev, "%s: Invalid compander %d\n", __func__,
+			msm8x16_wcd->comp_enabled[interp_n]);
 		return 0;
+	}
 
-	switch (msm8x16_wcd->comp_enabled[interp_n]) {
-	case COMPANDER_1:
-		if (SND_SOC_DAPM_EVENT_ON(event)) {
-			/* Enable Compander Clock */
-			snd_soc_update_bits(codec,
-				MSM8X16_WCD_A_CDC_COMP0_B2_CTL, 0x0F, 0x09);
-			snd_soc_update_bits(codec,
-				MSM8X16_WCD_A_CDC_CLK_RX_B2_CTL, 0x01, 0x01);
-			snd_soc_update_bits(codec,
-				MSM8X16_WCD_A_CDC_COMP0_B1_CTL,
-				1 << interp_n, 1 << interp_n);
-			snd_soc_update_bits(codec,
-				MSM8X16_WCD_A_CDC_COMP0_B3_CTL, 0xFF, 0x01);
-			snd_soc_update_bits(codec,
-				MSM8X16_WCD_A_CDC_COMP0_B2_CTL, 0xF0, 0x50);
-			/* add sleep for compander to settle */
-			usleep_range(1000, 1100);
-			snd_soc_update_bits(codec,
-				MSM8X16_WCD_A_CDC_COMP0_B3_CTL, 0xFF, 0x28);
-			snd_soc_update_bits(codec,
-				MSM8X16_WCD_A_CDC_COMP0_B2_CTL, 0xF0, 0xB0);
+	/* compander is not enabled */
+	if (!msm8x16_wcd->comp_enabled[interp_n]) {
+		if (interp_n < MSM8X16_WCD_RX3)
+			if (get_codec_version(msm8x16_wcd) >= DIANGU)
+				snd_soc_update_bits(codec,
+					MSM8X16_WCD_A_ANALOG_RX_COM_BIAS_DAC,
+					0x08, 0x00);
+		return 0;
+	}
 
-			/* Enable Compander GPIO */
-			if (msm8x16_wcd->codec_hph_comp_gpio)
-				msm8x16_wcd->codec_hph_comp_gpio(1);
-		} else if (SND_SOC_DAPM_EVENT_OFF(event)) {
-			/* Disable Compander GPIO */
-			if (msm8x16_wcd->codec_hph_comp_gpio)
-				msm8x16_wcd->codec_hph_comp_gpio(0);
+	if (SND_SOC_DAPM_EVENT_ON(event)) {
+		if (get_codec_version(msm8x16_wcd) >= DIANGU)
+			snd_soc_update_bits(codec,
+				MSM8X16_WCD_A_ANALOG_RX_COM_BIAS_DAC,
+				0x08, 0x08);
+		/* Enable Compander Clock */
+		snd_soc_update_bits(codec,
+			MSM8X16_WCD_A_CDC_COMP0_B2_CTL, 0x0F, 0x09);
+		snd_soc_update_bits(codec,
+			MSM8X16_WCD_A_CDC_CLK_RX_B2_CTL, 0x01, 0x01);
+		snd_soc_update_bits(codec,
+			MSM8X16_WCD_A_CDC_COMP0_B1_CTL,
+			1 << interp_n, 1 << interp_n);
+		snd_soc_update_bits(codec,
+			MSM8X16_WCD_A_CDC_COMP0_B3_CTL, 0xFF, 0x01);
+		snd_soc_update_bits(codec,
+			MSM8X16_WCD_A_CDC_COMP0_B2_CTL, 0xF0, 0x50);
+		/* add sleep for compander to settle */
+		usleep_range(1000, 1100);
+		snd_soc_update_bits(codec,
+			MSM8X16_WCD_A_CDC_COMP0_B3_CTL, 0xFF, 0x28);
+		snd_soc_update_bits(codec,
+			MSM8X16_WCD_A_CDC_COMP0_B2_CTL, 0xF0, 0xB0);
 
+		/* Enable Compander GPIO */
+		if (msm8x16_wcd->codec_hph_comp_gpio)
+			msm8x16_wcd->codec_hph_comp_gpio(1);
+	} else if (SND_SOC_DAPM_EVENT_OFF(event)) {
+		/* Disable Compander GPIO */
+		if (msm8x16_wcd->codec_hph_comp_gpio)
+			msm8x16_wcd->codec_hph_comp_gpio(0);
+
+		snd_soc_update_bits(codec,
+			MSM8X16_WCD_A_CDC_COMP0_B1_CTL,
+			1 << interp_n, 0);
+		comp_ch_bits_set = snd_soc_read(codec,
+					MSM8X16_WCD_A_CDC_COMP0_B1_CTL);
+		if ((comp_ch_bits_set & 0x03) == 0x00) {
 			snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_CDC_COMP0_B2_CTL, 0x0F, 0x05);
-			snd_soc_update_bits(codec,
-				MSM8X16_WCD_A_CDC_COMP0_B1_CTL,
-				1 << interp_n, 0);
-			snd_soc_update_bits(codec,
-				MSM8X16_WCD_A_CDC_CLK_RX_B2_CTL, 0x01, 0x00);
+		snd_soc_update_bits(codec,
+			MSM8X16_WCD_A_CDC_CLK_RX_B2_CTL, 0x01, 0x00);
 		}
-		break;
-	default:
-		dev_dbg(codec->dev, "%s: Invalid compander %d\n", __func__,
-				msm8x16_wcd->comp_enabled[interp_n]);
-		break;
-	};
-
+	}
 	return 0;
 }
 
@@ -4072,14 +4399,10 @@ void wcd_imped_config(struct snd_soc_codec *codec,
 				snd_soc_codec_get_drvdata(codec);
 
 	value = wcd_get_impedance_value(imped);
+
 	if (value < wcd_imped_val[0]) {
 		pr_debug("%s, detected impedance is less than 4 Ohm\n",
 			 __func__);
-		return;
-	}
-	if (value >= wcd_imped_val[ARRAY_SIZE(wcd_imped_val) - 1]) {
-		pr_err("%s, invalid imped, greater than 48 Ohm\n = %d\n",
-			__func__, value);
 		return;
 	}
 
@@ -4092,9 +4415,9 @@ void wcd_imped_config(struct snd_soc_codec *codec,
 		case CONGA:
 			/*
 			 * For 32Ohm load and higher loads, Set 0x19E
-			 * bit 5 to 1 (POS_6_DB_DI). For loads lower
+			 * bit 5 to 1 (POS_0_DB_DI). For loads lower
 			 * than 32Ohm (such as 16Ohm load), Set 0x19E
-			 * bit 5 to 0 (POS_1P5_DB_DI)
+			 * bit 5 to 0 (POS_M4P5_DB_DI)
 			 */
 			if (value >= 32)
 				snd_soc_update_bits(codec,
@@ -4236,8 +4559,6 @@ static int msm8x16_wcd_lo_dac_event(struct snd_soc_dapm_widget *w,
 			MSM8X16_WCD_A_ANALOG_RX_LO_DAC_CTL, 0x80, 0x80);
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_RX_LO_DAC_CTL, 0x08, 0x00);
-		snd_soc_update_bits(codec,
-			MSM8X16_WCD_A_ANALOG_RX_LO_EN_CTL, 0x40, 0x40);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
 		usleep_range(20000, 20100);
@@ -4249,8 +4570,6 @@ static int msm8x16_wcd_lo_dac_event(struct snd_soc_dapm_widget *w,
 			MSM8X16_WCD_A_ANALOG_RX_LO_DAC_CTL, 0x08, 0x00);
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_RX_LO_EN_CTL, 0x80, 0x00);
-		snd_soc_update_bits(codec,
-			MSM8X16_WCD_A_ANALOG_RX_LO_EN_CTL, 0x40, 0x00);
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_RX_LO_EN_CTL, 0x20, 0x00);
 		snd_soc_update_bits(codec,
@@ -4441,6 +4760,7 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"HPHR PA", NULL, "CP"},
 	{"HPHR PA", NULL, "RX_BIAS"},
 	{"HPHL DAC", NULL, "RX1 CHAIN"},
+
 
 	{"SPK_OUT", NULL, "SPK PA"},
 	{"SPK PA", NULL, "SPK_RX_BIAS"},
@@ -4743,13 +5063,24 @@ static int msm8x16_wcd_hw_params(struct snd_pcm_substream *substream,
 	}
 	switch (params_format(params)) {
 	case SNDRV_PCM_FORMAT_S16_LE:
-		snd_soc_update_bits(dai->codec,
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			snd_soc_update_bits(dai->codec,
 				MSM8X16_WCD_A_CDC_CLK_RX_I2S_CTL, 0x20, 0x20);
+		} else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+			snd_soc_update_bits(dai->codec,
+				MSM8X16_WCD_A_CDC_CLK_TX_I2S_CTL, 0x20, 0x20);
+		}
 		break;
 	case SNDRV_PCM_FORMAT_S24_LE:
 	case SNDRV_PCM_FORMAT_S24_3LE:
-		snd_soc_update_bits(dai->codec,
+	case SNDRV_PCM_FORMAT_S32_LE:
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			snd_soc_update_bits(dai->codec,
 				MSM8X16_WCD_A_CDC_CLK_RX_I2S_CTL, 0x20, 0x00);
+		} else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+			snd_soc_update_bits(dai->codec,
+				MSM8X16_WCD_A_CDC_CLK_TX_I2S_CTL, 0x20, 0x00);
+		}
 		break;
 	default:
 		dev_err(dai->codec->dev, "%s: wrong format selected\n",
@@ -4907,9 +5238,9 @@ static int msm8x16_wcd_codec_enable_lo_pa(struct snd_soc_dapm_widget *w,
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_CDC_RX3_B6_CTL, 0x01, 0x00);
 		break;
-	case SND_SOC_DAPM_POST_PMD:
+	case SND_SOC_DAPM_PRE_PMD:
 		snd_soc_update_bits(codec,
-			MSM8X16_WCD_A_CDC_RX3_B6_CTL, 0x01, 0x00);
+			MSM8X16_WCD_A_CDC_RX3_B6_CTL, 0x01, 0x01);
 		break;
 	}
 
@@ -4921,18 +5252,31 @@ static int msm8x16_wcd_codec_enable_spk_ext_pa(struct snd_soc_dapm_widget *w,
 {
 	struct snd_soc_codec *codec = w->codec;
 	struct msm8x16_wcd_priv *msm8x16_wcd = snd_soc_codec_get_drvdata(codec);
-
+#if defined(CONFIG_MACH_LENOVO_TB8504) //mike_zhu add  20170111 for spk pop
+	struct msm8916_asoc_mach_data *pdata = NULL;
+	pdata = snd_soc_card_get_drvdata(codec->component.card);
+#endif
 	dev_dbg(codec->dev, "%s: %s event = %d\n", __func__, w->name, event);
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
 		dev_dbg(w->codec->dev,
 			"%s: enable external speaker PA\n", __func__);
+#if defined(CONFIG_MACH_LENOVO_TB8504) //mike_zhu add  20170111 for spk pop
+		pr_debug("At %d In (%s), will run msm8x16_wcd_codec_enable_spk_ext_pa,true\n",__LINE__, __FUNCTION__);
+		schedule_delayed_work(&pdata->speaker_pa_enable_work, msecs_to_jiffies(150));//50
+#else
 		if (msm8x16_wcd->codec_spk_ext_pa_cb)
 			msm8x16_wcd->codec_spk_ext_pa_cb(codec, 1);
+#endif
+
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
 		dev_dbg(w->codec->dev,
 			"%s: enable external speaker PA\n", __func__);
+#if defined(CONFIG_MACH_LENOVO_TB8504) //mike_zhu add  20170111 for spk pop
+		cancel_delayed_work_sync(&pdata->speaker_pa_enable_work);
+		pdata->spk_is_on = 0;
+#endif
 		if (msm8x16_wcd->codec_spk_ext_pa_cb)
 			msm8x16_wcd->codec_spk_ext_pa_cb(codec, 0);
 		break;
@@ -4945,6 +5289,10 @@ static int msm8x16_wcd_codec_enable_ear_pa(struct snd_soc_dapm_widget *w,
 {
 	struct snd_soc_codec *codec = w->codec;
 	struct msm8x16_wcd_priv *msm8x16_wcd = snd_soc_codec_get_drvdata(codec);
+    #if defined(CONFIG_RECEIVER_EXT_PA)
+	struct msm8916_asoc_mach_data *pdata = NULL;
+	pdata = snd_soc_card_get_drvdata(codec->component.card);
+    #endif
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
@@ -4974,6 +5322,10 @@ static int msm8x16_wcd_codec_enable_ear_pa(struct snd_soc_dapm_widget *w,
 		usleep_range(7000, 7100);
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_CDC_RX1_B6_CTL, 0x01, 0x00);
+        #if defined(CONFIG_RECEIVER_EXT_PA)
+		pr_debug("At %d In (%s), will run msm8x16_rec_ext_pa_ctrl,true\n",__LINE__, __FUNCTION__);
+		schedule_delayed_work(&pdata->rec_gpio_work, msecs_to_jiffies(40));//50
+        #endif
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
 		snd_soc_update_bits(codec,
@@ -4997,6 +5349,19 @@ static int msm8x16_wcd_codec_enable_ear_pa(struct snd_soc_dapm_widget *w,
 		dev_dbg(w->codec->dev,
 			"%s: Sleeping 7ms after disabling EAR PA\n",
 			__func__);
+#if defined(CONFIG_RECEIVER_EXT_PA)
+		cancel_delayed_work_sync(&pdata->rec_gpio_work);
+		msm8x16_rec_ext_pa_ctrl(pdata, false);
+#if !(defined(CONFIG_MACH_LENOVO_TB8804) || defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8504))
+		pr_debug("At %d In (%s),close pa,spk_rec_switch_gpio_lc=%d\n",
+			__LINE__, __FUNCTION__,gpio_get_value(pdata->spk_rec_switch_gpio_lc));
+#endif
+		pdata->rec_is_on = 0;
+		//schedule_delayed_work(&pdata->pa_gpio_work_close, msecs_to_jiffies(4));
+#if 0	// xuke @ 20150407	Add this line to fix the issue that self-capture pole can't be detected if without being plugged in when phone the first powers on after SW downloaded.
+		msm8x16_spk_hs_switch_ctrl(codec->card, false);
+#endif
+#endif
 		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_RX_EAR_CTL,
 			    0x40, 0x00);
 		usleep_range(7000, 7100);
@@ -5093,8 +5458,8 @@ static const struct snd_soc_dapm_widget msm8x16_wcd_dapm_widgets[] = {
 			SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD),
 
 	SND_SOC_DAPM_PGA_E("LINEOUT PA", MSM8X16_WCD_A_ANALOG_RX_LO_EN_CTL,
-			5, 0 , NULL, 0, msm8x16_wcd_codec_enable_lo_pa,
-			SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
+			6, 0 , NULL, 0, msm8x16_wcd_codec_enable_lo_pa,
+			SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
 
 	SND_SOC_DAPM_SUPPLY("VDD_SPKDRV", SND_SOC_NOPM, 0, 0,
 			    msm89xx_wcd_codec_enable_vdd_spkr,
@@ -5477,13 +5842,20 @@ static int msm8x16_wcd_device_down(struct snd_soc_codec *codec)
 	struct msm8x16_wcd_priv *msm8x16_wcd_priv =
 		snd_soc_codec_get_drvdata(codec);
 	int i;
+	unsigned int tx_1_en;
+	unsigned int tx_2_en;
 
 	pdata = snd_soc_card_get_drvdata(codec->component.card);
 	dev_dbg(codec->dev, "%s: device down!\n", __func__);
+
+	tx_1_en = msm8x16_wcd_read(codec, MSM8X16_WCD_A_ANALOG_TX_1_EN);
+	tx_2_en = msm8x16_wcd_read(codec, MSM8X16_WCD_A_ANALOG_TX_2_EN);
+	tx_1_en = tx_1_en & 0x7f;
+	tx_2_en = tx_2_en & 0x7f;
 	msm8x16_wcd_write(codec,
-		MSM8X16_WCD_A_ANALOG_TX_1_EN, 0x3);
+		MSM8X16_WCD_A_ANALOG_TX_1_EN, tx_1_en);
 	msm8x16_wcd_write(codec,
-		MSM8X16_WCD_A_ANALOG_TX_2_EN, 0x3);
+		MSM8X16_WCD_A_ANALOG_TX_2_EN, tx_2_en);
 	if (msm8x16_wcd_priv->boost_option == BOOST_ON_FOREVER) {
 		if ((snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_SPKR_DRV_CTL)
 			& 0x80) == 0) {
@@ -5713,19 +6085,35 @@ static void msm8x16_wcd_configure_cap(struct snd_soc_codec *codec,
 		     == MICBIAS_EXT_BYP_CAP) ||
 		    (pdata->micbias2_cap_mode
 		     == MICBIAS_EXT_BYP_CAP))
+#if defined(CONFIG_MACH_LENOVO_TB8504)//TDD noise
+			snd_soc_update_bits(codec,
+				MSM8X16_WCD_A_ANALOG_MICB_1_EN,
+				0x40, 0x40);
+#else
 			snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MICB_1_EN,
 				0x40, (MICBIAS_EXT_BYP_CAP << 6));
+#endif
 		else
 			snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MICB_1_EN,
 				0x40, (MICBIAS_NO_EXT_BYP_CAP << 6));
 	} else if (micbias2) {
+#if defined(CONFIG_MACH_LENOVO_TB8504)
+		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MICB_1_EN,
+				0x40, (1 << 6));
+#else
 		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MICB_1_EN,
 				0x40, (pdata->micbias2_cap_mode << 6));
+#endif
 	} else if (micbias1) {
+#if defined(CONFIG_MACH_LENOVO_TB8504)//TDD noise
+			snd_soc_update_bits(codec,MSM8X16_WCD_A_ANALOG_MICB_1_EN,
+				0x40, 0x40);
+#else
 		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MICB_1_EN,
 				0x40, (pdata->micbias1_cap_mode << 6));
+#endif
 	} else {
 		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MICB_1_EN,
 				0x40, 0x00);
@@ -5738,6 +6126,7 @@ static int msm8x16_wcd_codec_probe(struct snd_soc_codec *codec)
 	struct msm8x16_wcd *msm8x16_wcd;
 	struct msm8x16_wcd_pdata *pdata;
 	int i, ret;
+	const char *subsys_name = NULL;
 
 	dev_dbg(codec->dev, "%s()\n", __func__);
 
@@ -5867,9 +6256,19 @@ static int msm8x16_wcd_codec_probe(struct snd_soc_codec *codec)
 	/* Set initial cap mode */
 	msm8x16_wcd_configure_cap(codec, false, false);
 	registered_codec = codec;
-	adsp_state_notifier =
-	    subsys_notif_register_notifier("adsp",
-					   &adsp_state_notifier_block);
+	ret = of_property_read_string(codec->dev->of_node,
+				"qcom,subsys-name",
+				&subsys_name);
+	if (ret) {
+		dev_dbg(codec->dev, "missing subsys-name entry in dt node\n");
+		adsp_state_notifier =
+			subsys_notif_register_notifier("adsp",
+			&adsp_state_notifier_block);
+	} else {
+		adsp_state_notifier =
+			subsys_notif_register_notifier(subsys_name,
+			&adsp_state_notifier_block);
+	}
 	if (!adsp_state_notifier) {
 		dev_err(codec->dev, "Failed to register adsp state notifier\n");
 		iounmap(msm8x16_wcd->dig_base);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -24,6 +24,7 @@
 #include <linux/kobject.h>
 #include <linux/string.h>
 #include <linux/sysfs.h>
+#include <linux/interrupt.h>
 
 #include "mdss_fb.h"
 #include "mdss_dsi.h"
@@ -38,6 +39,7 @@
 static uint32_t interval = STATUS_CHECK_INTERVAL_MS;
 static int32_t dsi_status_disable = DSI_STATUS_CHECK_INIT;
 struct dsi_status_data *pstatus_data;
+static DEFINE_SPINLOCK(pstatus_init_lock);
 
 /*
  * check_dsi_ctrl_status() - Reads MFD structure and
@@ -83,21 +85,40 @@ irqreturn_t hw_vsync_handler(int irq, void *data)
 {
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata =
 			(struct mdss_dsi_ctrl_pdata *)data;
+	struct dsi_status_data *ps_data;
+	unsigned long flags;
+
 	if (!ctrl_pdata) {
 		pr_err("%s: DSI ctrl not available\n", __func__);
 		return IRQ_HANDLED;
 	}
 
-	if (pstatus_data)
-		mod_delayed_work(system_wq, &pstatus_data->check_status,
+	spin_lock_irqsave(&pstatus_init_lock, flags);
+	ps_data = pstatus_data;
+	spin_unlock_irqrestore(&pstatus_init_lock, flags);
+
+	if (ps_data)
+		mod_delayed_work(system_wq, &ps_data->check_status,
 			msecs_to_jiffies(interval));
 	else
 		pr_err("Pstatus data is NULL\n");
 
-	if (!atomic_read(&ctrl_pdata->te_irq_ready))
+	if (!atomic_read(&ctrl_pdata->te_irq_ready)) {
+		complete_all(&ctrl_pdata->te_irq_comp);
 		atomic_inc(&ctrl_pdata->te_irq_ready);
+	}
 
 	return IRQ_HANDLED;
+}
+
+/*
+ * disable_esd_thread() - Cancels work item for the esd check.
+ */
+void disable_esd_thread(void)
+{
+	if (pstatus_data &&
+		cancel_delayed_work_sync(&pstatus_data->check_status))
+			pr_debug("esd thread killed\n");
 }
 
 /*
@@ -131,14 +152,18 @@ static int fb_event_callback(struct notifier_block *self,
 		return NOTIFY_DONE;
 
 	mfd = evdata->info->par;
-	ctrl_pdata = container_of(dev_get_platdata(&mfd->pdev->dev),
+	if (mfd->panel_info->type == SPI_PANEL) {
+		pinfo = mfd->panel_info;
+	} else {
+		ctrl_pdata = container_of(dev_get_platdata(&mfd->pdev->dev),
 				struct mdss_dsi_ctrl_pdata, panel_data);
-	if (!ctrl_pdata) {
-		pr_err("%s: DSI ctrl not available\n", __func__);
-		return NOTIFY_BAD;
-	}
+		if (!ctrl_pdata) {
+			pr_err("%s: DSI ctrl not available\n", __func__);
+			return NOTIFY_BAD;
+		}
 
-	pinfo = &ctrl_pdata->panel_data.panel_info;
+		pinfo = &ctrl_pdata->panel_data.panel_info;
+	}
 
 	if ((!(pinfo->esd_check_enabled) &&
 			dsi_status_disable) ||
@@ -160,10 +185,12 @@ static int fb_event_callback(struct notifier_block *self,
 			schedule_delayed_work(&pdata->check_status,
 				msecs_to_jiffies(interval));
 			break;
-		case FB_BLANK_POWERDOWN:
-		case FB_BLANK_HSYNC_SUSPEND:
 		case FB_BLANK_VSYNC_SUSPEND:
 		case FB_BLANK_NORMAL:
+			pr_debug("%s : ESD thread running\n", __func__);
+			break;
+		case FB_BLANK_POWERDOWN:
+		case FB_BLANK_HSYNC_SUSPEND:
 			cancel_delayed_work(&pdata->check_status);
 			break;
 		default:
@@ -211,27 +238,44 @@ static int param_set_interval(const char *val, struct kernel_param *kp)
 
 int __init mdss_dsi_status_init(void)
 {
+	struct dsi_status_data *ps_data;
+	unsigned long flags;
 	int rc = 0;
+	struct mdss_util_intf *util = mdss_get_util_intf();
 
-	pstatus_data = kzalloc(sizeof(struct dsi_status_data), GFP_KERNEL);
-	if (!pstatus_data) {
+	if (!util) {
+		pr_err("%s: Failed to get utility functions\n", __func__);
+		return -ENODEV;
+	}
+
+	if (util->display_disabled) {
+		pr_info("Display is disabled, not progressing with dsi_init\n");
+		return -ENOTSUPP;
+	}
+
+	ps_data = kzalloc(sizeof(struct dsi_status_data), GFP_KERNEL);
+	if (!ps_data) {
 		pr_err("%s: can't allocate memory\n", __func__);
 		return -ENOMEM;
 	}
 
-	pstatus_data->fb_notifier.notifier_call = fb_event_callback;
+	ps_data->fb_notifier.notifier_call = fb_event_callback;
 
-	rc = fb_register_client(&pstatus_data->fb_notifier);
+	rc = fb_register_client(&ps_data->fb_notifier);
 	if (rc < 0) {
 		pr_err("%s: fb_register_client failed, returned with rc=%d\n",
 								__func__, rc);
-		kfree(pstatus_data);
+		kfree(ps_data);
 		return -EPERM;
 	}
 
 	pr_info("%s: DSI status check interval:%d\n", __func__,	interval);
 
-	INIT_DELAYED_WORK(&pstatus_data->check_status, check_dsi_ctrl_status);
+	INIT_DELAYED_WORK(&ps_data->check_status, check_dsi_ctrl_status);
+
+	spin_lock_irqsave(&pstatus_init_lock, flags);
+	pstatus_data = ps_data;
+	spin_unlock_irqrestore(&pstatus_init_lock, flags);
 
 	pr_debug("%s: DSI ctrl status work queue initialized\n", __func__);
 

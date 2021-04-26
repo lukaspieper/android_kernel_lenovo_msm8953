@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -268,12 +268,27 @@ void hdd_rst_tcp_delack(hdd_context_t *hdd_ctx);
 VOS_STATUS hdd_mon_rx_packet_cbk(v_VOID_t *vos_ctx, adf_nbuf_t rx_buf,
 				 uint8_t sta_id);
 
+/**
+ * hdd_vir_mon_rx_cbk() - Monitor callback registered to TLSHIM.
+ * @vosContext: [in] pointer to VOS context
+ * @rxBuf:      [in] pointer to rx adf_nbuf
+ * @staId:      [in] Station Id
+ *
+ * TL will call this to notify the HDD when one or more packets were
+ * received for a registered HDD adapter.
+ * Return: VOS_STATUS_E_FAILURE if any errors encountered, VOS_STATUS_SUCCESS
+ * otherwise
+ */
+VOS_STATUS hdd_vir_mon_rx_cbk(v_VOID_t *vos_ctx, adf_nbuf_t rx_buf,
+			      uint8_t sta_id);
+
 void wlan_display_tx_timeout_stats(hdd_adapter_t *adapter);
 
 const char *hdd_reason_type_to_string(enum netif_reason_type reason);
 const char *hdd_action_type_to_string(enum netif_action_type action);
 void wlan_hdd_netif_queue_control(hdd_adapter_t *adapter,
 		enum netif_action_type action, enum netif_reason_type reason);
+void wlan_hdd_classify_pkt(struct sk_buff *skb);
 
 #ifdef QCA_PKT_PROTO_TRACE
 void hdd_dhcp_pkt_trace_buf_update(struct sk_buff *skb, int is_transmission,

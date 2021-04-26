@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -4068,6 +4068,8 @@ enum htt_t2h_msg_type {
     HTT_T2H_MSG_TYPE_FLOW_POOL_MAP            = 0x18,
     HTT_T2H_MSG_TYPE_FLOW_POOL_UNMAP          = 0x19,
     HTT_T2H_MSG_TYPE_SRING_SETUP_DONE         = 0x1a,
+    HTT_T2H_MSG_TYPE_PPDU_STATS_IND           = 0x1d,
+    HTT_T2H_MSG_TYPE_MONITOR_MAC_HEADER_IND   = 0x20,
 
     HTT_T2H_MSG_TYPE_TEST,
     /* keep this last */
@@ -4487,7 +4489,8 @@ PREPACK struct htt_rx_ind_hdr_suffix_t
 {
     A_UINT32 /* word 0 */
         fw_rx_desc_bytes: 16,
-        reserved0: 16;
+        noise_floor_chain0: 8,
+        noise_floor_chain1: 8;
 } POSTPACK;
 
 #define HTT_RX_IND_HDR_SUFFIX_BYTES (sizeof(struct htt_rx_ind_hdr_suffix_t))
@@ -4593,7 +4596,7 @@ A_COMPILE_TIME_ASSERT(HTT_RX_IND_hdr_size_quantum,
  * |--------------------------------------------------------------------------|
  * |    service     |                    HT-SIG / VHT-SIG-A2                  |
  * |==========================================================================|
- * |             reserved               |          FW rx desc bytes           |
+ * |     chain1 NF  |   chain0 NF       |          FW rx desc bytes           |
  * |--------------------------------------------------------------------------|
  * |     MSDU Rx    |      MSDU Rx      |        MSDU Rx      |    MSDU Rx    |
  * |     desc B3    |      desc B2      |        desc B1      |    desc B0    |
@@ -4896,6 +4899,12 @@ A_COMPILE_TIME_ASSERT(HTT_RX_IND_hdr_size_quantum,
  *     Bits 15:0
  *     Purpose: Indicate how many bytes in the Rx indication are used for
  *         FW Rx descriptors
+ *   - chain0 noise floor
+ *     Bits 23:16
+ *     Purpose: Indicate chain0 noise floor to host
+ *   - chain1 noise floor
+ *     Bits 31:24
+ *     Purpose: Indicate chain1 noise floor to host
  *
  * Payload fields:
  *   - MPDU_COUNT
@@ -4974,6 +4983,11 @@ A_COMPILE_TIME_ASSERT(HTT_RX_IND_hdr_size_quantum,
 #define HTT_RX_IND_FW_RX_DESC_BYTES_M   0xffff
 #define HTT_RX_IND_FW_RX_DESC_BYTES_S   0
 
+#define HTT_RX_IND_NOISE_FLOOR_CHAIN0_M   0x00ff0000
+#define HTT_RX_IND_NOISE_FLOOR_CHAIN0_S   16
+#define HTT_RX_IND_NOISE_FLOOR_CHAIN1_M   0xff000000
+#define HTT_RX_IND_NOISE_FLOOR_CHAIN1_S   24
+
 /* payload fields */
 #define HTT_RX_IND_MPDU_COUNT_M    0xff
 #define HTT_RX_IND_MPDU_COUNT_S    0
@@ -5021,6 +5035,11 @@ A_COMPILE_TIME_ASSERT(HTT_RX_IND_hdr_size_quantum,
     } while (0)
 #define HTT_RX_IND_FW_RX_DESC_BYTES_GET(word) \
     (((word) & HTT_RX_IND_FW_RX_DESC_BYTES_M) >> HTT_RX_IND_FW_RX_DESC_BYTES_S)
+
+#define HTT_RX_IND_NOISE_FLOOR_CHAIN0_GET(word) \
+    (((word) & HTT_RX_IND_NOISE_FLOOR_CHAIN0_M) >> HTT_RX_IND_NOISE_FLOOR_CHAIN0_S)
+#define HTT_RX_IND_NOISE_FLOOR_CHAIN1_GET(word) \
+    (((word) & HTT_RX_IND_NOISE_FLOOR_CHAIN1_M) >> HTT_RX_IND_NOISE_FLOOR_CHAIN1_S)
 
 
 #define HTT_RX_IND_FLUSH_SEQ_NUM_START_SET(word, value)              \
@@ -5270,6 +5289,14 @@ struct htt_rx_ind_hl_rx_desc_t {
             udp: 1,
             reserved: 1;
     } flags;
+    /* sa_ant_matrix
+     * For cases where a single rx chain has options to be connected to
+     * different rx antennas, show which rx antennas were in use during
+     * receipt of a given PPDU.
+     * This sa_ant_matrix provides a bitmask of the antennas used while
+     * receiving this frame.
+     */
+    A_UINT8 sa_ant_matrix;
 };
 
 #define HTT_RX_IND_HL_RX_DESC_VER_OFFSET \
@@ -5284,6 +5311,10 @@ struct htt_rx_ind_hl_rx_desc_t {
 #define HTT_RX_IND_HL_FLAG_OFFSET \
     (HTT_RX_IND_HL_RX_DESC_BASE_OFFSET \
      + offsetof(struct htt_rx_ind_hl_rx_desc_t, flags))
+
+#define HTT_RX_IND_HL_SA_ANT_MATRIX_OFFSET \
+    (HTT_RX_IND_HL_RX_DESC_BASE_OFFSET \
+     + offsetof(struct htt_rx_ind_hl_rx_desc_t, sa_ant_matrix))
 
 #define HTT_RX_IND_HL_FLAG_FIRST_MSDU   (0x01 << 0)
 #define HTT_RX_IND_HL_FLAG_LAST_MSDU    (0x01 << 1)
@@ -6220,15 +6251,19 @@ PREPACK struct htt_txq_group {
  * The following diagram shows the format of the TX completion indication sent
  * from the target to the host
  *
- *          |31      25|    24|23        16| 15 |14 11|10   8|7          0|
+ *          |31      27|26|25|24|23     16| 15 |14 11|10    8|7          0|
  *          |-------------------------------------------------------------|
- * header:  | reserved |append|     num    | t_i| tid |status|  msg_type  |
+ * header:  | reserved |a2|a1|a0|   num   | t_i| tid |status |  msg_type  |
  *          |-------------------------------------------------------------|
  * payload: |            MSDU1 ID          |         MSDU0 ID             |
  *          |-------------------------------------------------------------|
  *          :            MSDU3 ID          :         MSDU2 ID             :
  *          |-------------------------------------------------------------|
  *          |          struct htt_tx_compl_ind_append_retries             |
+ *          |-------------------------------------------------------------|
+ *          |          struct htt_tx_compl_ind_append_txtstamp            |
+ *          |-------------------------------------------------------------|
+ *          |          struct htt_tx_compl_ind_append_txpower             |
  *          - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  *
  * The following field definitions describe the format of the TX completion
@@ -6255,10 +6290,21 @@ PREPACK struct htt_txq_group {
  *   Bits 23:16
  *   Purpose: the number of payload in this indication
  *   Value: 1 to 255
- * - append
+ * - a0 - append0
  *   Bits 24:24
  *   Purpose: append the struct htt_tx_compl_ind_append_retries which contains
- *            the number of tx retries for one MSDU at the end of this message
+ *            the number of tx retries for one MSDU after MSDU ID.
+ *   Value: 0 indicates no appending; 1 indicates appending
+ * - a1 - append1
+ *   Bits 25:25
+ *   Purpose: append the struct htt_tx_compl_ind_append_txtstamp which contains
+ *            the timestamp info for each TX msdu id in payload after append0.
+ *   Value: 0 indicates no appending; 1 indicates appending
+ * - a2 - append2
+ *   Bits 26:26
+ *   Purpose: append the struct htt_tx_compl_ind_append_txpower which contains
+ *            one or more tx power of each MSDUs after append1.
+ *            The start of tx power(s) must be 4-bytes-word aligned.
  *   Value: 0 indicates no appending; 1 indicates appending
  * Payload fields:
  * - hmsdu_id
@@ -6277,6 +6323,10 @@ PREPACK struct htt_txq_group {
 #define HTT_TX_COMPL_IND_NUM_M         0x00ff0000
 #define HTT_TX_COMPL_IND_APPEND_S      24
 #define HTT_TX_COMPL_IND_APPEND_M      0x01000000
+#define HTT_TX_COMPL_IND_APPEND1_S     25
+#define HTT_TX_COMPL_IND_APPEND1_M     0x02000000
+#define HTT_TX_COMPL_IND_APPEND2_S     26
+#define HTT_TX_COMPL_IND_APPEND2_M     0x04000000
 
 #define HTT_TX_COMPL_IND_STATUS_SET(_info, _val)                        \
     do {                                                                \
@@ -6314,6 +6364,20 @@ PREPACK struct htt_txq_group {
     } while (0)
 #define HTT_TX_COMPL_IND_APPEND_GET(_info)                             \
     (((_info) & HTT_TX_COMPL_IND_APPEND_M) >> HTT_TX_COMPL_IND_APPEND_S)
+#define HTT_TX_COMPL_IND_APPEND1_SET(_info, _val)                           \
+    do {                                                            \
+        HTT_CHECK_SET_VAL(HTT_TX_COMPL_IND_APPEND1, _val);          \
+        ((_info) |= ((_val) << HTT_TX_COMPL_IND_APPEND1_S));        \
+    } while (0)
+#define HTT_TX_COMPL_IND_APPEND1_GET(_info)                             \
+    (((_info) & HTT_TX_COMPL_IND_APPEND1_M) >> HTT_TX_COMPL_IND_APPEND1_S)
+#define HTT_TX_COMPL_IND_APPEND2_SET(_info, _val)                        \
+    do {                                                           \
+        HTT_CHECK_SET_VAL(HTT_TX_COMPL_IND_APPEND2, _val);           \
+        ((_info) |= ((_val) << HTT_TX_COMPL_IND_APPEND2_S));         \
+    } while (0)
+#define HTT_TX_COMPL_IND_APPEND2_GET(_info)                              \
+    (((_info) & HTT_TX_COMPL_IND_APPEND2_M) >> HTT_TX_COMPL_IND_APPEND2_S)
 
 #define HTT_TX_COMPL_HEAD_SZ                4
 #define HTT_TX_COMPL_BYTES_PER_MSDU_ID      2
@@ -6335,6 +6399,10 @@ PREPACK struct htt_txq_group {
  */
 #define HTT_TX_COMPL_IND_STAT_PEER_DEL    4
 
+#if defined(CONFIG_HL_SUPPORT)
+/* The FAIL_NOTIFY status is used for regular frms in HL cases */
+#define HTT_TX_COMPL_IND_STAT_FAIL_NOTIFY   5
+#endif
 
 #define HTT_TX_COMPL_IND_APPEND_SET_MORE_RETRY(f)  ((f) |= 0x1)
 #define HTT_TX_COMPL_IND_APPEND_CLR_MORE_RETRY(f)  ((f) &= (~0x1))
@@ -6349,6 +6417,14 @@ PREPACK struct htt_tx_compl_ind_append_retries {
     A_UINT8  tx_retries;
     A_UINT8  flag; /* Bit 0, 1: another append_retries struct is appended
                              0: this is the last append_retries struct */
+} POSTPACK;
+
+PREPACK struct htt_tx_compl_ind_append_txtstamp {
+    A_UINT32 timestamp[1/*or more*/];
+} POSTPACK;
+
+PREPACK struct htt_tx_compl_ind_append_txpower {
+    A_UINT16 tx_power[1/*or more*/];
 } POSTPACK;
 
 /**
@@ -8126,4 +8202,310 @@ enum htt_ring_setup_status {
         ((_var) |= ((_val) << HTT_SRING_SETUP_DONE_STATUS_S)); \
     } while (0)
 
+/**
+ * @brief target -> host monitor mac header indication message
+ *
+ * @details
+ * The following diagram shows the format of the monitor mac header message
+ * sent from the target to the host, while enable rx filter promiscuous.
+ *
+ *          |31          24|23           16|15            8|7            0|
+ *          |-------------------------------------------------------------|
+ *          |            peer_id           |    reserved0  |    msg_type  |
+ *          |-------------------------------------------------------------|
+ *          |            reserved1         |           num_mpdu           |
+ *          |-------------------------------------------------------------|
+ *          |                       struct hw_rx_desc                     |
+ *          |                      (see wal_rx_desc.h)                    |
+ *          |-------------------------------------------------------------|
+ *          |                   struct ieee80211_frame_addr4              |
+ *          |                      (see ieee80211_defs.h)                 |
+ *          |                            ......                           |
+ *          |-------------------------------------------------------------|
+ *
+ * Header fields:
+ *  - msg_type
+ *    Bits 7:0
+ *    Purpose: Identifies this is a monitor mac header indication
+ *             message.
+ *    Value: 0x20
+ *   - reserved0
+ *     Bits 15:8
+ *     Purpose:
+ *     value:
+ *  - peer_id
+ *    Bits 31:16
+ *    Purpose: Software peer id given by host during association,
+               in this case it should be set to invalid(0xFF)
+ *    Value:
+ *  - num_mpdu
+ *    Bits 15:0
+ *    Purpose: numbers of mpdu mac header (struct ieee80211_frame_addr4) per rx ppdu
+ *             the maximum num_mpdu is limited to 32.
+ *    Value:
+ *   - reserved1
+ *     Bits 31:16
+ *     Purpose:
+ *     value:
+ */
+#define HTT_T2H_MONITOR_MAC_HEADER_IND_HDR_SIZE       8
+
+#define HTT_T2H_MONITOR_MAC_HEADER_PEER_ID_M          0xFFFF0000
+#define HTT_T2H_MONITOR_MAC_HEADER_PEER_ID_S          16
+
+#define HTT_T2H_MONITOR_MAC_HEADER_NUM_MPDU_M         0x0000FFFF
+#define HTT_T2H_MONITOR_MAC_HEADER_NUM_MPDU_S         0
+
+#define HTT_T2H_MONITOR_MAC_HEADER_PEER_ID_SET(word, value)             \
+    do {                                                         \
+        HTT_CHECK_SET_VAL(HTT_T2H_MONITOR_MAC_HEADER_PEER_ID, value);   \
+        (word) |= (value)  << HTT_T2H_MONITOR_MAC_HEADER_PEER_ID_S;     \
+    } while (0)
+#define HTT_T2H_MONITOR_MAC_HEADER_PEER_ID_GET(word) \
+    (((word) & HTT_T2H_MONITOR_MAC_HEADER_PEER_ID_M) >> \
+    HTT_T2H_MONITOR_MAC_HEADER_PEER_ID_S)
+
+#define HTT_T2H_MONITOR_MAC_HEADER_NUM_MPDU_SET(word, value)             \
+    do {                                                         \
+        HTT_CHECK_SET_VAL(HTT_T2H_MONITOR_MAC_HEADER_NUM_MPDU, value);   \
+        (word) |= (value)  << HTT_T2H_MONITOR_MAC_HEADER_NUM_MPDU_S;     \
+    } while (0)
+#define HTT_T2H_MONITOR_MAC_HEADER_NUM_MPDU_GET(word) \
+    (((word) & HTT_T2H_MONITOR_MAC_HEADER_NUM_MPDU_M) >> \
+    HTT_T2H_MONITOR_MAC_HEADER_NUM_MPDU_S)
+
+/** 2 word representation of MAC addr */
+typedef struct {
+    /** upper 4 bytes of  MAC address */
+    A_UINT32 mac_addr31to0;
+    /** lower 2 bytes of  MAC address */
+    A_UINT32 mac_addr47to32;
+} htt_mac_addr;
+
+/** macro to convert MAC address from char array to HTT word format */
+#define HTT_CHAR_ARRAY_TO_MAC_ADDR(c_macaddr, phtt_mac_addr)  do { \
+    (phtt_mac_addr)->mac_addr31to0 = \
+       (((c_macaddr)[0] <<  0) | \
+        ((c_macaddr)[1] <<  8) | \
+        ((c_macaddr)[2] << 16) | \
+        ((c_macaddr)[3] << 24)); \
+    (phtt_mac_addr)->mac_addr47to32 = ((c_macaddr)[4] | ((c_macaddr)[5] << 8));\
+   } while (0)
+
+/**
+ * @brief target -> host ppdu stats upload
+ *
+ * @details
+ * The following field definitions describe the format of the HTT target
+ * to host ppdu stats indication message.
+ *
+ *
+ * |31                         16|15   12|11   10|9      8|7            0 |
+ * |----------------------------------------------------------------------|
+ * |    payload_size             | rsvd  |pdev_id|mac_id  |    msg type   |
+ * |----------------------------------------------------------------------|
+ * |                          ppdu_id                                     |
+ * |----------------------------------------------------------------------|
+ * |                        Timestamp in us                               |
+ * |----------------------------------------------------------------------|
+ * |                          reserved                                    |
+ * |----------------------------------------------------------------------|
+ * |                    type-specific stats info                          |
+ * |                     (see htt_ppdu_stats.h) qdf_flush_work            |
+ * |----------------------------------------------------------------------|
+ * Header fields:
+ *  - MSG_TYPE
+ *    Bits 7:0
+ *    Purpose: Identifies this is a PPDU STATS indication
+ *             message.
+ *    Value: 0x1d
+ *  - mac_id
+ *    Bits 9:8
+ *    Purpose: mac_id of this ppdu_id
+ *    Value: 0-3
+ *  - pdev_id
+ *    Bits 11:10
+ *    Purpose: pdev_id of this ppdu_id
+ *    Value: 0-3
+ *     0 (for rings at SOC level),
+ *     1/2/3 PDEV -> 0/1/2
+ *  - payload_size
+ *    Bits 31:16
+ *    Purpose: total tlv size
+ *    Value: payload_size in bytes
+ */
+#define HTT_T2H_PPDU_STATS_IND_HDR_SIZE       16
+
+#define HTT_T2H_PPDU_STATS_MAC_ID_M           0x00000300
+#define HTT_T2H_PPDU_STATS_MAC_ID_S           8
+
+#define HTT_T2H_PPDU_STATS_PDEV_ID_M          0x00000C00
+#define HTT_T2H_PPDU_STATS_PDEV_ID_S          10
+
+#define HTT_T2H_PPDU_STATS_PAYLOAD_SIZE_M     0xFFFF0000
+#define HTT_T2H_PPDU_STATS_PAYLOAD_SIZE_S     16
+
+#define HTT_T2H_PPDU_STATS_PPDU_ID_M          0xFFFFFFFF
+#define HTT_T2H_PPDU_STATS_PPDU_ID_S          0
+
+#define HTT_T2H_PPDU_STATS_MAC_ID_SET(word, value)             \
+    do {                                                         \
+        HTT_CHECK_SET_VAL(HTT_T2H_PPDU_STATS_MAC_ID, value);   \
+        (word) |= (value)  << HTT_T2H_PPDU_STATS_MAC_ID_S;     \
+    } while (0)
+#define HTT_T2H_PPDU_STATS_MAC_ID_GET(word) \
+    (((word) & HTT_T2H_PPDU_STATS_MAC_ID_M) >> \
+    HTT_T2H_PPDU_STATS_MAC_ID_S)
+
+#define HTT_T2H_PPDU_STATS_PDEV_ID_SET(word, value)             \
+    do {                                                        \
+        HTT_CHECK_SET_VAL(HTT_T2H_PPDU_STATS_PDEV_ID, value);   \
+        (word) |= (value)  << HTT_T2H_PPDU_STATS_PDEV_ID_S;     \
+    } while (0)
+#define HTT_T2H_PPDU_STATS_PDEV_ID_GET(word) \
+    (((word) & HTT_T2H_PPDU_STATS_PDEV_ID_M) >> \
+    HTT_T2H_PPDU_STATS_PDEV_ID_S)
+
+#define HTT_T2H_PPDU_STATS_PAYLOAD_SIZE_SET(word, value)             \
+    do {                                                         \
+        HTT_CHECK_SET_VAL(HTT_T2H_PPDU_STATS_PAYLOAD_SIZE, value);   \
+        (word) |= (value)  << HTT_T2H_PPDU_STATS_PAYLOAD_SIZE_S;     \
+    } while (0)
+#define HTT_T2H_PPDU_STATS_PAYLOAD_SIZE_GET(word) \
+    (((word) & HTT_T2H_PPDU_STATS_PAYLOAD_SIZE_M) >> \
+    HTT_T2H_PPDU_STATS_PAYLOAD_SIZE_S)
+
+#define HTT_T2H_PPDU_STATS_PPDU_ID_SET(word, value)             \
+    do {                                                         \
+        HTT_CHECK_SET_VAL(HTT_T2H_PPDU_STATS_PPDU_ID, value);   \
+        (word) |= (value)  << HTT_T2H_PPDU_STATS_PPDU_ID_S;     \
+    } while (0)
+#define HTT_T2H_PPDU_STATS_PPDU_ID_GET(word) \
+    (((word) & HTT_T2H_PPDU_STATS_PPDU_ID_M) >> \
+    HTT_T2H_PPDU_STATS_PPDU_ID_S)
+
+/**
+ * @brief target -> host extended statistics upload
+ *
+ * @details
+ * The following field definitions describe the format of the HTT target
+ * to host stats upload confirmation message.
+ * The message contains a cookie echoed from the HTT host->target stats
+ * upload request, which identifies which request the confirmation is
+ * for, and a single stats can span over multiple HTT stats indication
+ * due to the HTT message size limitation so every HTT ext stats indication
+ * will have tag-length-value stats information elements.
+ * The tag-length header for each HTT stats IND message also includes a
+ * status field, to indicate whether the request for the stat type in
+ * question was fully met, partially met, unable to be met, or invalid
+ * (if the stat type in question is disabled in the target).
+ * A Done bit 1's indicate the end of the of stats info elements.
+ *
+ *
+ * |31                         16|15    12|11|10 8|7   5|4       0|
+ * |--------------------------------------------------------------|
+ * |                   reserved                   |    msg type   |
+ * |--------------------------------------------------------------|
+ * |                         cookie LSBs                          |
+ * |--------------------------------------------------------------|
+ * |                         cookie MSBs                          |
+ * |--------------------------------------------------------------|
+ * |      stats entry length     | rsvd   | D|  S |   stat type   |
+ * |--------------------------------------------------------------|
+ * |                   type-specific stats info                   |
+ * |                      (see htt_stats.h)                       |
+ * |--------------------------------------------------------------|
+ * Header fields:
+ *  - MSG_TYPE
+ *    Bits 7:0
+ *    Purpose: Identifies this is a extended statistics upload confirmation
+ *             message.
+ *    Value: 0x1c
+ *  - COOKIE_LSBS
+ *    Bits 31:0
+ *    Purpose: Provide a mechanism to match a target->host stats confirmation
+ *        message with its preceding host->target stats request message.
+ *    Value: LSBs of the opaque cookie specified by the host-side requestor
+ *  - COOKIE_MSBS
+ *    Bits 31:0
+ *    Purpose: Provide a mechanism to match a target->host stats confirmation
+ *        message with its preceding host->target stats request message.
+ *    Value: MSBs of the opaque cookie specified by the host-side requestor
+ *
+ * Stats Information Element tag-length header fields:
+ *  - STAT_TYPE
+ *    Bits 7:0
+ *    Purpose: identifies the type of statistics info held in the
+ *        following information element
+ *    Value: htt_dbg_ext_stats_type
+ *  - STATUS
+  *    Bits 10:8
+ *    Purpose: indicate whether the requested stats are present
+ *    Value: htt_dbg_ext_stats_status
+ *  - DONE
+ *    Bits 11
+ *    Purpose:
+ *        Indicates the completion of the stats entry, this will be the last
+ *        stats conf HTT segment for the requested stats type.
+ *    Value:
+ *        0 -> the stats retrieval is ongoing
+ *        1 -> the stats retrieval is complete
+ *  - LENGTH
+ *    Bits 31:16
+ *    Purpose: indicate the stats information size
+ *    Value: This field specifies the number of bytes of stats information
+ *       that follows the element tag-length header.
+ *       It is expected but not required that this length is a multiple of
+ *       4 bytes.
+ */
+#define HTT_T2H_EXT_STATS_COOKIE_SIZE         8
+
+#define HTT_T2H_EXT_STATS_CONF_HDR_SIZE       4
+
+#define HTT_T2H_EXT_STATS_CONF_TLV_HDR_SIZE   4
+
+#define HTT_T2H_EXT_STATS_CONF_TLV_TYPE_M     0x000000ff
+#define HTT_T2H_EXT_STATS_CONF_TLV_TYPE_S     0
+#define HTT_T2H_EXT_STATS_CONF_TLV_STATUS_M   0x00000700
+#define HTT_T2H_EXT_STATS_CONF_TLV_STATUS_S   8
+#define HTT_T2H_EXT_STATS_CONF_TLV_DONE_M     0x00000800
+#define HTT_T2H_EXT_STATS_CONF_TLV_DONE_S     11
+#define HTT_T2H_EXT_STATS_CONF_TLV_LENGTH_M   0xffff0000
+#define HTT_T2H_EXT_STATS_CONF_TLV_LENGTH_S   16
+
+#define HTT_T2H_EXT_STATS_CONF_TLV_TYPE_SET(word, value)             \
+    do {                                                         \
+        HTT_CHECK_SET_VAL(HTT_T2H_EXT_STATS_CONF_TLV_TYPE, value);   \
+        (word) |= (value)  << HTT_T2H_EXT_STATS_CONF_TLV_TYPE_S;     \
+    } while (0)
+#define HTT_T2H_EXT_STATS_CONF_TLV_TYPE_GET(word) \
+    (((word) & HTT_T2H_EXT_STATS_CONF_TLV_TYPE_M) >> \
+    HTT_T2H_EXT_STATS_CONF_TLV_TYPE_S)
+
+#define HTT_T2H_EXT_STATS_CONF_TLV_STATUS_SET(word, value)             \
+    do {                                                         \
+        HTT_CHECK_SET_VAL(HTT_T2H_EXT_STATS_CONF_TLV_STATUS, value);   \
+        (word) |= (value)  << HTT_T2H_EXT_STATS_CONF_TLV_STATUS_S;     \
+    } while (0)
+#define HTT_T2H_EXT_STATS_CONF_TLV_STATUS_GET(word) \
+    (((word) & HTT_T2H_EXT_STATS_CONF_TLV_STATUS_M) >> \
+    HTT_T2H_EXT_STATS_CONF_TLV_STATUS_S)
+
+#define HTT_T2H_EXT_STATS_CONF_TLV_DONE_SET(word, value)             \
+    do {                                                         \
+        HTT_CHECK_SET_VAL(HTT_T2H_EXT_STATS_CONF_TLV_DONE, value);   \
+        (word) |= (value)  << HTT_T2H_EXT_STATS_CONF_TLV_DONE_S;     \
+    } while (0)
+#define HTT_T2H_EXT_STATS_CONF_TLV_DONE_GET(word) \
+    (((word) & HTT_T2H_EXT_STATS_CONF_TLV_DONE_M) >> \
+    HTT_T2H_EXT_STATS_CONF_TLV_DONE_S)
+
+#define HTT_T2H_EXT_STATS_CONF_TLV_LENGTH_SET(word, value)             \
+    do {                                                         \
+        HTT_CHECK_SET_VAL(HTT_T2H_EXT_STATS_CONF_TLV_LENGTH, value);   \
+        (word) |= (value)  << HTT_T2H_EXT_STATS_CONF_TLV_LENGTH_S;     \
+    } while (0)
+#define HTT_T2H_EXT_STATS_CONF_TLV_LENGTH_GET(word) \
+    (((word) & HTT_T2H_EXT_STATS_CONF_TLV_LENGTH_M) >> \
+    HTT_T2H_EXT_STATS_CONF_TLV_LENGTH_S)
 #endif

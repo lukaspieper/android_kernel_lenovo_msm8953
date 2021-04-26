@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -38,7 +38,7 @@
  */
 
 #include "aniGlobal.h"
-#include "wniCfgSta.h"
+#include "wni_cfg.h"
 #include "cfgApi.h"
 
 
@@ -183,6 +183,19 @@ limDeleteStaContext(tpAniSirGlobal pMac, tpSirMsgQ limMsg)
                            limIsReassocInProgress(pMac, psessionEntry));
                      vos_mem_free(pMsg);
                      return;
+                 }
+                 if (!((psessionEntry->limMlmState ==
+                        eLIM_MLM_LINK_ESTABLISHED_STATE) &&
+                       (psessionEntry->limSmeState !=
+                        eLIM_SME_WT_DISASSOC_STATE) &&
+                       (psessionEntry->limSmeState !=
+                        eLIM_SME_WT_DEAUTH_STATE))) {
+                        limLog(pMac, LOGE, FL("Do not process in limMlmState %s(%x) limSmeState (%x)"),
+                          limMlmStateStr(psessionEntry->limMlmState),
+                          psessionEntry->limMlmState,
+                          psessionEntry->limSmeState);
+                        vos_mem_free(pMsg);
+                        return;
                  }
                  pStaDs = dphGetHashEntry(pMac,
                                           DPH_STA_HASH_INDEX_PEER,
@@ -361,6 +374,12 @@ limTearDownLinkWithAp(tpAniSirGlobal pMac, tANI_U8 sessionId, tSirMacReasonCodes
     {
         tLimMlmDeauthInd  mlmDeauthInd;
 
+        if (pStaDs->mlmStaContext.disassocReason == eSIR_MAC_DEAUTH_LEAVING_BSS_REASON ||
+            pStaDs->mlmStaContext.cleanupTrigger == eLIM_HOST_DEAUTH) {
+            limLog(pMac, LOGE,
+                   FL("Host already issued deauth, do nothing.\n"));
+            return;
+        }
 #ifdef FEATURE_WLAN_TDLS
         /* Delete all TDLS peers connected before leaving BSS*/
         limDeleteTDLSPeers(pMac, psessionEntry);
@@ -467,11 +486,19 @@ void limHandleHeartBeatFailure(tpAniSirGlobal pMac,tpPESession psessionEntry)
     {
         if (!pMac->sys.gSysEnableLinkMonitorMode)
             return;
+        /* Ignore HB if channel switch is in progress */
+        if (psessionEntry->gLimSpecMgmt.dot11hChanSwState ==
+                          eLIM_11H_CHANSW_RUNNING) {
+           limLog(pMac, LOGE,
+               FL("Ignore Heartbeat failure as Channel switch is in progress"));
+           pMac->pmm.inMissedBeaconScenario = false;
+           return;
+        }
 
         /**
          * Beacon frame not received within heartbeat timeout.
          */
-        PELOGW(limLog(pMac, LOGW, FL("Heartbeat Failure"));)
+        limLog(pMac, LOGW, FL("Heartbeat Failure"));
         pMac->lim.gLimHBfailureCntInLinkEstState++;
 
         /**

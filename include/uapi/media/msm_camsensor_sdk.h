@@ -1,6 +1,10 @@
 #ifndef __UAPI_LINUX_MSM_CAMSENSOR_SDK_H
 #define __UAPI_LINUX_MSM_CAMSENSOR_SDK_H
 
+#ifdef CONFIG_LENOVO_DIR_CAMERA
+#include <uapi/media/msm_camsensor_sdk_lenovo.h>
+#else
+
 #include <linux/videodev2.h>
 
 #define KVERSION 0x1
@@ -47,6 +51,10 @@
 
 #define MSM_EEPROM_MEMORY_MAP_MAX_SIZE  80
 #define MSM_EEPROM_MAX_MEM_MAP_CNT      8
+
+#if !defined(CONFIG_MACH_LENOVO_TB8703)
+#define MSM_SENSOR_BYPASS_VIDEO_NODE    1
+#endif
 
 enum msm_sensor_camera_id_t {
 	CAMERA_0,
@@ -300,6 +308,9 @@ struct msm_camera_sensor_slave_info {
 	unsigned char  is_init_params_valid;
 	struct msm_sensor_init_params sensor_init_params;
 	enum msm_sensor_output_format_t output_format;
+#if !defined(CONFIG_MACH_LENOVO_TB8703)
+	uint8_t bypass_video_node_creation;
+#endif
 };
 
 struct msm_camera_i2c_reg_array {
@@ -413,5 +424,7 @@ struct msm_camera_i2c_reg_setting_array {
 	enum msm_camera_i2c_data_type data_type;
 	unsigned short delay;
 };
+
+#endif
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -117,7 +117,7 @@ static inline void *hif_get_virt_ramdump_mem(unsigned long *size)
 	size_t length = 0;
 	int flags = GFP_KERNEL;
 
-	length = DRAM_SIZE + IRAM_SIZE + AXI_SIZE;
+	length = DRAM_SIZE + IRAM_SIZE + AXI_SIZE + REG_SIZE;
 
 	if (size != NULL)
 		*size = (unsigned long)length;
@@ -159,7 +159,7 @@ ath_hif_sdio_probe(void *context, void *hif_handle)
 
     sc->aps_osdev.device = os_dev_info.pOSDevice;
     sc->aps_osdev.bc.bc_bustype = HAL_BUS_TYPE_SDIO;
-    spin_lock_init(&sc->target_lock);
+    adf_os_spinlock_init(&sc->target_lock);
 
     {
         /*
@@ -265,6 +265,8 @@ ath_hif_sdio_probe(void *context, void *hif_handle)
 
 err_attach2:
     athdiag_procfs_remove();
+    if (sc->ol_sc->ramdump_base)
+        hif_release_ramdump_mem(sc->ol_sc->ramdump_base);
     hif_deinit_adf_ctx(ol_sc);
 err_attach1:
     A_FREE(ol_sc);
@@ -479,6 +481,13 @@ void hif_reset_soc(void *ol_sc)
     ENTER("- dummy function!");
 }
 
+void hif_get_reg(void *ol_sc, u32 address, u32 *data)
+{
+	struct ol_softc *scn = (struct ol_softc *)ol_sc;
+
+	HIFDiagReadAccess(scn->hif_hdl, address, data);
+}
+
 void hif_get_hw_info(void *ol_sc, u32 *version, u32 *revision)
 {
     struct ol_softc *ol_sc_local = (struct ol_softc *)ol_sc;
@@ -514,7 +523,7 @@ int hif_sdio_check_fw_reg(void * ol_sc)
 {
 	int ret = 1;
 	unsigned int addr = 0;
-	unsigned int fw_indication = 0;
+	unsigned int param = 0;
 	struct ol_softc *scn = (struct ol_softc *) ol_sc;
 
 	addr = host_interest_item_address(scn->target_type,
@@ -522,15 +531,18 @@ int hif_sdio_check_fw_reg(void * ol_sc)
 					hi_option_flag2));
 
 	if (HIFDiagReadMem(scn->hif_hdl, addr,
-				(unsigned char *)&fw_indication,
+				(unsigned char *)&param,
 				4) != A_OK) {
 		printk("%s Get fw indication failed\n", __func__);
 		return -ENOENT;
 	}
 
-	printk("%s: fw indication is 0x%x.\n", __func__, fw_indication);
+	printk("%s: fw indication is 0x%x.\n", __func__, param);
 
-	if (fw_indication & FW_IND_HELPER)
+	scn->fastfwdump_fw = ((param & HI_OPTION_SDIO_CRASH_DUMP_ENHANCEMENT_FW)
+			     == HI_OPTION_SDIO_CRASH_DUMP_ENHANCEMENT_FW);
+
+	if (param & FW_IND_HELPER)
 		ret = 0;
 
 	return ret;

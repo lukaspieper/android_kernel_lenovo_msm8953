@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014, 2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -3386,14 +3386,7 @@ static void sme_QosCopyTspecInfo(tpAniSirGlobal pMac, sme_QosWmmTspecInfo *pTspe
     pTspec->suspendInterval   = pTspec_Info->suspension_interval;
     pTspec->svcStartTime      = pTspec_Info->svc_start_time;
     pTspec->tsinfo.traffic.direction = pTspec_Info->ts_info.direction;
-
-    //Make sure UAPSD is allowed. BTC may want to disable UAPSD while keep QoS setup
-    if (pTspec_Info->ts_info.psb && btcIsReadyForUapsd(pMac)) {
-        pTspec->tsinfo.traffic.psb = pTspec_Info->ts_info.psb;
-    } else {
-        pTspec->tsinfo.traffic.psb = 0;
-        pTspec_Info->ts_info.psb = 0;
-    }
+    pTspec->tsinfo.traffic.psb = pTspec_Info->ts_info.psb;
     pTspec->tsinfo.traffic.tsid           = pTspec_Info->ts_info.tid;
     pTspec->tsinfo.traffic.userPrio       = pTspec_Info->ts_info.up;
     pTspec->tsinfo.traffic.accessPolicy   = SME_QOS_ACCESS_POLICY_EDCA;
@@ -3503,15 +3496,7 @@ eHalStatus sme_QosCreateTspecRICIE(tpAniSirGlobal pMac, sme_QosWmmTspecInfo *pTs
     ricIE.TSPEC.suspension_int = pTspec_Info->suspension_interval;
     ricIE.TSPEC.service_start_time = pTspec_Info->svc_start_time;
     ricIE.TSPEC.direction = pTspec_Info->ts_info.direction;
-    //Make sure UAPSD is allowed. BTC may want to disable UAPSD while keep QoS setup
-    if( pTspec_Info->ts_info.psb && btcIsReadyForUapsd(pMac) )
-    {
-       ricIE.TSPEC.psb = pTspec_Info->ts_info.psb;
-    }
-    else
-    {
-       ricIE.TSPEC.psb = 0;
-    }
+    ricIE.TSPEC.psb = pTspec_Info->ts_info.psb;
     ricIE.TSPEC.tsid = pTspec_Info->ts_info.tid;
     ricIE.TSPEC.user_priority = pTspec_Info->ts_info.up;
     ricIE.TSPEC.access_policy = SME_QOS_ACCESS_POLICY_EDCA;
@@ -3547,15 +3532,7 @@ eHalStatus sme_QosCreateTspecRICIE(tpAniSirGlobal pMac, sme_QosWmmTspecInfo *pTs
     ricIE.WMMTSPEC.suspension_int = pTspec_Info->suspension_interval;
     ricIE.WMMTSPEC.service_start_time = pTspec_Info->svc_start_time;
     ricIE.WMMTSPEC.direction = pTspec_Info->ts_info.direction;
-    //Make sure UAPSD is allowed. BTC may want to disable UAPSD while keep QoS setup
-    if( pTspec_Info->ts_info.psb && btcIsReadyForUapsd(pMac) )
-    {
-       ricIE.WMMTSPEC.psb = pTspec_Info->ts_info.psb;
-    }
-    else
-    {
-       ricIE.WMMTSPEC.psb = 0;
-    }
+    ricIE.WMMTSPEC.psb = pTspec_Info->ts_info.psb;
     ricIE.WMMTSPEC.tsid = pTspec_Info->ts_info.tid;
     ricIE.WMMTSPEC.user_priority = pTspec_Info->ts_info.up;
     ricIE.WMMTSPEC.access_policy = SME_QOS_ACCESS_POLICY_EDCA;
@@ -4126,9 +4103,7 @@ eHalStatus sme_QosAddTsReq(tpAniSirGlobal pMac,
    pMsg->req.tspec.svcStartTime = 0;
    pMsg->req.tspec.tsinfo.traffic.direction = pTspec_Info->ts_info.direction;
    //Make sure UAPSD is allowed. BTC may want to disable UAPSD while keep QoS setup
-   if( pTspec_Info->ts_info.psb
-         && btcIsReadyForUapsd(pMac)
-     )
+   if( pTspec_Info->ts_info.psb)
    {
       pMsg->req.tspec.tsinfo.traffic.psb = pTspec_Info->ts_info.psb;
    }
@@ -5823,7 +5798,6 @@ eHalStatus sme_QosProcessAddTsSuccessRsp(tpAniSirGlobal pMac,
       log_ptr->nominal_msdu_size = pACInfo->curr_QoSInfo[tspec_pending - 1].nominal_msdu_size;
       log_ptr->peak_data_rate = pACInfo->curr_QoSInfo[tspec_pending - 1].peak_data_rate;
       log_ptr->surplus_bw_allowance = pACInfo->curr_QoSInfo[tspec_pending - 1].surplus_bw_allowance;
-      log_ptr->suspension_interval = pACInfo->curr_QoSInfo[tspec_pending - 1].surplus_bw_allowance;
       log_ptr->suspension_interval = pACInfo->curr_QoSInfo[tspec_pending - 1].suspension_interval;
       log_ptr->svc_start_time = pACInfo->curr_QoSInfo[tspec_pending - 1].svc_start_time;
       log_ptr->tsinfo[0] = pACInfo->curr_QoSInfo[tspec_pending - 1].ts_info.direction << 5 |
@@ -8371,14 +8345,7 @@ sme_QosStatusType sme_QosTriggerUapsdChange( tpAniSirGlobal pMac )
             tCsrRoamModifyProfileFields modifyProfileFields;
             //we need to do a reassoc on these AC
             csrGetModifyProfileFields(pMac, sessionId, &modifyProfileFields);
-            if( btcIsReadyForUapsd(pMac) )
-            {
-               modifyProfileFields.uapsd_mask = uapsd_mask;
-            }
-            else
-            {
-               modifyProfileFields.uapsd_mask = 0;
-            }
+            modifyProfileFields.uapsd_mask = uapsd_mask;
             //Do we need to inform HDD?
             if(!HAL_STATUS_SUCCESS(sme_QosRequestReassoc(pMac, sessionId, &modifyProfileFields, VOS_TRUE)))
             {

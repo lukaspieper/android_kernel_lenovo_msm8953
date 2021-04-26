@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -88,8 +88,9 @@ struct cpr3_msm8996_hmss_fuses {
  * Fuse combos 0 -  7 map to CPR fusing revision 0 - 7 with speed bin fuse = 0.
  * Fuse combos 8 - 15 map to CPR fusing revision 0 - 7 with speed bin fuse = 1.
  * Fuse combos 16 - 23 map to CPR fusing revision 0 - 7 with speed bin fuse = 2.
+ * Fuse combos 24 - 31 map to CPR fusing revision 0 - 7 with speed bin fuse = 3.
  */
-#define CPR3_MSM8996_HMSS_FUSE_COMBO_COUNT	24
+#define CPR3_MSM8996_HMSS_FUSE_COMBO_COUNT	32
 
 /*
  * Constants which define the name of each fuse corner.  Note that no actual
@@ -1505,7 +1506,7 @@ static int cpr3_hmss_init_regulator(struct cpr3_regulator *vreg)
 static int cpr3_hmss_init_aging(struct cpr3_controller *ctrl)
 {
 	struct cpr3_msm8996_hmss_fuses *fuse = NULL;
-	struct cpr3_regulator *vreg;
+	struct cpr3_regulator *vreg = NULL;
 	u32 aging_ro_scale;
 	int i, j, rc;
 
@@ -1522,6 +1523,11 @@ static int cpr3_hmss_init_aging(struct cpr3_controller *ctrl)
 
 	if (!ctrl->aging_required || !fuse)
 		return 0;
+
+	if (!vreg) {
+		cpr3_err(ctrl, "CPR3 regulator not found!\n");
+		return -EINVAL;
+	}
 
 	rc = cpr3_parse_array_property(vreg, "qcom,cpr-aging-ro-scaling-factor",
 					1, &aging_ro_scale);

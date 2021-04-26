@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2014-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011, 2014-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -389,9 +389,17 @@ htt_attach_target(htt_pdev_handle pdev)
     return status;
 }
 
+void htt_htc_detach(struct htt_pdev_t *pdev)
+{
+    htc_disconnect_service(pdev->htc_endpoint);
+    return;
+}
+
+
 void
 htt_detach(htt_pdev_handle pdev)
 {
+    htt_htc_detach(pdev);
     htt_rx_detach(pdev);
     htt_tx_detach(pdev);
     htt_htc_pkt_pool_free(pdev);
@@ -453,7 +461,8 @@ htt_htc_attach(struct htt_pdev_t *pdev)
      * TODO:Conditional disabling will be removed once firmware
      * with reduced tx completion is pushed into release builds.
      */
-    if (!pdev->cfg.default_tx_comp_req) {
+    if ((!pdev->cfg.default_tx_comp_req) ||
+            ol_cfg_is_ptp_enabled(pdev->ctrl_pdev)) {
        connect.ConnectionFlags |= HTC_CONNECT_FLAGS_DISABLE_CREDIT_FLOW_CTRL;
     }
 #else

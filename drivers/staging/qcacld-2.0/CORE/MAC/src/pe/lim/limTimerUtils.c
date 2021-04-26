@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2016, 2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -56,6 +56,11 @@
 #define LIM_JOIN_PROBE_REQ_TIMER_MS              200
 #define LIM_AUTH_RETRY_TIMER_MS              60
 
+/*
+ * SAE auth timer of 5secs. This is required for duration of entire SAE
+ * authentication.
+ */
+#define LIM_AUTH_SAE_TIMER_MS 5000
 
 //default beacon interval value used in HB timer interval calculation
 #define LIM_HB_TIMER_BEACON_INTERVAL             100
@@ -154,7 +159,8 @@ limCreateTimers(tpAniSirGlobal pMac)
     cfgValue = SYS_MS_TO_TICKS(cfgValue);
 
     /* Limiting max number of probe req for each channel scan */
-    pMac->lim.maxProbe = (cfgValue/cfgValue1);
+    if (cfgValue1)
+        pMac->lim.maxProbe = (cfgValue/cfgValue1);
 
     if (tx_timer_create(&pMac->lim.limTimers.gLimMaxChannelTimer,
                         "MAX CHANNEL TIMEOUT",
@@ -425,6 +431,20 @@ limCreateTimers(tpAniSirGlobal pMac)
                Log error */
             limLog(pMac, LOGP,
                    FL("unable to create ProbeAfterHBTimer"));
+            goto err_timer;
+        }
+
+        /*
+         * SAE auth timer of 5secs. This is required for duration of entire SAE
+         * authentication.
+         */
+        if ((tx_timer_create(&pMac->lim.limTimers.sae_auth_timer,
+                             "SAE AUTH Timer",
+                             limTimerHandler, SIR_LIM_AUTH_SAE_TIMEOUT,
+                             SYS_MS_TO_TICKS(LIM_AUTH_SAE_TIMER_MS), 0,
+                             TX_NO_ACTIVATE)) != TX_SUCCESS) {
+            limLog(pMac, LOGP,
+                   FL("could not create SAE AUTH Timer"));
             goto err_timer;
         }
 
@@ -752,6 +772,7 @@ limCreateTimers(tpAniSirGlobal pMac)
         tx_timer_delete(&pMac->lim.limTimers.gLimMinChannelTimer);
         tx_timer_delete(&pMac->lim.limTimers.gLimP2pSingleShotNoaInsertTimer);
         tx_timer_delete(&pMac->lim.limTimers.gLimActiveToPassiveChannelTimer);
+        tx_timer_delete(&pMac->lim.limTimers.sae_auth_timer);
 
         if(NULL != pMac->lim.gLimPreAuthTimerTable.pTable)
         {
@@ -923,7 +944,16 @@ limAssocFailureTimerHandler(void *pMacGlobal, tANI_U32 param)
        (pMac->lim.pSessionEntry->limMlmState == eLIM_MLM_WT_FT_REASSOC_RSP_STATE))
     {
         limLog(pMac, LOGE, FL("Reassoc timeout happened"));
-        if(pMac->lim.reAssocRetryAttempt < LIM_MAX_REASSOC_RETRY_LIMIT)
+#ifdef FEATURE_WLAN_ESE
+	if (((pMac->lim.pSessionEntry->isESEconnection) &&
+             (pMac->lim.reAssocRetryAttempt <
+             (LIM_MAX_REASSOC_RETRY_LIMIT - 1)))||
+             ((!pMac->lim.pSessionEntry->isESEconnection) &&
+             (pMac->lim.reAssocRetryAttempt < LIM_MAX_REASSOC_RETRY_LIMIT))
+	   )
+#else
+        if (pMac->lim.reAssocRetryAttempt < LIM_MAX_REASSOC_RETRY_LIMIT)
+#endif
         {
             limSendRetryReassocReqFrame(pMac, pMac->lim.pSessionEntry->pLimMlmReassocRetryReq, pMac->lim.pSessionEntry);
             pMac->lim.reAssocRetryAttempt++;
@@ -1041,17 +1071,6 @@ limDeactivateAndChangeTimer(tpAniSirGlobal pMac, tANI_U32 timerId)
             if (pMac->lim.gpLimMlmScanReq) {
                 val =
                      SYS_MS_TO_TICKS(pMac->lim.gpLimMlmScanReq->minChannelTime);
-                if (pMac->btc.btcScanCompromise) {
-                    if (pMac->lim.gpLimMlmScanReq->minChannelTimeBtc) {
-                        val = SYS_MS_TO_TICKS(
-                                  pMac->lim.gpLimMlmScanReq->minChannelTimeBtc);
-                        limLog(pMac, LOG1,
-                               FL("Using BTC Min Active Scan time"));
-                    } else {
-                        limLog(pMac, LOGE,
-                               FL("BTC Active Scan Min Time is Not Set"));
-                    }
-                }
             } else {
                 limLog(pMac, LOGE, FL("gpLimMlmScanReq is NULL"));
                 break;
@@ -1078,17 +1097,6 @@ limDeactivateAndChangeTimer(tpAniSirGlobal pMac, tANI_U32 timerId)
             }
 
             val = SYS_MS_TO_TICKS(pMac->lim.gpLimMlmScanReq->minChannelTime)/2;
-            if (pMac->btc.btcScanCompromise)
-            {
-               if (pMac->lim.gpLimMlmScanReq->minChannelTimeBtc)
-               {
-                   val = SYS_MS_TO_TICKS(pMac->lim.gpLimMlmScanReq->minChannelTimeBtc)/2;
-               }
-               else
-               {
-                   limLog(pMac, LOGE, FL("BTC Active Scan Min Time is Not Set"));
-               }
-            }
             if (val)
             {
                if (tx_timer_change(&pMac->lim.limTimers.gLimPeriodicProbeReqTimer,
@@ -1129,17 +1137,6 @@ limDeactivateAndChangeTimer(tpAniSirGlobal pMac, tANI_U32 timerId)
                 if (pMac->lim.gpLimMlmScanReq) {
                     val = SYS_MS_TO_TICKS(
                                      pMac->lim.gpLimMlmScanReq->maxChannelTime);
-                    if (pMac->btc.btcScanCompromise) {
-                        if (pMac->lim.gpLimMlmScanReq->maxChannelTimeBtc) {
-                            val = SYS_MS_TO_TICKS(
-                                  pMac->lim.gpLimMlmScanReq->maxChannelTimeBtc);
-                            limLog(pMac, LOG1,
-                                   FL("Using BTC Max Active Scan time"));
-                        } else {
-                            limLog(pMac, LOGE,
-                                   FL("BTC Active Scan Max Time is Not Set"));
-                        }
-                    }
                 } else {
                     limLog(pMac, LOGE, FL("gpLimMlmScanReq is NULL"));
                     break;
@@ -1676,6 +1673,24 @@ limDeactivateAndChangeTimer(tpAniSirGlobal pMac, tANI_U32 timerId)
             limLog(pMac, LOGP, FL("Unable to change timer"));
             return;
         }
+        break;
+
+    case eLIM_AUTH_SAE_TIMER:
+        if (tx_timer_deactivate(&pMac->lim.limTimers.sae_auth_timer)
+                != TX_SUCCESS) {
+            limLog(pMac, LOGP, FL("Unable to deactivate SAE auth timer"));
+            return;
+        }
+
+        /* Change timer to reactivate it in future */
+        val = SYS_MS_TO_TICKS(LIM_AUTH_SAE_TIMER_MS);
+
+        if (tx_timer_change(&pMac->lim.limTimers.sae_auth_timer,
+                                val, 0) != TX_SUCCESS) {
+            limLog(pMac, LOGP, FL("unable to change SAE auth timer"));
+            return;
+        }
+
         break;
 
         default:

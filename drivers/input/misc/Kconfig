@@ -229,6 +229,27 @@ config INPUT_MPU3050
 	  To compile this driver as a module, choose M here: the
 	  module will be called mpu3050.
 
+config SENSORS_MPU6050
+	tristate "MPU6050 6-axis gyroscope and acceleromater combo"
+	depends on I2C
+	help
+	  Say Y here if you want to support InvenSense MPU6050
+	  connected via an I2C bus.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called mpu6050.
+
+config SENSORS_AKM8963
+	tristate "AKM8963 3-axis electronic compass sensor driver"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you want to enable the akm8963 ecompass sensor
+	  driver.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called akm8963.
+
 config INPUT_APANEL
 	tristate "Fujitsu Lifebook Application Panel buttons"
 	depends on X86 && I2C && LEDS_CLASS
@@ -242,6 +263,16 @@ config INPUT_APANEL
 
 	 To compile this driver as a module, choose M here: the module will
 	 be called apanel.
+
+config INPUT_EPL8802
+	tristate "EPL8802 proximity and light sensor"
+	depends on I2C
+	help
+	  Say Y here if you want to support EPL8802
+	  connected via an I2C bus.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called EPL8802.
 
 config INPUT_GP2A
 	tristate "Sharp GP2AP002A00F I2C Proximity/Opto sensor driver"
@@ -350,6 +381,18 @@ config INPUT_KEYCHORD
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called keychord.
+
+
+config STMVL53L0X
+        tristate "STM VL53L0X Ranging Sensor"
+        depends on I2C
+        help
+	  Say Y here if you want to enable the key chord driver
+          This is a Time-of-Flight (ToF) laser-ranging sensor, provide
+	  the distance from obstacle.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called vl5310x.
 
 config INPUT_KEYSPAN_REMOTE
 	tristate "Keyspan DMR USB remote control"
@@ -744,6 +787,13 @@ config INPUT_DRV260X_HAPTICS
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called drv260x-haptics.
+config INPUT_SX9310
+	tristate "SX9310_SAR_sensor"
+	depends on I2C
+	default n
+	help
+	  Say Y to enable the SAR detection application, if N here not to use the
+	  this SAR sensor
 
 config INPUT_DRV2667_HAPTICS
 	tristate "TI DRV2667 haptics support"
@@ -756,4 +806,72 @@ config INPUT_DRV2667_HAPTICS
 	  To compile this driver as a module, choose M here: the
 	  module will be called drv260x-haptics.
 
+source "drivers/input/misc/ots_pat9125/Kconfig"
+
+config SYNAPTICS_FINGERPRINT
+	tristate "Synaptics fingerprint reader support"
+	help
+	  Say Y to enable support for the Synaptics fingerprint reader driver.
+
+config SENSORS_LTR553
+	tristate "LTR553 light and proximity device driver"
+	depends on I2C
+	help
+	  Say Y here if you want to enable the LTR553 light and
+	  proximity sensor driver.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called ltr553.
+
+config SENSORS_BMA2X2
+	tristate "BMA2x2 acceleration sensor support"
+	depends on I2C
+	help
+	  If you say yes here, you get support for Bosch Sensortec's
+	  acceleration sensors BMA255/BMA254/BMA355/BMA250E/BMA222E/BMA280.
+
+config SENSORS_BMA2X2_ENABLE_INT1
+	tristate "BMA2X2 acceleration sensor interrupt INT1 support"
+	depends on SENSORS_BMA2X2
+	help
+	 If you say yes here, you get INT1 support for Bosch Sensortec
+	 acceleration sensors BMA255/BMA254/BMA355/BMA250E/BMA222E/BMA280.
+	 Select it will disable interrupt INT2 support
+
+config SENSORS_BMA2X2_ENABLE_INT2
+	tristate "BMA2X2 acceleration sensor interrupt INT2 support"
+	depends on SENSORS_BMA2X2 && !SENSORS_BMA2X2_ENABLE_INT1
+	help
+	 If you say yes here, you get INT2 support for Bosch Sensortec
+	 acceleration sensors BMA255/BMA254/BMA355/BMA250E/BMA222E/BMA280.
+	 Can only open if you do NOT open interrupt INT1 support
+
+config SIG_MOTION
+	tristate "support significant motion sensor function"
+	depends on SENSORS_BMA2X2  && ( SENSORS_BMA2X2_ENABLE_INT1 || SENSORS_BMA2X2_ENABLE_INT2)
+	help
+	 If you say yes here, if you want to support Bosch significant motion sensor function
+
+config DOUBLE_TAP
+	tristate "support double tap sensor function"
+	depends on SENSORS_BMA2X2  && ( SENSORS_BMA2X2_ENABLE_INT1 || SENSORS_BMA2X2_ENABLE_INT2)
+	help
+	 If you say yes here, you get support Bosch double tap sensor function
+
+config INPUT_IQS263
+	tristate "IQS263 Capacitive Touch Controller Driver"
+	help
+	  Say Y here if you want to support iqs263 touch sensor.
+
+	  You should select a bus connection too.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called iqs263.
+
+config HALL
+       tristate "HALL Switch"
+       help
+        If you say yes here, you get support for hall switch control device
+
+source "drivers/input/misc/goodixfp/Kconfig"
 endif

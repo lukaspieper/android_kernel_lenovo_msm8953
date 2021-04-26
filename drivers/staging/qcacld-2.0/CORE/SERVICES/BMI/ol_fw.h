@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014,2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -54,6 +54,7 @@
 #define QCA_BOARD_DATA_FILE          "fakeboar.bin"
 #define QCA_OTP_FILE                 "otp.bin"
 #define QCA_SETUP_FILE               "athsetup.bin"
+#define QCA_USB_WARM_RESET_FILE      "warm_reset.bin"
 #define AR61X4_SINGLE_FILE           "qca61x4.bin"
 #define QCA_FIRMWARE_EPPING_FILE     "epping.bin"
 
@@ -72,8 +73,13 @@
  * read might change
  */
 #define REGISTER_LOCATION       0x00000800
-
 #ifdef TARGET_DUMP_FOR_NON_QC_PLATFORM
+#ifdef HIF_SDIO
+#define REG_SIZE		0x0007F820
+#endif
+#endif
+
+#if defined(TARGET_DUMP_FOR_NON_QC_PLATFORM) && !defined(HIF_PCI)
 #define DRAM_LOCATION           0x00400000
 #ifdef HIF_USB
 #define DRAM_SIZE               0x00098000
@@ -109,7 +115,10 @@
 #define IRAM1_SIZE              0x00080000
 #define IRAM2_LOCATION          0x00a00000
 #define IRAM2_SIZE              0x00040000
-#elif defined(HIF_SDIO)
+#ifdef CONFIG_NON_QC_PLATFORM_PCI
+#define REG_SIZE		0x0007F820
+#endif
+#elif defined(HIF_SDIO) || defined(HIF_USB)
 #define IRAM_LOCATION           0x00980000
 #define IRAM_SIZE               0x000C0000
 #else /* ELSE HIF_PCI */
@@ -167,6 +176,19 @@ void ol_target_ready(struct ol_softc *scn, void *cfg_ctx);
 static inline void ol_target_ready(struct ol_softc *scn, void *cfg_ctx)
 {
 
+}
+#endif
+
+#ifdef FEATURE_DYNAMIC_POWER_CONTROL
+void ol_set_sleep_power_mode(uint32_t mode);
+uint32_t ol_get_sleep_power_mode(void);
+#else
+static inline void ol_set_sleep_power_mode(uint32_t mode)
+{
+}
+static inline uint32_t ol_get_sleep_power_mode(void)
+{
+	return 0;
 }
 #endif
 

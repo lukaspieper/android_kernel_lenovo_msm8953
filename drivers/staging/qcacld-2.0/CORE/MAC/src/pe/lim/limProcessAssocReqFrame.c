@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -38,7 +38,7 @@
  */
 #include "palTypes.h"
 #include "aniGlobal.h"
-#include "wniCfgSta.h"
+#include "wni_cfg.h"
 #include "sirApi.h"
 #include "cfgApi.h"
 
@@ -54,13 +54,10 @@
 #include "limAdmitControl.h"
 #include "palApi.h"
 #include "limSessionUtils.h"
-#ifdef WLAN_FEATURE_11W
-#include "wniCfgAp.h"
-#endif
-
 
 #include "vos_types.h"
 #include "vos_utils.h"
+#include "wma.h"
 /**
  * limConvertSupportedChannels
  *
@@ -238,6 +235,7 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
     tLimMlmStates           mlmPrevState;
     tDot11fIERSN            Dot11fIERSN;
     tDot11fIEWPA            Dot11fIEWPA;
+    tANI_U16                prevAuthSeqno = 0xFFFF;
     tANI_U32 phyMode;
     tHalBitVal qosMode;
     tHalBitVal wsmMode, wmeMode;
@@ -268,6 +266,11 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
           psessionEntry->peSessionId, GET_LIM_SYSTEM_ROLE(psessionEntry),
           psessionEntry->limMlmState, MAC_ADDR_ARRAY(pHdr->sa));
 
+   if (pMac->sap.SapDfsInfo.sap_enable_radar_war && (NV_CHANNEL_DFS ==
+           vos_nv_getChannelEnabledState(psessionEntry->currentOperChannel))) {
+       wma_ignore_radar_soon_after_assoc();
+       wma_stop_radar_delay_timer();
+   }
    if (LIM_IS_STA_ROLE(psessionEntry) ||
        LIM_IS_BT_AMP_STA_ROLE(psessionEntry)) {
         limLog(pMac, LOGE, FL("received unexpected ASSOC REQ on sessionid: %d "
@@ -301,7 +304,8 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
 
     if (NULL != pStaDs)
     {
-        if (pHdr->fc.retry > 0) {
+        if (pStaDs->PrevAssocSeqno == ((pHdr->seqControl.seqNumHi << 4) |
+                                       (pHdr->seqControl.seqNumLo))) {
             /* Ignore the Retry */
             limLog(pMac, LOGE,
                    FL("STA is initiating Assoc Req after ACK lost. "
@@ -319,7 +323,7 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
              */
             limSendAssocRspMgmtFrame(pMac, eSIR_SUCCESS,
                     pStaDs->assocId, pStaDs->staAddr,
-                    pStaDs->mlmStaContext.subType, pStaDs,
+                    subType, pStaDs,
                     psessionEntry);
             limLog(pMac, LOGE,
                    FL("DUT already received an assoc request frame "
@@ -380,9 +384,15 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
     if ((psessionEntry->access_policy_vendor_ie) &&
             (psessionEntry->access_policy ==
              LIM_ACCESS_POLICY_RESPOND_IF_IE_IS_PRESENT)) {
+        if (framelen <= LIM_ASSOC_REQ_IE_OFFSET) {
+            limLog(pMac, LOGE, FL("Receive action frame of invalid len %d"),
+                   framelen);
+            return;
+        }
         if (!cfg_get_vendor_ie_ptr_from_oui(pMac,
                     &psessionEntry->access_policy_vendor_ie[2],
-                    3, pBody + LIM_ASSOC_REQ_IE_OFFSET, framelen)) {
+                    3, pBody + LIM_ASSOC_REQ_IE_OFFSET,
+                    framelen - LIM_ASSOC_REQ_IE_OFFSET)) {
             limLog(pMac, LOGE,
                     FL("Vendor ie not present and access policy is %x, Rejected association"),
                     psessionEntry->access_policy);
@@ -556,7 +566,7 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
 
     if (LIM_IS_AP_ROLE(psessionEntry) &&
        (psessionEntry->dot11mode == WNI_CFG_DOT11_MODE_11AC_ONLY) &&
-       (vht_caps != NULL) && (!vht_caps->present)) {
+       ((vht_caps == NULL) || ((vht_caps != NULL) && (!vht_caps->present)))) {
         limSendAssocRspMgmtFrame( pMac, eSIR_MAC_CAPABILITIES_NOT_SUPPORTED_STATUS,
                                   1, pHdr->sa, subType, 0, psessionEntry );
         limLog(pMac, LOGE, FL("SOFTAP was in 11AC only mode, reject"));
@@ -743,7 +753,8 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
             psessionEntry->pLimStartBssReq->privacy &&
             psessionEntry->pLimStartBssReq->rsnIE.length) {
             limLog(pMac, LOG1,
-                   FL("RSN enabled auth, Re/Assoc req from STA: "MAC_ADDRESS_STR),
+                   FL("RSN enabled auth, peer(%d, %d) Re/Assoc req from STA: "MAC_ADDRESS_STR),
+                   pAssocReq->rsnPresent,pAssocReq->rsn.length,
                        MAC_ADDR_ARRAY(pHdr->sa));
             if(pAssocReq->rsnPresent)
             {
@@ -821,15 +832,13 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
                     goto error;
 
                 }
-            } /* end - if(pAssocReq->rsnPresent) */
-            if((!pAssocReq->rsnPresent) && pAssocReq->wpaPresent)
-            {
+            } else if (pAssocReq->wpaPresent) {
                 // Unpack the WPA IE
                 if(pAssocReq->wpa.length)
                 {
                     if (dot11fUnpackIeWPA(pMac,
                                         &pAssocReq->wpa.info[4], //OUI is not taken care
-                                        pAssocReq->wpa.length,
+                                        (pAssocReq->wpa.length - 4),
                                         &Dot11fIEWPA) != DOT11F_PARSE_SUCCESS)
                     {
                         limLog(pMac, LOGE, FL("Invalid WPA IE"));
@@ -870,7 +879,7 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
 
                     goto error;
                 }/* end - if(pAssocReq->wpa.length) */
-            } /* end - if(pAssocReq->wpaPresent) */
+            }
         } /* end of if(psessionEntry->pLimStartBssReq->privacy
             && psessionEntry->pLimStartBssReq->rsnIE->length) */
 
@@ -949,6 +958,10 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
 
         /// Delete 'pre-auth' context of STA
         authType = pStaPreAuthContext->authType;
+
+        /// Store the seq number of previous auth frame
+        prevAuthSeqno = pStaPreAuthContext->seqNum;
+
         limDeletePreAuthNode(pMac, pHdr->sa);
 
         // All is well. Assign AID (after else part)
@@ -1184,6 +1197,16 @@ limProcessAssocReqFrame(tpAniSirGlobal pMac, tANI_U8 *pRxPacketInfo,
 
         goto error;
     }
+    /// Store the previous auth frame's seq no
+    if (prevAuthSeqno != 0xFFFF)
+    {
+        pStaDs->PrevAuthSeqno = prevAuthSeqno;
+    }
+     /// Store the current assoc seq no
+    pStaDs->PrevAssocSeqno = ((pHdr->seqControl.seqNumHi << 4) |
+                              (pHdr->seqControl.seqNumLo));
+    limLog(pMac, LOG1, FL("Prev auth seq no %d Prev Assoc seq no. %d"),
+                          pStaDs->PrevAuthSeqno, pStaDs->PrevAssocSeqno);
 
 
 sendIndToSme:
@@ -1328,6 +1351,12 @@ sendIndToSme:
         pStaDs->vhtLdpcCapable = (tANI_U8)vht_caps->ldpcCodingCap;
     }
 
+    if (pAssocReq->ExtCap.present)
+            pStaDs->non_ecsa_capable =
+                !((struct s_ext_cap *)pAssocReq->ExtCap.bytes)->extChanSwitch;
+    else
+            pStaDs->non_ecsa_capable = 1;
+
     if (!pAssocReq->wmeInfoPresent) {
         pStaDs->mlmStaContext.htCapability = 0;
 #ifdef WLAN_FEATURE_11AC
@@ -1460,9 +1489,9 @@ if (limPopulateMatchingRateSet(pMac,
                              (tSirResultCodes) eSIR_MAC_UNSPEC_FAILURE_STATUS, psessionEntry);
         goto error;
     }
-    if (WNI_CFG_PMF_SA_QUERY_RETRY_INTERVAL_APMIN > retryInterval)
+    if (WNI_CFG_PMF_SA_QUERY_RETRY_INTERVAL_STAMIN > retryInterval)
     {
-        retryInterval = WNI_CFG_PMF_SA_QUERY_RETRY_INTERVAL_APDEF;
+        retryInterval = WNI_CFG_PMF_SA_QUERY_RETRY_INTERVAL_STADEF;
     }
     if (tx_timer_create(&pStaDs->pmfSaQueryTimer, "PMF SA Query timer",
                         limPmfSaQueryTimerHandler, timerId.value,
@@ -1488,6 +1517,8 @@ if (limPopulateMatchingRateSet(pMac,
         pStaDs->timingMeasCap = 0;
         PELOG1(limLog(pMac, LOG1, FL("ExtCap not present"));)
     }
+
+    pStaDs->sub20_dynamic_channelwidth = pAssocReq->vendor_sub20_capability;
 
     // BTAMP: Storing the parsed assoc request in the psessionEntry array
     if(psessionEntry->parsedAssocReq)
@@ -1616,7 +1647,55 @@ error:
 
 } /*** end limProcessAssocReqFrame() ***/
 
+static uint8_t lim_get_max_rate_idx(tSirMacRateSet *rateset)
+{
+	uint8_t maxidx = 0;
+	int i;
 
+	maxidx = rateset->rate[0] & 0x7f;
+	for (i = 1; i < rateset->numRates; i++) {
+		if ((rateset->rate[i] & 0x7f) > maxidx)
+			maxidx = rateset->rate[i] & 0x7f;
+	}
+
+	return maxidx;
+}
+
+#ifdef WLAN_FEATURE_11AC
+static void fill_mlm_assoc_ind_vht(tpSirAssocReq assocreq,
+		tpDphHashNode stads,
+		tpLimMlmAssocInd assocind)
+{
+	if (stads->mlmStaContext.vhtCapability) {
+		/* ampdu */
+		assocind->ampdu = 1;
+
+		/* sgi */
+		if (assocreq->VHTCaps.shortGI80MHz ||
+		    assocreq->VHTCaps.shortGI160and80plus80MHz)
+			assocind->sgi_enable = 1;
+
+		/* stbc */
+		assocind->tx_stbc = assocreq->VHTCaps.txSTBC;
+		assocind->rx_stbc = assocreq->VHTCaps.rxSTBC;
+
+		/* ch width */
+		assocind->ch_width = stads->vhtSupportedChannelWidthSet ?
+			eHT_CHANNEL_WIDTH_80MHZ :
+			stads->htSupportedChannelWidthSet ?
+			eHT_CHANNEL_WIDTH_40MHZ : eHT_CHANNEL_WIDTH_20MHZ;
+
+		/* mode */
+		assocind->mode = SIR_SME_PHY_MODE_VHT;
+		assocind->rx_mcs_map = assocreq->VHTCaps.rxMCSMap & 0xff;
+		assocind->tx_mcs_map = assocreq->VHTCaps.txMCSMap & 0xff;
+	}
+}
+#else
+static void fill_assoc_ind_vht(tpSirAssocReq assocreq,
+		tpDphHashNode stads,
+		tpLimMlmAssocInd assocind) { }
+#endif
 
 /**---------------------------------------------------------------
 \fn     limSendMlmAssocInd
@@ -1646,6 +1725,7 @@ void limSendMlmAssocInd(tpAniSirGlobal pMac, tpDphHashNode pStaDs, tpPESession p
     tANI_U8                 subType;
     tANI_U8                 *wpsIe = NULL;
     tANI_U32                tmp;
+    uint8_t                 maxidx;
     tANI_U16                i, j=0;
 
     // Get a copy of the already parsed Assoc Request
@@ -1872,6 +1952,56 @@ void limSendMlmAssocInd(tpAniSirGlobal pMac, tpDphHashNode pStaDs, tpPESession p
         pMlmAssocInd->chan_info.rate_flags =
                       lim_get_max_rate_flags(pMac, pStaDs);
 
+        pMlmAssocInd->chan_info.sub20_channelwidth =
+                 pStaDs->sub20_dynamic_channelwidth;
+        if (pAssocReq->ExtCap.present)
+                pMlmAssocInd->ecsa_capable =
+                  ((struct s_ext_cap *)pAssocReq->ExtCap.bytes)->extChanSwitch;
+        pMlmAssocInd->ampdu = 0;
+        pMlmAssocInd->sgi_enable = 0;
+        pMlmAssocInd->tx_stbc = 0;
+        pMlmAssocInd->rx_stbc = 0;
+        pMlmAssocInd->ch_width = eHT_CHANNEL_WIDTH_20MHZ;
+        pMlmAssocInd->mode = SIR_SME_PHY_MODE_LEGACY;
+        pMlmAssocInd->max_supp_idx = 0xff;
+        pMlmAssocInd->max_ext_idx = 0xff;
+        pMlmAssocInd->max_mcs_idx = 0xff;
+        pMlmAssocInd->rx_mcs_map = 0xff;
+        pMlmAssocInd->tx_mcs_map = 0xff;
+
+        if (pAssocReq->supportedRates.numRates)
+            pMlmAssocInd->max_supp_idx =
+                lim_get_max_rate_idx(&pAssocReq->supportedRates);
+        if (pAssocReq->extendedRates.numRates)
+            pMlmAssocInd->max_ext_idx =
+                lim_get_max_rate_idx(&pAssocReq->extendedRates);
+
+        if (pStaDs->mlmStaContext.htCapability) {
+            /* ampdu */
+            pMlmAssocInd->ampdu = 1;
+
+            /* sgi */
+            if (pStaDs->htShortGI20Mhz || pStaDs->htShortGI40Mhz)
+                pMlmAssocInd->sgi_enable = 1;
+
+            /* stbc */
+            pMlmAssocInd->tx_stbc = pAssocReq->HTCaps.txSTBC;
+            pMlmAssocInd->rx_stbc = pAssocReq->HTCaps.rxSTBC;
+
+            /* ch width */
+            pMlmAssocInd->ch_width = pStaDs->htSupportedChannelWidthSet ?
+                eHT_CHANNEL_WIDTH_40MHZ: eHT_CHANNEL_WIDTH_20MHZ;
+
+            /* mode */
+            pMlmAssocInd->mode = SIR_SME_PHY_MODE_HT;
+            maxidx = 0;
+            for (i = 0; i < 8; i++) {
+                if (pAssocReq->HTCaps.supportedMCSSet[0] & 1 << i)
+                    maxidx = i;
+            }
+            pMlmAssocInd->max_mcs_idx = maxidx;
+        }
+        fill_mlm_assoc_ind_vht(pAssocReq, pStaDs, pMlmAssocInd);
         limPostSmeMessage(pMac, LIM_MLM_ASSOC_IND, (tANI_U32 *) pMlmAssocInd);
         vos_mem_free(pMlmAssocInd);
     }
@@ -2007,6 +2137,10 @@ void limSendMlmAssocInd(tpAniSirGlobal pMac, tpDphHashNode pStaDs, tpPESession p
 
         pMlmReassocInd->beaconPtr = psessionEntry->beacon;
         pMlmReassocInd->beaconLength = psessionEntry->bcnLen;
+
+        if (pAssocReq->ExtCap.present)
+                pMlmReassocInd->ecsa_capable =
+                   ((struct s_ext_cap *)pAssocReq->ExtCap.bytes)->extChanSwitch;
 
         limPostSmeMessage(pMac, LIM_MLM_REASSOC_IND, (tANI_U32 *) pMlmReassocInd);
         vos_mem_free(pMlmReassocInd);

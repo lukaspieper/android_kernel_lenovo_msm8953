@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -157,6 +157,7 @@ struct msm_vidc_platform_resources {
 	uint32_t irq;
 	struct version_table *pf_ver_tbl;
 	struct version_table *pf_cap_tbl;
+	struct version_table *pf_speedbin_tbl;
 	struct allowed_clock_rates_table *allowed_clks_tbl;
 	u32 allowed_clks_tbl_size;
 	struct clock_freq_table clock_freq_tbl;
@@ -173,6 +174,7 @@ struct msm_vidc_platform_resources {
 	uint32_t imem_size;
 	enum imem_type imem_type;
 	uint32_t max_load;
+	uint32_t power_conf;
 	struct platform_device *pdev;
 	struct regulator_set regulator_set;
 	struct clock_set clock_set;

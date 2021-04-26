@@ -10,6 +10,7 @@
  * GNU General Public License for more details.
  */
 
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -26,9 +27,10 @@
 #include <linux/power_supply.h>
 #include <linux/qpnp/qpnp-adc.h>
 #include <linux/qpnp/qpnp-revid.h>
-#include "leds.h"
+#include <linux/leds-qpnp-flash.h>
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
+#include "leds.h"
 
 #define FLASH_LED_PERIPHERAL_SUBTYPE(base)			(base + 0x05)
 #define FLASH_SAFETY_TIMER(base)				(base + 0x40)
@@ -79,6 +81,7 @@
 #define FLASH_LED_HDRM_SNS_ENABLE_MASK				0x81
 #define	FLASH_MASK_MODULE_CONTRL_MASK				0xE0
 #define FLASH_FOLLOW_OTST2_RB_MASK				0x08
+#define FLASH_PREPARE_OPTIONS_MASK				0x07
 
 #define FLASH_LED_TRIGGER_DEFAULT				"none"
 #define FLASH_LED_HEADROOM_DEFAULT_MV				500
@@ -188,6 +191,7 @@ struct flash_node_data {
 	u8				trigger;
 	u8				enable;
 	u8				num_regulators;
+	bool				regulators_on;
 	bool				flash_on;
 };
 
@@ -222,13 +226,13 @@ struct flash_led_platform_data {
 };
 
 struct qpnp_flash_led_buffer {
-	struct	mutex debugfs_lock; /* Prevent thread concurrency */
-	size_t	rpos;
-	size_t	wpos;
-	size_t	len;
-	struct	qpnp_flash_led *led;
-	u32	buffer_cnt;
-	char	data[0];
+	struct		mutex debugfs_lock; /* Prevent thread concurrency */
+	size_t		rpos;
+	size_t		wpos;
+	size_t		len;
+	struct		qpnp_flash_led *led;
+	u32		buffer_cnt;
+	char		data[0];
 };
 
 /*
@@ -338,8 +342,8 @@ static ssize_t flash_led_dfs_latched_reg_read(struct file *fp, char __user *buf,
 	size_t ret;
 
 	if (!log) {
-	pr_err("error: file private data is NULL\n");
-	return -EFAULT;
+		pr_err("error: file private data is NULL\n");
+		return -EFAULT;
 	}
 	led = log->led;
 
@@ -398,8 +402,8 @@ static ssize_t flash_led_dfs_fault_reg_read(struct file *fp, char __user *buf,
 	size_t ret;
 
 	if (!log) {
-	pr_err("error: file private data is NULL\n");
-	return -EFAULT;
+		pr_err("error: file private data is NULL\n");
+		return -EFAULT;
 	}
 	led = log->led;
 
@@ -455,8 +459,8 @@ static ssize_t flash_led_dfs_fault_reg_enable(struct file *file,
 	char *kbuf;
 
 	if (!log) {
-	pr_err("error: file private data is NULL\n");
-	return -EFAULT;
+		pr_err("error: file private data is NULL\n");
+		return -EFAULT;
 	}
 	led = log->led;
 
@@ -512,8 +516,8 @@ static ssize_t flash_led_dfs_dbg_enable(struct file *file,
 	char *kbuf;
 
 	if (!log) {
-	pr_err("error: file private data is NULL\n");
-	return -EFAULT;
+		pr_err("error: file private data is NULL\n");
+		return -EFAULT;
 	}
 	led = log->led;
 
@@ -1208,6 +1212,9 @@ static int flash_regulator_enable(struct qpnp_flash_led *led,
 {
 	int i, rc = 0;
 
+	if (flash_node->regulators_on == on)
+		return 0;
+
 	if (on == false) {
 		i = flash_node->num_regulators;
 		goto error_regulator_enable;
@@ -1222,12 +1229,71 @@ static int flash_regulator_enable(struct qpnp_flash_led *led,
 		}
 	}
 
+	flash_node->regulators_on = true;
 	return rc;
 
 error_regulator_enable:
 	while (i--)
 		regulator_disable(flash_node->reg_data[i].regs);
 
+	flash_node->regulators_on = false;
+	return rc;
+}
+
+int qpnp_flash_led_prepare(struct led_trigger *trig, int options,
+					int *max_current)
+{
+	struct led_classdev *led_cdev = trigger_to_lcdev(trig);
+	struct flash_node_data *flash_node;
+	struct qpnp_flash_led *led;
+	int rc;
+
+	if (!led_cdev) {
+		pr_err("Invalid led_trigger provided\n");
+		return -EINVAL;
+	}
+
+	flash_node = container_of(led_cdev, struct flash_node_data, cdev);
+	led = dev_get_drvdata(&flash_node->spmi_dev->dev);
+
+	if (!(options & FLASH_PREPARE_OPTIONS_MASK)) {
+		dev_err(&led->spmi_dev->dev, "Invalid options %d\n", options);
+		return -EINVAL;
+	}
+
+	mutex_lock(&led->flash_led_lock);
+
+	if (options & ENABLE_REGULATOR) {
+		rc = flash_regulator_enable(led, flash_node, true);
+		if (rc < 0) {
+			dev_err(&led->spmi_dev->dev,
+				"enable regulator failed, rc=%d\n", rc);
+			goto out;
+		}
+	}
+
+	if (options & DISABLE_REGULATOR) {
+		rc = flash_regulator_enable(led, flash_node, false);
+		if (rc < 0) {
+			dev_err(&led->spmi_dev->dev,
+				"disable regulator failed, rc=%d\n", rc);
+			goto out;
+		}
+	}
+
+	if (options & QUERY_MAX_CURRENT) {
+		rc = qpnp_flash_led_get_max_avail_current(flash_node, led);
+		if (rc < 0) {
+			dev_err(&led->spmi_dev->dev,
+				"query max current failed, rc=%d\n", rc);
+			goto out;
+		}
+		*max_current = rc;
+		rc = 0;
+	}
+
+out:
+	mutex_unlock(&led->flash_led_lock);
 	return rc;
 }
 
@@ -1238,30 +1304,89 @@ static void qpnp_flash_led_work(struct work_struct *work)
 	struct qpnp_flash_led *led =
 			dev_get_drvdata(&flash_node->spmi_dev->dev);
 	union power_supply_propval psy_prop;
+#if defined (CONFIG_MACH_LENOVO_TB8704) || defined (CONFIG_MACH_LENOVO_TB8804)
+	int rc, brightness = flash_node->cdev.brightness;
+#else
 	int rc, brightness;
+#endif
 	int max_curr_avail_ma = 0;
 	int total_curr_ma = 0;
 	int i;
-	u8 val;
+	u8 val = 0;
 
 	/* Global lock is to synchronize between the flash leds and torch */
 	mutex_lock(&led->flash_led_lock);
 	/* Local lock is to synchronize for one led instance */
+#if !defined (CONFIG_MACH_LENOVO_TB8704) && !defined (CONFIG_MACH_LENOVO_TB8804)
 	mutex_lock(&flash_node->cdev.led_access);
-
 	brightness = flash_node->cdev.brightness;
+#endif
+
 	if (!brightness)
 		goto turn_off;
 
 	if (led->open_fault) {
-		dev_err(&led->spmi_dev->dev, "Open fault detected\n");
+		if (flash_node->type == FLASH) {
+			dev_dbg(&led->spmi_dev->dev, "Open fault detected\n");
+#if   defined (CONFIG_MACH_LENOVO_TB8704) ||defined (CONFIG_MACH_LENOVO_TB8804)
+		mutex_unlock(&led->flash_led_lock);
+		return;
+#else
 		goto unlock_mutex;
+#endif
+
+		}
+		/*
+		 * Checking LED fault status again if open_fault has been
+		 * detected previously. Update open_fault status then the
+		 * flash leds could be controlled again if the hardware
+		 * status is recovered.
+		 */
+		rc = spmi_ext_register_readl(led->spmi_dev->ctrl,
+			led->spmi_dev->sid,
+			FLASH_LED_FAULT_STATUS(led->base), &val, 1);
+		if (rc) {
+			dev_err(&led->spmi_dev->dev,
+				"Failed to read out fault status register\n");
+#if   defined (CONFIG_MACH_LENOVO_TB8704) ||defined (CONFIG_MACH_LENOVO_TB8804)
+		mutex_unlock(&led->flash_led_lock);
+		return;
+#else
+		goto unlock_mutex;
+#endif
+		}
+
+		led->open_fault = (val & FLASH_LED_OPEN_FAULT_DETECTED);
+		if (led->open_fault) {
+			dev_err(&led->spmi_dev->dev, "Open fault detected\n");
+#if   defined (CONFIG_MACH_LENOVO_TB8704) ||defined (CONFIG_MACH_LENOVO_TB8804)
+		mutex_unlock(&led->flash_led_lock);
+		return;
+#else
+		goto unlock_mutex;
+#endif
+		}
+
+		dev_err(&led->spmi_dev->dev, "Open fault detected\n");
+#if   defined (CONFIG_MACH_LENOVO_TB8704) ||defined (CONFIG_MACH_LENOVO_TB8804)
+		mutex_unlock(&led->flash_led_lock);
+		return;
+#else
+		goto unlock_mutex;
+#endif
 	}
 
 	if (!flash_node->flash_on && flash_node->num_regulators > 0) {
 		rc = flash_regulator_enable(led, flash_node, true);
 		if (rc)
+#if  defined (CONFIG_MACH_LENOVO_TB8704) ||defined (CONFIG_MACH_LENOVO_TB8804)
+		if (rc) {
+			mutex_unlock(&led->flash_led_lock);
+			return;
+		}
+#else
 			goto unlock_mutex;
+#endif
 	}
 
 	if (!led->gpio_enabled && led->pinctrl) {
@@ -1717,8 +1842,10 @@ static void qpnp_flash_led_work(struct work_struct *work)
 	}
 
 	flash_node->flash_on = true;
+#if !defined (CONFIG_MACH_LENOVO_TB8704) && !defined (CONFIG_MACH_LENOVO_TB8804)
 unlock_mutex:
 	mutex_unlock(&flash_node->cdev.led_access);
+#endif
 	mutex_unlock(&led->flash_led_lock);
 
 	return;
@@ -1787,15 +1914,24 @@ exit_flash_hdrm_sns:
 	}
 exit_flash_led_work:
 	rc = qpnp_flash_led_module_disable(led, flash_node);
+#if defined (CONFIG_MACH_LENOVO_TB8704) ||defined (CONFIG_MACH_LENOVO_TB8804)
+	if (rc) {
+		dev_err(&led->spmi_dev->dev, "Module disable failed\n");
+		goto exit_flash_led_work;
+	}
+#else
 	if (rc)
 		dev_err(&led->spmi_dev->dev, "Module disable failed\n");
+#endif
 
 error_enable_gpio:
 	if (flash_node->flash_on && flash_node->num_regulators > 0)
 		flash_regulator_enable(led, flash_node, false);
 
 	flash_node->flash_on = false;
+#if !defined (CONFIG_MACH_LENOVO_TB8704) && !defined (CONFIG_MACH_LENOVO_TB8804)
 	mutex_unlock(&flash_node->cdev.led_access);
+#endif
 	mutex_unlock(&led->flash_led_lock);
 
 	return;
@@ -1849,8 +1985,9 @@ static void qpnp_flash_led_brightness_set(struct led_classdev *led_cdev,
 				led->flash_node[led->num_leds - 1].
 				prgm_current2 =
 				flash_node->prgm_current;
-
+#if   defined (CONFIG_MACH_LENOVO_TB8704) ||defined (CONFIG_MACH_LENOVO_TB8804)
 			return;
+#endif
 		} else if (flash_node->id == FLASH_LED_SWITCH) {
 			if (!value) {
 				flash_node->prgm_current = 0;

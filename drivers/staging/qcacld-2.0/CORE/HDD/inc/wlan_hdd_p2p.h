@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -47,6 +47,7 @@
 #define WLAN_HDD_GET_TYPE_FRM_FC(__fc__)         (((__fc__) & 0x0F) >> 2)
 #define WLAN_HDD_GET_SUBTYPE_FRM_FC(__fc__)      (((__fc__) & 0xF0) >> 4)
 #define WLAN_HDD_80211_FRM_DA_OFFSET             4
+#define WLAN_HDD_80211_FRM_SA_OFFSET             10
 #define P2P_WILDCARD_SSID_LEN                    7
 #define P2P_WILDCARD_SSID                        "DIRECT-"
 
@@ -170,8 +171,13 @@ int wlan_hdd_mgmt_tx( struct wiphy *wiphy, struct net_device *dev,
                      const u8 *buf, size_t len, u64 *cookie );
 #endif
 
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0))
+struct wireless_dev *wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
+                                               const char *name,
+                                               unsigned char name_assign_type,
+                                               enum nl80211_iftype type,
+                                               struct vif_params *params);
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
 struct wireless_dev *wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
                                                const char *name,
                                                unsigned char name_assign_type,
@@ -209,4 +215,17 @@ void wlan_hdd_cleanup_remain_on_channel_ctx(hdd_adapter_t *pAdapter);
 #define MAX_ROC_REQ_QUEUE_ENTRY 10
 
 void wlan_hdd_roc_request_dequeue(struct work_struct *work);
+
+/**
+ * hdd_check_random_mac() - Whether addr is present in random_mac array
+ * @adapter: Pointer to adapter
+ * @mac_addr: random mac address
+ *
+ * This function is used to check whether given mac addr is present in list of
+ * random_mac structures in specified adapter
+ *
+ * Return: If random addr is present return true else false
+ */
+bool hdd_check_random_mac(hdd_adapter_t *adapter, uint8_t *random_mac_addr);
+
 #endif // __P2P_H

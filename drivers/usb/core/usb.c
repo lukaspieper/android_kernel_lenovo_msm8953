@@ -79,6 +79,8 @@ struct usb_host_interface *usb_find_alt_setting(
 	struct usb_interface_cache *intf_cache = NULL;
 	int i;
 
+	if (!config)
+		return NULL;
 	for (i = 0; i < config->desc.bNumInterfaces; i++) {
 		if (config->intf_cache[i]->altsetting[0].desc.bInterfaceNumber
 				== iface_num) {
@@ -655,54 +657,6 @@ int usb_get_current_frame_number(struct usb_device *dev)
 }
 EXPORT_SYMBOL_GPL(usb_get_current_frame_number);
 
-int usb_sec_event_ring_setup(struct usb_device *dev,
-	unsigned intr_num)
-{
-	if (dev->state == USB_STATE_NOTATTACHED)
-		return 0;
-
-	return usb_hcd_sec_event_ring_setup(dev, intr_num);
-}
-EXPORT_SYMBOL(usb_sec_event_ring_setup);
-
-int usb_sec_event_ring_cleanup(struct usb_device *dev,
-	unsigned intr_num)
-{
-	return usb_hcd_sec_event_ring_cleanup(dev, intr_num);
-}
-EXPORT_SYMBOL(usb_sec_event_ring_cleanup);
-
-dma_addr_t
-usb_get_sec_event_ring_dma_addr(struct usb_device *dev,
-	unsigned intr_num)
-{
-	if (dev->state == USB_STATE_NOTATTACHED)
-		return 0;
-
-	return usb_hcd_get_sec_event_ring_dma_addr(dev, intr_num);
-}
-EXPORT_SYMBOL(usb_get_sec_event_ring_dma_addr);
-
-dma_addr_t
-usb_get_dcba_dma_addr(struct usb_device *dev)
-{
-	if (dev->state == USB_STATE_NOTATTACHED)
-		return 0;
-
-	return usb_hcd_get_dcba_dma_addr(dev);
-}
-EXPORT_SYMBOL(usb_get_dcba_dma_addr);
-
-dma_addr_t usb_get_xfer_ring_dma_addr(struct usb_device *dev,
-	struct usb_host_endpoint *ep)
-{
-	if (dev->state == USB_STATE_NOTATTACHED)
-		return 0;
-
-	return usb_hcd_get_xfer_ring_dma_addr(dev, ep);
-}
-EXPORT_SYMBOL(usb_get_xfer_ring_dma_addr);
-
 /*-------------------------------------------------------------------*/
 /*
  * __usb_get_extra_descriptor() finds a descriptor of specific type in the
@@ -710,14 +664,14 @@ EXPORT_SYMBOL(usb_get_xfer_ring_dma_addr);
  */
 
 int __usb_get_extra_descriptor(char *buffer, unsigned size,
-			       unsigned char type, void **ptr)
+			       unsigned char type, void **ptr, size_t minsize)
 {
 	struct usb_descriptor_header *header;
 
 	while (size >= sizeof(struct usb_descriptor_header)) {
 		header = (struct usb_descriptor_header *)buffer;
 
-		if (header->bLength < 2) {
+		if (header->bLength < 2 || header->bLength > size) {
 			printk(KERN_ERR
 				"%s: bogus descriptor, type %d length %d\n",
 				usbcore_name,
@@ -726,7 +680,7 @@ int __usb_get_extra_descriptor(char *buffer, unsigned size,
 			return -1;
 		}
 
-		if (header->bDescriptorType == type) {
+		if (header->bDescriptorType == type && header->bLength >= minsize) {
 			*ptr = header;
 			return 0;
 		}

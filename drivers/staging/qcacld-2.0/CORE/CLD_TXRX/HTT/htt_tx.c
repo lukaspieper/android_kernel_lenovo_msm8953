@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2014, 2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011, 2014, 2016-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -72,9 +72,6 @@
 
 /*--- setup / tear-down functions -------------------------------------------*/
 
-#ifdef QCA_SUPPORT_TXDESC_SANITY_CHECKS
-u_int32_t *g_dbg_htt_desc_end_addr, *g_dbg_htt_desc_start_addr;
-#endif
 
 /**
  * htt_tx_desc_get_size() - get tx descripotrs size
@@ -789,7 +786,7 @@ int htt_tx_ipa_uc_attach(struct htt_pdev_t *pdev,
                 &pdev->ipa_uc_tx_rsc.tx_ce_idx.paddr,
                 adf_os_get_dma_mem_context(
                    (&pdev->ipa_uc_tx_rsc.tx_ce_idx), memctx));
-   if (!pdev->ipa_uc_tx_rsc.tx_ce_idx.vaddr) {
+   if (NULL == pdev->ipa_uc_tx_rsc.tx_ce_idx.vaddr) {
       adf_os_print("%s: CE Write Index WORD alloc fail", __func__);
       return -1;
    }
@@ -801,7 +798,7 @@ int htt_tx_ipa_uc_attach(struct htt_pdev_t *pdev,
                 &pdev->ipa_uc_tx_rsc.tx_comp_base.paddr,
                 adf_os_get_dma_mem_context(
                    (&pdev->ipa_uc_tx_rsc.tx_comp_base), memctx));
-   if (!pdev->ipa_uc_tx_rsc.tx_comp_base.vaddr) {
+   if (NULL == pdev->ipa_uc_tx_rsc.tx_comp_base.vaddr) {
       adf_os_print("%s: TX COMP ring alloc fail", __func__);
       return_code = -2;
       goto free_tx_ce_idx;
@@ -884,12 +881,6 @@ int htt_tx_ipa_uc_attach(struct htt_pdev_t *pdev,
        }
    }
 
-   if (tx_buffer_count_pwr2 < 0) {
-       adf_os_print("%s: Failed to round down Tx buffer count %d",
-                   __func__, tx_buffer_count_pwr2);
-       goto free_tx_comp_base;
-   }
-
    pdev->ipa_uc_tx_rsc.alloc_tx_buf_cnt = tx_buffer_count_pwr2;
 
    return 0;
@@ -955,7 +946,7 @@ int htt_tx_credit_update(struct htt_pdev_t *pdev)
    int credit_delta;
    credit_delta = MIN(adf_os_atomic_read(&pdev->htt_tx_credit.target_delta),
                       adf_os_atomic_read(&pdev->htt_tx_credit.bus_delta));
-   if (credit_delta) {
+   if (credit_delta > 0) {
       adf_os_atomic_add(-credit_delta, &pdev->htt_tx_credit.target_delta);
       adf_os_atomic_add(-credit_delta, &pdev->htt_tx_credit.bus_delta);
    }

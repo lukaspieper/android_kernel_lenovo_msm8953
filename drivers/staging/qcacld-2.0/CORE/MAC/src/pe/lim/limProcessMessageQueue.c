@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -39,8 +39,7 @@
 #include "palTypes.h"
 #include "wniApi.h"
 #include "wlan_qct_wda.h"
-
-#include "wniCfgSta.h"
+#include "wni_cfg.h"
 #include "cfgApi.h"
 #include "sirCommon.h"
 #include "utilsApi.h"
@@ -74,8 +73,76 @@
 #include "vos_packet.h"
 #include "vos_memory.h"
 #include "nan_datapath.h"
+#include "limSecurityUtils.h"
+#include "ieee80211_common.h"
 
+#define CHECK_BIT(value, mask)    ((value) & (1 << (mask)))
 void limLogSessionStates(tpAniSirGlobal pMac);
+
+#ifdef WLAN_FEATURE_SAE
+/**
+ * lim_process_sae_msg() - Process SAE message
+ * @mac: Global MAC pointer
+ * @body: Buffer pointer
+ *
+ * Return: None
+ */
+static void lim_process_sae_msg(tpAniSirGlobal mac, struct sir_sae_msg *body)
+{
+	struct sir_sae_msg *sae_msg = body;
+	tpPESession session;
+
+	if (!sae_msg) {
+		limLog(mac, LOGE, FL("SAE msg is NULL"));
+		return;
+	}
+
+	session = pe_find_session_by_sme_session_id(mac,
+			sae_msg->session_id);
+	if (session == NULL) {
+		limLog(mac, LOGE, FL("SAE:Unable to find session"));
+		return;
+	}
+
+	if (session->pePersona != VOS_STA_MODE) {
+		limLog(mac, LOGE, FL("SAE:Not supported in this mode %d"),
+			session->pePersona);
+		return;
+	}
+
+	limLog(mac, LOG1, FL("SAE:status %d limMlmState %d pePersona %d"),
+		sae_msg->sae_status, session->limMlmState,
+		session->pePersona);
+	switch (session->limMlmState) {
+	case eLIM_MLM_WT_SAE_AUTH_STATE:
+	/* SAE authentication is completed. Restore from auth state */
+		if (tx_timer_running(&mac->lim.limTimers.sae_auth_timer))
+			limDeactivateAndChangeTimer(mac,
+				eLIM_AUTH_SAE_TIMER);
+		/* success */
+		if (sae_msg->sae_status == IEEE80211_STATUS_SUCCESS)
+			limRestoreFromAuthState(mac,
+				eSIR_SME_SUCCESS,
+				eSIR_MAC_SUCCESS_STATUS,
+				session);
+		else
+			limRestoreFromAuthState(mac,
+				eSIR_SME_AUTH_REFUSED,
+				eSIR_MAC_UNSPEC_FAILURE_STATUS,
+				session);
+	break;
+	default:
+	/* SAE msg is received in unexpected state */
+		limLog(mac, LOGE, FL("received SAE msg in state %X"),
+			session->limMlmState);
+		limPrintMlmState(mac, LOGE, session->limMlmState);
+	break;
+	}
+}
+#else
+static void lim_process_sae_msg(tpAniSirGlobal mac, struct sir_sae_msg *body)
+{}
+#endif
 
 /** -------------------------------------------------------------
 \fn defMsgDecision
@@ -243,14 +310,14 @@ __limExtScanForwardBcnProbeRsp(tpAniSirGlobal pmac, uint8_t *rx_pkt_info,
 	tSirMsgQ                     mmh_msg;
 	tpSirMacMgmtHdr              hdr;
 
-	result = vos_mem_malloc(sizeof(*result) + ie_len);
+	result = vos_mem_malloc(sizeof(*result) + ie_len + ie_len);
 	if (NULL == result) {
 		limLog(pmac, LOGE, FL("Memory allocation failed"));
 		return;
 	}
 	hdr = WDA_GET_RX_MAC_HEADER(rx_pkt_info);
 	body = WDA_GET_RX_MPDU_DATA(rx_pkt_info);
-	vos_mem_zero(result, sizeof(*result) + ie_len);
+	vos_mem_zero(result, sizeof(*result) + ie_len + ie_len);
 
 	/* Received frame does not have request id, hence set 0 */
 	result->requestId = 0;
@@ -273,6 +340,15 @@ __limExtScanForwardBcnProbeRsp(tpAniSirGlobal pmac, uint8_t *rx_pkt_info,
 	/* Copy IE fields */
 	vos_mem_copy((uint8_t *) &result->ap.ieData,
 			body + SIR_MAC_B_PR_SSID_OFFSET, ie_len);
+
+	/* bss_description points to ap.ieData as ap.ieData is flexible arrary
+	 * member.
+	 * Fill result->bss_description by leaving ie_len bytes after ap.ieData
+	 * manually.
+	 */
+	limCollectBssDescription(pmac,
+		(tSirBssDescription *)((uint8_t *)&result->bss_description +
+		ie_len), frame, rx_pkt_info, eANI_BOOLEAN_FALSE);
 
 	mmh_msg.type = msg_type;
 	mmh_msg.bodyptr = result;
@@ -369,8 +445,10 @@ __limHandleBeacon(tpAniSirGlobal pMac, tpSirMsgQ pMsg, tpPESession psessionEntry
     {
         schBeaconProcess(pMac, pRxPacketInfo, psessionEntry);
     }
-     else
+    else
         limProcessBeaconFrame(pMac, pRxPacketInfo, psessionEntry);
+
+    return;
 }
 
 
@@ -660,7 +738,8 @@ limCheckMgmtRegisteredFrames(tpAniSirGlobal pMac, tANI_U8 *pBd,
         limSendSmeMgmtFrameInd( pMac, pHdr->fc.subType, (tANI_U8*)pHdr,
                      WDA_GET_RX_PAYLOAD_LEN(pBd) + sizeof(tSirMacMgmtHdr),
                      pLimMgmtRegistration->sessionId,
-                     WDA_GET_RX_CH(pBd), psessionEntry, 0);
+                     WDA_GET_RX_CH(pBd), psessionEntry,
+                     WDA_GET_RX_RSSI_NORMALIZED(pBd));
 
         if ( (type == SIR_MAC_MGMT_FRAME) && (fc.type == SIR_MAC_MGMT_FRAME)
               && (subType == SIR_MAC_MGMT_RESERVED15) )
@@ -733,13 +812,15 @@ limHandle80211Frames(tpAniSirGlobal pMac, tpSirMsgQ limMsg, tANI_U8 *pDeferMsg)
             (fc.subType != SIR_MAC_MGMT_BEACON))
     {
          limLog(pMac, LOG1, FL("RX MGMT - Type %hu, SubType %hu, "
-                "BSSID: "MAC_ADDRESS_STR " RSSI %d Seq.no %d"),
+                "BSSID: "MAC_ADDRESS_STR " RSSI %d Seq.no %d"
+		" Source-Addr: "MAC_ADDRESS_STR),
                 fc.type, fc.subType, MAC_ADDR_ARRAY(pHdr->bssId),
                 (uint8_t)abs(
                 (tANI_S8)WDA_GET_RX_RSSI_NORMALIZED(pRxPacketInfo)),
                 ((pHdr->seqControl.seqNumHi << 4) |
-                               (pHdr->seqControl.seqNumLo)));
-     }
+                               (pHdr->seqControl.seqNumLo)),
+                MAC_ADDR_ARRAY(pHdr->sa));
+    }
 
 #ifdef FEATURE_WLAN_EXTSCAN
     if (WMA_IS_EXTSCAN_SCAN_SRC(pRxPacketInfo) ||
@@ -809,7 +890,10 @@ limHandle80211Frames(tpAniSirGlobal pMac, tpSirMsgQ limMsg, tANI_U8 *pDeferMsg)
         if((fc.subType != SIR_MAC_MGMT_PROBE_RSP )&&
             (fc.subType != SIR_MAC_MGMT_BEACON)&&
             (fc.subType != SIR_MAC_MGMT_PROBE_REQ)
-            && (fc.subType != SIR_MAC_MGMT_ACTION ) //Public action frame can be received from non-associated stations.
+            /* TA for 11p DSRC */
+            && (fc.subType != SIR_MAC_MGMT_TIME_ADVERT)
+            /* Public action frame can be received from non-associated STAs */
+            && (fc.subType != SIR_MAC_MGMT_ACTION )
           )
         {
 
@@ -927,6 +1011,16 @@ limHandle80211Frames(tpAniSirGlobal pMac, tpSirMsgQ limMsg, tANI_U8 *pDeferMsg)
 
                 case SIR_MAC_MGMT_DEAUTH:
                     limProcessDeauthFrame(pMac, pRxPacketInfo,psessionEntry);
+                    break;
+
+                case SIR_MAC_MGMT_TIME_ADVERT:
+                {
+                    tANI_U32 frameLen = WDA_GET_RX_PAYLOAD_LEN(pRxPacketInfo);
+                    limSendSmeMgmtFrameInd(pMac, SIR_MAC_MGMT_TIME_ADVERT,
+                            (tANI_U8*)pHdr, frameLen + sizeof(tSirMacMgmtHdr),
+                            0, WDA_GET_RX_CH(pRxPacketInfo), NULL,
+                            WDA_GET_RX_RSSI_RAW(pRxPacketInfo));
+                }
                     break;
 
                 case SIR_MAC_MGMT_ACTION:
@@ -1305,6 +1399,7 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
 
                 if( !VOS_IS_STATUS_SUCCESS(vosStatus) )
                 {
+                    lim_decrement_pending_mgmt_count(pMac);
                     vos_pkt_return_packet(pVosPkt);
                     break;
 
@@ -1331,6 +1426,7 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
                                 limMsg->type, pMac->lim.gLimSmeState,  pMac->lim.gLimPrevSmeState,
                                 pMac->lim.gLimSystemRole,  pMac->lim.gLimMlmState,  pMac->lim.gLimPrevMlmState);)
                             limLogSessionStates(pMac);
+                            lim_decrement_pending_mgmt_count(pMac);
                             vos_pkt_return_packet(pVosPkt);
                         }
                 }
@@ -1340,6 +1436,7 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
                      * Asumption here is when Rx mgmt frame processing is done,
                      * voss packet could be freed here.
                      */
+                    lim_decrement_pending_mgmt_count(pMac);
                     vos_pkt_return_packet(pVosPkt);
                 }
             }
@@ -1370,12 +1467,10 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
             break;
         case eWNI_SME_SCAN_ABORT_IND:
           {
-            tSirMbMsg *pMsg = limMsg->bodyptr;
-            tANI_U8 sessionId;
+            tSirSmeScanAbortReq *pMsg = (tSirSmeScanAbortReq *)limMsg->bodyptr;
             if (pMsg)
             {
-               sessionId = (tANI_U8) pMsg->data[0];
-               limProcessAbortScanInd(pMac, sessionId);
+               limProcessAbortScanInd(pMac, pMsg->sessionId);
                vos_mem_free((v_VOID_t *)limMsg->bodyptr);
                limMsg->bodyptr = NULL;
             }
@@ -1485,7 +1580,11 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
             limMsg->bodyptr = NULL;
             break;
         }
-
+        case eWNI_SME_SEND_MGMT_FRAME_TX:
+            lim_send_mgmt_frame_tx(pMac, limMsg);
+            vos_mem_free(limMsg->bodyptr);
+            limMsg->bodyptr = NULL;
+            break;
         case SIR_HAL_P2P_NOA_START_IND:
         {
             tpPESession psessionEntry = &pMac->lim.gpSession[0];
@@ -1722,6 +1821,7 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
         case SIR_LIM_DEAUTH_ACK_TIMEOUT:
         case SIR_LIM_CONVERT_ACTIVE_CHANNEL_TO_PASSIVE:
         case SIR_LIM_AUTH_RETRY_TIMEOUT:
+        case SIR_LIM_AUTH_SAE_TIMEOUT:
             // These timeout messages are handled by MLM sub module
 
             limProcessMlmReqMessages(pMac,
@@ -2052,6 +2152,8 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
         {
             tpPESession     psessionEntry;
             tANI_U8         sessionId;
+            tDphHashNode   *sta_ds = NULL;
+            int i, aid;
             tTdlsLinkEstablishParams *pTdlsLinkEstablishParams;
             pTdlsLinkEstablishParams = (tTdlsLinkEstablishParams*) limMsg->bodyptr;
 
@@ -2072,11 +2174,33 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
             }
             else
             {
-                limSendSmeTdlsLinkEstablishReqRsp(pMac,
-                                                  psessionEntry->smeSessionId,
-                                                  NULL,
-                                                  NULL,
-                                                  pTdlsLinkEstablishParams->status) ;
+                for (i = 0;
+                     i < sizeof(psessionEntry->peerAIDBitmap)
+                                           / sizeof(uint32_t); i++) {
+                    for (aid = 0; aid < (sizeof(tANI_U32) << 3); aid++) {
+                        if (CHECK_BIT(psessionEntry->peerAIDBitmap[i], aid)) {
+                            sta_ds = dphGetHashEntry(pMac,
+                                           (aid + i*(sizeof(tANI_U32) << 3)),
+                                            &psessionEntry->dph.dphHashTable);
+                              if ((sta_ds) &&
+                                   (pTdlsLinkEstablishParams->staIdx ==
+                                                       sta_ds->staIndex))
+                                  goto send_link_resp;
+                        }
+                    }
+                }
+send_link_resp:
+                if (sta_ds)
+                    limSendSmeTdlsLinkEstablishReqRsp(pMac,
+                                              psessionEntry->smeSessionId,
+                                              sta_ds->staAddr,
+                                              sta_ds,
+                                              pTdlsLinkEstablishParams->status);
+                else
+                    limSendSmeTdlsLinkEstablishReqRsp(pMac,
+                                              psessionEntry->smeSessionId,
+                                              NULL, NULL,
+                                              pTdlsLinkEstablishParams->status);
             }
             vos_mem_free((v_VOID_t *)(limMsg->bodyptr));
             limMsg->bodyptr = NULL;
@@ -2086,6 +2210,10 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
 
     case WDA_RX_SCAN_EVENT:
         limProcessRxScanEvent(pMac, limMsg->bodyptr);
+        break;
+
+    case WDA_RX_CHN_STATUS_EVENT:
+        lim_process_rx_channel_status_event(pMac, limMsg->bodyptr);
         break;
 
     case WDA_IBSS_PEER_INACTIVITY_IND:
@@ -2175,6 +2303,11 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
     case SIR_HAL_NDP_END_RSP:
     case SIR_HAL_NDP_END_IND:
         lim_handle_ndp_event_message(pMac, limMsg);
+        break;
+    case eWNI_SME_SEND_SAE_MSG:
+        lim_process_sae_msg(pMac, limMsg->bodyptr);
+        vos_mem_free((v_VOID_t*)limMsg->bodyptr);
+        limMsg->bodyptr = NULL;
         break;
     default:
         vos_mem_free((v_VOID_t*)limMsg->bodyptr);

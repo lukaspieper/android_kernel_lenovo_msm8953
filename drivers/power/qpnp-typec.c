@@ -51,13 +51,27 @@
 
 #define TYPEC_SW_CTL_REG(base)		(base + 0x52)
 
+#ifdef CONFIG_MACH_LENOVO_TBX704
 #define TYPEC_STD_MA			500
+#else
+#define TYPEC_STD_MA			900
+#endif
+
+#if defined(CONFIG_MACH_LENOVO_TB8804) //add by longcheer_liml_2017_04_06
+#define TYPEC_MED_MA			2000//1500
+#else
 #define TYPEC_MED_MA			1500
+#endif
+
 #define TYPEC_HIGH_MA			3000
 
 #define QPNP_TYPEC_DEV_NAME	"qcom,qpnp-typec"
 #define TYPEC_PSY_NAME		"typec"
 #define DUAL_ROLE_DESC_NAME	"otg_default"
+
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+struct qpnp_typec_chip *tusb_typec_chip;//add by longcheer_liml_2017_03_01
+#endif
 
 enum cc_line_state {
 	CC_1,
@@ -207,7 +221,7 @@ out:
 
 
 
-static int set_property_on_battery(struct qpnp_typec_chip *chip,
+int set_property_on_battery(struct qpnp_typec_chip *chip,
 				enum power_supply_property prop)
 {
 	int rc = 0;
@@ -336,6 +350,7 @@ static int qpnp_typec_force_mode(struct qpnp_typec_chip *chip, int mode)
 	return rc;
 }
 
+int typec_direction; // Add by huangxiaowen, for type-c detect direction, 2017.01.18
 static int qpnp_typec_handle_usb_insertion(struct qpnp_typec_chip *chip, u8 reg)
 {
 	int rc;
@@ -343,8 +358,9 @@ static int qpnp_typec_handle_usb_insertion(struct qpnp_typec_chip *chip, u8 reg)
 
 	cc_line_state = (reg & TYPEC_CCOUT_OPEN_BIT) ?
 		OPEN : (reg & TYPEC_CCOUT_BIT) ? CC_2 : CC_1;
-
+#ifdef CONFIG_MACH_LENOVO_TBX704
 	pr_err("lvchen cc_line_state=%d",cc_line_state);
+#endif
 	rc = qpnp_typec_configure_ssmux(chip, cc_line_state);
 	if (rc) {
 		pr_err("failed to configure ss-mux rc=%d\n", rc);
@@ -555,6 +571,9 @@ static irqreturn_t dfp_detach_handler(int irq, void *_chip)
 
 static irqreturn_t vbus_err_handler(int irq, void *_chip)
 {
+#if (defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)) && !defined(CONFIG_MACH_LENOVO_TBX704)
+    return IRQ_HANDLED;
+#else
 	int rc;
 	struct qpnp_typec_chip *chip = _chip;
 
@@ -568,6 +587,7 @@ static irqreturn_t vbus_err_handler(int irq, void *_chip)
 	mutex_unlock(&chip->typec_lock);
 
 	return IRQ_HANDLED;
+#endif
 }
 
 static int qpnp_typec_parse_dt(struct qpnp_typec_chip *chip)
@@ -678,9 +698,13 @@ static int qpnp_typec_request_irqs(struct qpnp_typec_chip *chip)
 static enum power_supply_property qpnp_typec_properties[] = {
 	POWER_SUPPLY_PROP_CURRENT_CAPABILITY,
 	POWER_SUPPLY_PROP_TYPE,
+#ifdef CONFIG_MACH_LENOVO_TBX704
 	POWER_SUPPLY_PROP_TYPEC_ORIENTATION,
+#endif
 };
+#ifdef CONFIG_MACH_LENOVO_TBX704
 extern int typeC_orientation;
+#endif
 static int qpnp_typec_get_property(struct power_supply *psy,
 				enum power_supply_property prop,
 				union power_supply_propval *val)
@@ -695,9 +719,11 @@ static int qpnp_typec_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CURRENT_CAPABILITY:
 		val->intval = chip->current_ma;
 		break;
+#ifdef CONFIG_MACH_LENOVO_TBX704
 	case POWER_SUPPLY_PROP_TYPEC_ORIENTATION:
 		val->intval = typeC_orientation;
 		break;
+#endif
 	default:
 		return -EINVAL;
 	}
@@ -705,7 +731,7 @@ static int qpnp_typec_get_property(struct power_supply *psy,
 	return 0;
 }
 
-
+#ifdef CONFIG_MACH_LENOVO_TBX704
 static int qpnp_typec_set_property(struct power_supply *psy,
 				enum power_supply_property prop,
 				const union power_supply_propval *val)
@@ -726,9 +752,8 @@ default:
 }
 return 0;
 
-
 }
-
+#endif
 
 #define ROLE_REVERSAL_DELAY_MS		500
 static void qpnp_typec_role_check_work(struct work_struct *work)
@@ -900,11 +925,26 @@ static int qpnp_typec_dr_get_property(struct dual_role_phy_instance *dual_role,
 	return 0;
 }
 
+// Add by huangxiaowen, for type-c detect direction, 2017.01.18, start
+static ssize_t typec_direction_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, sizeof(int), "%d\n", typec_direction);
+}
+
+static struct device_attribute attrs[] = {
+	__ATTR(typec_direction, S_IRUGO | S_IWUSR | S_IWGRP,
+	typec_direction_show, NULL),
+};
+// Add by huangxiaowen, for type-c detect direction, 2017.01.18, end
+
 static int qpnp_typec_probe(struct spmi_device *spmi)
 {
 	int rc;
 	struct resource *resource;
 	struct qpnp_typec_chip *chip;
+	unsigned char attr_count;
+
 
 	resource = spmi_get_resource(spmi, NULL, IORESOURCE_MEM, 0);
 	if (!resource) {
@@ -919,7 +959,9 @@ static int qpnp_typec_probe(struct spmi_device *spmi)
 
 	chip->dev = &spmi->dev;
 	chip->spmi = spmi;
-
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+	tusb_typec_chip = chip;//add by longcheer_liml_2017_03_01
+#endif
 	/* parse DT */
 	rc = qpnp_typec_parse_dt(chip);
 	if (rc) {
@@ -942,7 +984,9 @@ static int qpnp_typec_probe(struct spmi_device *spmi)
 
 	chip->type_c_psy.name		= TYPEC_PSY_NAME;
 	chip->type_c_psy.get_property	= qpnp_typec_get_property;
+#ifdef CONFIG_MACH_LENOVO_TBX704
 	chip->type_c_psy.set_property     =  qpnp_typec_set_property;
+#endif
 	chip->type_c_psy.properties	= qpnp_typec_properties;
 	chip->type_c_psy.num_properties	= ARRAY_SIZE(qpnp_typec_properties);
 
@@ -988,6 +1032,20 @@ static int qpnp_typec_probe(struct spmi_device *spmi)
 		goto unregister_psy;
 	}
 
+    // Add by huangxiaowen, for type-c detect direction, 2017.01.18, start
+	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
+		rc = sysfs_create_file(&chip->dev->kobj,
+						&attrs[attr_count].attr);
+		if (rc < 0) {
+			dev_err(chip->dev,
+				"%s: Failed to create sysfs attributes\n",
+								__func__);
+			sysfs_remove_file(&chip->dev->kobj,
+						&attrs[attr_count].attr);
+		}
+	}
+    // Add by huangxiaowen, for type-c detect direction, 2017.01.18, end
+
 	pr_info("TypeC successfully probed state=%d CC-line-state=%d\n",
 			chip->typec_state, chip->cc_line_state);
 	return 0;
@@ -1005,6 +1063,14 @@ static int qpnp_typec_remove(struct spmi_device *spmi)
 {
 	int rc;
 	struct qpnp_typec_chip *chip = dev_get_drvdata(&spmi->dev);
+	unsigned char attr_count;
+
+    // Add by huangxiaowen, for type-c detect direction, 2017.01.18, start
+	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
+		sysfs_remove_file(&chip->dev->kobj,
+						&attrs[attr_count].attr);
+	}
+    // Add by huangxiaowen, for type-c detect direction, 2017.01.18, end
 
 	if (chip->role_reversal_supported) {
 		cancel_delayed_work_sync(&chip->role_reversal_check);

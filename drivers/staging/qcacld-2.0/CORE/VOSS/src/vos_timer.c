@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, 2015-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013, 2015-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -117,7 +117,6 @@ static void vos_linux_timer_callback (unsigned long data)
    vos_timer_t *timer = ( vos_timer_t *)data;
    vos_msg_t msg;
    VOS_STATUS vStatus;
-   unsigned long flags;
 
    vos_timer_callback_t callback=NULL;
    v_PVOID_t userData=NULL;
@@ -136,7 +135,7 @@ static void vos_linux_timer_callback (unsigned long data)
    }
 
    threadId = timer->platformInfo.threadID;
-   spin_lock_irqsave( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_lock_irqsave( &timer->platformInfo.spinlock);
 
    switch ( timer->state )
    {
@@ -172,7 +171,7 @@ static void vos_linux_timer_callback (unsigned long data)
       break;
    }
 
-   spin_unlock_irqrestore( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_unlock_irqrestore( &timer->platformInfo.spinlock);
 
    if ( VOS_STATUS_SUCCESS != vStatus )
    {
@@ -209,10 +208,10 @@ static void vos_linux_timer_callback (unsigned long data)
       }
       wdthread_timer_work->callback = callback;
       wdthread_timer_work->userdata = userData;
-      spin_lock(&vos_global_context->wdthread_work_lock);
+      adf_os_spin_lock(&vos_global_context->wdthread_work_lock);
       list_add(&wdthread_timer_work->node,
                     &vos_global_context->wdthread_timer_work_list);
-      spin_unlock(&vos_global_context->wdthread_work_lock);
+      adf_os_spin_unlock(&vos_global_context->wdthread_work_lock);
 
       schedule_work(&vos_global_context->wdthread_work);
       return;
@@ -302,7 +301,6 @@ void vos_timer_manager_init()
 static void vos_timer_clean()
 {
     v_SIZE_t listSize;
-    unsigned long flags;
 
     hdd_list_size(&vosTimerList, &listSize);
 
@@ -318,9 +316,9 @@ static void vos_timer_clean()
 
        do
        {
-          spin_lock_irqsave(&vosTimerList.lock, flags);
+          adf_os_spin_lock_irqsave(&vosTimerList.lock);
           vosStatus = hdd_list_remove_front(&vosTimerList, &pNode);
-          spin_unlock_irqrestore(&vosTimerList.lock, flags);
+          adf_os_spin_unlock_irqrestore(&vosTimerList.lock);
           if (VOS_STATUS_SUCCESS == vosStatus)
           {
              ptimerNode = (timer_node_t*)pNode;
@@ -405,7 +403,6 @@ VOS_STATUS vos_timer_init_debug( vos_timer_t *timer, VOS_TIMER_TYPE timerType,
                            char* fileName, v_U32_t lineNum )
 {
    VOS_STATUS vosStatus;
-    unsigned long flags;
    // Check for invalid pointer
    if ((timer == NULL) || (callback == NULL))
    {
@@ -431,9 +428,9 @@ VOS_STATUS vos_timer_init_debug( vos_timer_t *timer, VOS_TIMER_TYPE timerType,
     timer->ptimerNode->lineNum   = lineNum;
     timer->ptimerNode->vosTimer = timer;
 
-    spin_lock_irqsave(&vosTimerList.lock, flags);
+    adf_os_spin_lock_irqsave(&vosTimerList.lock);
     vosStatus = hdd_list_insert_front(&vosTimerList, &timer->ptimerNode->pNode);
-    spin_unlock_irqrestore(&vosTimerList.lock, flags);
+    adf_os_spin_unlock_irqrestore(&vosTimerList.lock);
     if(VOS_STATUS_SUCCESS != vosStatus)
     {
          VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
@@ -442,7 +439,7 @@ VOS_STATUS vos_timer_init_debug( vos_timer_t *timer, VOS_TIMER_TYPE timerType,
 
    // set the various members of the timer structure
    // with arguments passed or with default values
-   spin_lock_init(&timer->platformInfo.spinlock);
+   adf_os_spinlock_init(&timer->platformInfo.spinlock);
    if (VOS_TIMER_TYPE_SW == timerType)
       init_timer_deferrable(&(timer->platformInfo.Timer));
    else
@@ -473,7 +470,7 @@ VOS_STATUS vos_timer_init( vos_timer_t *timer, VOS_TIMER_TYPE timerType,
 
    // set the various members of the timer structure
    // with arguments passed or with default values
-   spin_lock_init(&timer->platformInfo.spinlock);
+   adf_os_spinlock_init(&timer->platformInfo.spinlock);
    if (VOS_TIMER_TYPE_SW == timerType)
       init_timer_deferrable(&(timer->platformInfo.Timer));
    else
@@ -528,7 +525,6 @@ VOS_STATUS vos_timer_init( vos_timer_t *timer, VOS_TIMER_TYPE timerType,
 VOS_STATUS vos_timer_destroy ( vos_timer_t *timer )
 {
    VOS_STATUS vStatus=VOS_STATUS_SUCCESS;
-   unsigned long flags;
 
    // Check for invalid pointer
    if ( NULL == timer )
@@ -548,9 +544,9 @@ VOS_STATUS vos_timer_destroy ( vos_timer_t *timer )
       return VOS_STATUS_E_INVAL;
    }
 
-   spin_lock_irqsave(&vosTimerList.lock, flags);
+   adf_os_spin_lock_irqsave(&vosTimerList.lock);
    vStatus = hdd_list_remove_node(&vosTimerList, &timer->ptimerNode->pNode);
-   spin_unlock_irqrestore(&vosTimerList.lock, flags);
+   adf_os_spin_unlock_irqrestore(&vosTimerList.lock);
    if(vStatus != VOS_STATUS_SUCCESS)
    {
       VOS_ASSERT(0);
@@ -559,7 +555,7 @@ VOS_STATUS vos_timer_destroy ( vos_timer_t *timer )
    vos_mem_free(timer->ptimerNode);
 
 
-   spin_lock_irqsave( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_lock_irqsave( &timer->platformInfo.spinlock);
 
    switch ( timer->state )
    {
@@ -586,11 +582,11 @@ VOS_STATUS vos_timer_destroy ( vos_timer_t *timer )
    {
       timer->platformInfo.cookie = LINUX_INVALID_TIMER_COOKIE;
       timer->state = VOS_TIMER_STATE_UNUSED;
-      spin_unlock_irqrestore( &timer->platformInfo.spinlock,flags );
+      adf_os_spin_unlock_irqrestore( &timer->platformInfo.spinlock);
       return vStatus;
    }
 
-   spin_unlock_irqrestore( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_unlock_irqrestore( &timer->platformInfo.spinlock);
 
 
    VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
@@ -604,7 +600,6 @@ VOS_STATUS vos_timer_destroy ( vos_timer_t *timer )
 VOS_STATUS vos_timer_destroy ( vos_timer_t *timer )
 {
    VOS_STATUS vStatus=VOS_STATUS_SUCCESS;
-   unsigned long flags;
 
    // Check for invalid pointer
    if ( NULL == timer )
@@ -623,7 +618,7 @@ VOS_STATUS vos_timer_destroy ( vos_timer_t *timer )
       VOS_ASSERT(0);
       return VOS_STATUS_E_INVAL;
    }
-   spin_lock_irqsave( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_lock_irqsave( &timer->platformInfo.spinlock);
 
    switch ( timer->state )
    {
@@ -650,11 +645,11 @@ VOS_STATUS vos_timer_destroy ( vos_timer_t *timer )
    {
       timer->platformInfo.cookie = LINUX_INVALID_TIMER_COOKIE;
       timer->state = VOS_TIMER_STATE_UNUSED;
-      spin_unlock_irqrestore( &timer->platformInfo.spinlock,flags );
+      adf_os_spin_unlock_irqrestore( &timer->platformInfo.spinlock);
       return vStatus;
    }
 
-   spin_unlock_irqrestore( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_unlock_irqrestore( &timer->platformInfo.spinlock);
 
    VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
              "%s: Cannot destroy timer in state = %d",__func__, timer->state);
@@ -694,7 +689,6 @@ VOS_STATUS vos_timer_destroy ( vos_timer_t *timer )
   -------------------------------------------------------------------------*/
 VOS_STATUS vos_timer_start( vos_timer_t *timer, v_U32_t expirationTime )
 {
-   unsigned long flags;
 
    VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO_HIGH,
              "Timer Addr inside voss_start : 0x%pK ", timer );
@@ -728,12 +722,12 @@ VOS_STATUS vos_timer_start( vos_timer_t *timer, v_U32_t expirationTime )
    }
 
    // make sure the remainer of the logic isn't interrupted
-   spin_lock_irqsave( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_lock_irqsave( &timer->platformInfo.spinlock);
 
    // Ensure if the timer can be started
    if ( VOS_TIMER_STATE_STOPPED != timer->state )
    {
-      spin_unlock_irqrestore( &timer->platformInfo.spinlock,flags );
+      adf_os_spin_unlock_irqrestore( &timer->platformInfo.spinlock);
       VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO_HIGH,
                 "%s: Cannot start timer in state = %d ",__func__, timer->state);
       return VOS_STATUS_E_ALREADY;
@@ -758,7 +752,7 @@ VOS_STATUS vos_timer_start( vos_timer_t *timer, v_U32_t expirationTime )
       }
    }
 
-   spin_unlock_irqrestore( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_unlock_irqrestore( &timer->platformInfo.spinlock);
 
    return VOS_STATUS_SUCCESS;
 }
@@ -786,8 +780,6 @@ VOS_STATUS vos_timer_start( vos_timer_t *timer, v_U32_t expirationTime )
   ------------------------------------------------------------------------*/
 VOS_STATUS vos_timer_stop ( vos_timer_t *timer )
 {
-   unsigned long flags;
-
    VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO_HIGH,
                "%s: Timer Addr inside voss_stop : 0x%pK",__func__,timer );
 
@@ -810,11 +802,11 @@ VOS_STATUS vos_timer_stop ( vos_timer_t *timer )
    }
 
    // Ensure the timer state is correct
-   spin_lock_irqsave( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_lock_irqsave( &timer->platformInfo.spinlock);
 
    if ( VOS_TIMER_STATE_RUNNING != timer->state )
    {
-      spin_unlock_irqrestore( &timer->platformInfo.spinlock,flags );
+      adf_os_spin_unlock_irqrestore( &timer->platformInfo.spinlock);
       VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO_HIGH,
                 "%s: Cannot stop timer in state = %d",
                 __func__, timer->state);
@@ -825,7 +817,7 @@ VOS_STATUS vos_timer_stop ( vos_timer_t *timer )
 
    del_timer(&(timer->platformInfo.Timer));
 
-   spin_unlock_irqrestore( &timer->platformInfo.spinlock,flags );
+   adf_os_spin_unlock_irqrestore( &timer->platformInfo.spinlock);
 
    tryAllowingSleep( timer->type );
 
@@ -929,7 +921,7 @@ void vos_wdthread_init_timer_work(void *callbackptr)
 		return;
 	}
 
-	spin_lock_init(&context->wdthread_work_lock);
+	adf_os_spinlock_init(&context->wdthread_work_lock);
 	INIT_LIST_HEAD(&context->wdthread_timer_work_list);
 	vos_init_work(&context->wdthread_work, callbackptr);
 }
@@ -977,23 +969,21 @@ static void __vos_process_wd_timer(void)
 
 	vos_global_context = (pVosContextType)vos_context;
 
-	spin_lock(&vos_global_context->wdthread_work_lock);
+	adf_os_spin_lock(&vos_global_context->wdthread_work_lock);
 	list_for_each_safe(pos, next,
 			&vos_global_context->wdthread_timer_work_list) {
 		wdthread_timer_work = list_entry(pos,
 						struct vos_wdthread_timer_work,
 						node);
 		list_del(pos);
-		spin_unlock(&vos_global_context->wdthread_work_lock);
-		if ((NULL != wdthread_timer_work->callback) &&
-		    (NULL != wdthread_timer_work->userdata)) {
+		adf_os_spin_unlock(&vos_global_context->wdthread_work_lock);
+		if (NULL != wdthread_timer_work->callback)
 			wdthread_timer_work->callback(
 				wdthread_timer_work->userdata);
-		}
 		vos_mem_free(wdthread_timer_work);
-		spin_lock(&vos_global_context->wdthread_work_lock);
+		adf_os_spin_lock(&vos_global_context->wdthread_work_lock);
 	}
-	spin_unlock(&vos_global_context->wdthread_work_lock);
+	adf_os_spin_unlock(&vos_global_context->wdthread_work_lock);
 
 	return;
 }
@@ -1009,4 +999,42 @@ void vos_process_wd_timer(void)
 	vos_ssr_protect(__func__);
 	__vos_process_wd_timer();
 	vos_ssr_unprotect(__func__);
+}
+
+/*--------------------------------------------------------------------------
+
+  \brief vos_timer_deinit() - De-init a vOSS Timer
+
+  The \a vos_timer_deinit() function stop (if the timer is in running state)
+  and destroy a timer.
+
+  \param timer - the timer object to be stopped
+
+  \return VOS_STATUS_SUCCESS - timer was successfully de-initialized.
+
+          VOS_STATUS_E_INVAL - The value specified by timer is invalid.
+
+          VOS_STATUS_E_FAULT  - timer is an invalid pointer.
+  \sa
+
+  ------------------------------------------------------------------------*/
+VOS_STATUS vos_timer_deinit(vos_timer_t *timer)
+{
+	VOS_TIMER_STATE vos_timer_state;
+	VOS_STATUS status = VOS_STATUS_SUCCESS;
+
+	if (!timer)
+		return VOS_STATUS_E_FAULT;
+
+	vos_timer_state = vos_timer_getCurrentState(timer);
+	if (VOS_TIMER_STATE_UNUSED == vos_timer_state)
+		return VOS_STATUS_SUCCESS;
+
+	if (VOS_TIMER_STATE_RUNNING == vos_timer_state)
+		status = vos_timer_stop(timer);
+
+	if (VOS_IS_STATUS_SUCCESS(status))
+		status = vos_timer_destroy(timer);
+
+	return status;
 }

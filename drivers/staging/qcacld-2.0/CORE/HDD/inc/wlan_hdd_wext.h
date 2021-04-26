@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -146,7 +146,7 @@ typedef enum
 } hdd_wlan_wmm_ts_info_ack_policy_e;
 
 /** Maximum Length of WPA/RSN IE */
-#define MAX_WPA_RSN_IE_LEN 40
+#define MAX_WPA_RSN_IE_LEN 255
 
 /** Maximum Number of WEP KEYS */
 #define MAX_WEP_KEYS 4
@@ -257,6 +257,8 @@ typedef enum
  * TSF_GET_FAIL:                 get fail
  * TSF_RESET_GPIO_FAIL:          GPIO reset fail
  * TSF_SAP_NOT_STARTED_NO_TSF    SAP not started
+ * TSF_NOT_READY: TSF module is not initialized or init failed
+ * TSF_DISABLED_BY_TSFPLUS: cap_tsf/get_tsf are disabled due to TSF_PLUS
  */
 enum hdd_tsf_get_state {
 	TSF_RETURN = 0,
@@ -266,7 +268,9 @@ enum hdd_tsf_get_state {
 	TSF_CAPTURE_FAIL,
 	TSF_GET_FAIL,
 	TSF_RESET_GPIO_FAIL,
-	TSF_SAP_NOT_STARTED_NO_TSF
+	TSF_SAP_NOT_STARTED_NO_TSF,
+	TSF_NOT_READY,
+	TSF_DISABLED_BY_TSFPLUS
 };
 
 /**
@@ -341,6 +345,10 @@ typedef struct ccp_freq_chan_map_s{
     v_U32_t freq;
     v_U32_t chan;
 }hdd_freq_chan_map_t;
+
+struct temperature_info {
+	int temperature;
+};
 
 #define wlan_hdd_get_wps_ie_ptr(ie, ie_len) \
     wlan_hdd_get_vendor_oui_ie_ptr(WPS_OUI_TYPE, WPS_OUI_TYPE_SIZE, ie, ie_len)
@@ -423,8 +431,6 @@ extern void *mem_alloc_copy_from_user_helper(const void *wrqu_data, size_t len);
 extern VOS_STATUS wlan_hdd_get_linkspeed_for_peermac(hdd_adapter_t *pAdapter,
                                                      tSirMacAddr macAddress);
 void hdd_clearRoamProfileIe( hdd_adapter_t *pAdapter);
-void hdd_GetClassA_statisticsCB(void *pStats, void *pContext);
-void hdd_GetLink_SpeedCB(tSirLinkSpeedInfo *pLinkSpeed, void *pContext);
 
 VOS_STATUS wlan_hdd_check_ula_done(hdd_adapter_t *pAdapter);
 
@@ -466,6 +472,17 @@ void* wlan_hdd_change_country_code_callback(void *pAdapter);
 
 VOS_STATUS  wlan_hdd_set_powersave(hdd_adapter_t *pAdapter, int mode);
 
+/**
+ * wlan_hdd_process_tdcc_ps() - To process set_ps_tdcc command
+ * @adapter: adapter handle
+ * @enable: 1 enable, 0 disable
+ * @percentage: percentage of tx duty cycle control
+ *
+ * Return: 0 if success, otherwise error code
+ */
+int
+wlan_hdd_process_tdcc_ps(hdd_adapter_t *adapter, int enable, int percentage);
+
 int hdd_setBand(struct net_device *dev, u8 ui_band);
 int hdd_setBand_helper(struct net_device *dev, const char *command);
 int wlan_hdd_update_phymode(struct net_device *net, tHalHandle hal,
@@ -475,7 +492,7 @@ int wlan_hdd_update_phymode(struct net_device *net, tHalHandle hal,
 int process_wma_set_command_twoargs(int sessid, int paramid,
                                     int sval, int ssecval, int vpdev);
 
-void hdd_GetTemperatureCB(int temperature, void *pContext);
-VOS_STATUS wlan_hdd_get_temperature(hdd_adapter_t *pAdapter,
+void hdd_GetTemperatureCB(int temperature, void *cookie);
+VOS_STATUS wlan_hdd_get_temperature(hdd_adapter_t *adapter_ptr,
         union iwreq_data *wrqu, char *extra);
 #endif // __WEXT_IW_H__

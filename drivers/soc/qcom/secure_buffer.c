@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011 Google, Inc
- * Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -155,7 +155,8 @@ static int secure_buffer_change_table(struct sg_table *table, int lock)
 		 * secure environment to ensure the data is actually present
 		 * in RAM
 		 */
-		dmac_flush_range(chunk_list, chunk_list + chunk_list_len);
+		dmac_flush_range(chunk_list,
+			(void *)chunk_list + chunk_list_len);
 
 		ret = secure_buffer_change_chunk(virt_to_phys(chunk_list),
 				nchunks, V2_CHUNK_SIZE, lock);
@@ -324,28 +325,19 @@ int hyp_assign_phys(phys_addr_t addr, u64 size, u32 *source_vm_list,
 			int source_nelems, int *dest_vmids,
 			int *dest_perms, int dest_nelems)
 {
-	struct sg_table *table;
+	struct sg_table table;
 	int ret;
 
-	table = kzalloc(sizeof(struct sg_table), GFP_KERNEL);
-	if (!table)
-		return -ENOMEM;
-	ret = sg_alloc_table(table, 1, GFP_KERNEL);
+	ret = sg_alloc_table(&table, 1, GFP_KERNEL);
 	if (ret)
-		goto err1;
+		return ret;
 
-	sg_set_page(table->sgl, phys_to_page(addr), size, 0);
+	sg_set_page(table.sgl, phys_to_page(addr), size, 0);
 
-	ret = hyp_assign_table(table, source_vm_list, source_nelems, dest_vmids,
-						dest_perms, dest_nelems);
-	if (ret)
-		goto err2;
+	ret = hyp_assign_table(&table, source_vm_list, source_nelems,
+			       dest_vmids, dest_perms, dest_nelems);
 
-	return ret;
-err2:
-	sg_free_table(table);
-err1:
-	kfree(table);
+	sg_free_table(&table);
 	return ret;
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -314,6 +314,7 @@ typedef struct
     tANI_U8  nonRoamReassoc;
     uint32_t nss; /* Number of spatial streams supported */
     tANI_U8  max_amsdu_num;
+    uint8_t  channelwidth;
 } tAddStaParams, *tpAddStaParams;
 
 
@@ -545,6 +546,7 @@ typedef struct
     uint32_t tx_aggregation_size;
     uint32_t rx_aggregation_size;
     uint16_t beacon_tx_rate;
+    uint8_t  channelwidth;
 } tAddBssParams, * tpAddBssParams;
 
 typedef struct
@@ -958,24 +960,6 @@ typedef struct
 
 #endif
 
-//HAL MSG: SIR_HAL_UPDATE_CF_IND
-typedef struct
-{
-
-    tANI_U8  bssIdx;
-
-    /*
-    * cfpCount indicates how many DTIMs (including the current frame) appear before the next CFP start.
-    * A CFPCount of 0 indicates that the current DTIM marks the start of the CFP.
-    */
-    tANI_U8  cfpCount;
-
-    /* cfpPeriod indicates the number of DTIM intervals between the start of CFPs. */
-    tANI_U8 cfpPeriod;
-
-}tUpdateCFParams, *tpUpdateCFParams;
-
-
 
 //HAL MSG: SIR_HAL_UPDATE_DTIM_IND
 //This message not required, as Softmac is supposed to read these values from the beacon.
@@ -1023,6 +1007,8 @@ typedef struct
      * by way of ignoring if using new host/old FW or old host/new FW since it is at the end of this struct
      */
     tSirMacAddr bssId;
+    uint8_t ssidHidden;
+    tSirMacSSid ssid;
 
     eHalStatus status;
 
@@ -1037,6 +1023,11 @@ typedef struct
     tANI_U8  dot11_mode;
 
     uint8_t restart_on_chan_switch;
+
+    uint32_t channelwidth;
+
+    uint16_t reduced_beacon_interval;
+    uint16_t beacon_tx_rate;
 }tSwitchChannelParams, *tpSwitchChannelParams;
 
 typedef struct CSAOffloadParams {
@@ -1047,8 +1038,12 @@ typedef struct CSAOffloadParams {
    tANI_U8 new_op_class;       /* New operating class */
    tANI_U8 new_ch_freq_seg1;   /* Channel Center frequency 1 */
    tANI_U8 new_ch_freq_seg2;   /* Channel Center frequency 2 */
+   tANI_U8 new_sub20_channelwidth;  /* 5MHz or 10Mhz channel width */
    tANI_U32 ies_present_flag;   /* WMI_CSA_EVENT_IES_PRESENT_FLAG */
    tSirMacAddr bssId;
+#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+   tANI_U32 csa_tbtt_count;
+#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
 }*tpCSAOffloadParams, tCSAOffloadParams;
 
 typedef void (*tpSetLinkStateCallback)(tpAniSirGlobal pMac, void *msgParam,
@@ -1303,6 +1298,15 @@ typedef struct sAddStaSelfParams
    uint8_t         nss_5g;
    uint32_t        tx_aggregation_size;
    uint32_t        rx_aggregation_size;
+   uint32_t tx_aggr_sw_retry_threshhold_be;
+   uint32_t tx_aggr_sw_retry_threshhold_bk;
+   uint32_t tx_aggr_sw_retry_threshhold_vi;
+   uint32_t tx_aggr_sw_retry_threshhold_vo;
+   uint32_t tx_non_aggr_sw_retry_threshhold_be;
+   uint32_t tx_non_aggr_sw_retry_threshhold_bk;
+   uint32_t tx_non_aggr_sw_retry_threshhold_vi;
+   uint32_t tx_non_aggr_sw_retry_threshhold_vo;
+   bool            enable_bcast_probe_rsp;
 }tAddStaSelfParams, *tpAddStaSelfParams;
 
 /**
@@ -1507,4 +1511,69 @@ struct hal_apfind_request
 };
 #endif
 
+struct hal_mnt_filter_type_request
+{
+    u_int32_t vdev_id;
+    u_int16_t request_data_len;
+    u_int8_t  request_data[];
+};
+
+struct hal_thermal_mgmt_cmd_params
+{
+    tANI_U16 min_temp;
+    tANI_U16 max_temp;
+    tANI_U8 enable;
+};
+
+/**
+ * @struct hal_tt_level_config - Set Thermal throttlling config
+ * @tmplwm: Temperature low water mark
+ * @tmphwm: Temperature high water mark
+ * @dcoffpercent: dc off percentage
+ * @priority: priority
+ */
+typedef struct
+{
+    uint32_t tmplwm;
+    uint32_t tmphwm;
+    uint32_t dcoffpercent;
+    uint32_t priority;
+} hal_tt_level_config;
+
+/**
+ * struct hal_thermal_mitigation_params - Thermal mitigation params
+ * @enable: Enable/Disable Thermal mitigation
+ * @dc: DC
+ * @dc_per_event: DC per event
+ * @tt_level_config: TT level config params
+ */
+struct hal_thermal_mitigation_params
+{
+    tANI_U32 pdev_id;
+    bool enable;
+    tANI_U32 dc;
+    tANI_U32 dc_per_event;
+    hal_tt_level_config level_conf[WLAN_WMA_MAX_THERMAL_LEVELS];
+};
+
+struct hal_hpcs_pulse_params
+{
+    tANI_U32 vdev_id;
+    tANI_U32 start;
+    tANI_U32 sync_time;
+    tANI_U32 pulse_interval;
+    tANI_U32 active_sync_period;
+    tANI_U32 gpio_pin;
+    tANI_U32 pulse_width;
+};
+
+/**
+ * strcut hal_primary_params - Set primary peer
+ * @vdev_id: Vdev ID
+ * @bssid: MAC address for the primary peer
+ */
+struct hal_primary_params {
+	uint8_t session_id;
+	tSirMacAddr bssid;
+};
 #endif /* _HALMSGAPI_H_ */

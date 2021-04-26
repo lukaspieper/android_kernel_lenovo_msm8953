@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2014 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2002-2014,2016-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -201,7 +201,7 @@ dfs_process_phyerr_owl(struct ath_dfs *dfs, void *buf, u_int16_t datalen,
     */
    if (rssi == 0 && dur == 0) {
       dfs->ath_dfs_stats.datalen_discards++;
-      return 0;
+      return (0);
    }
 
    /*
@@ -861,6 +861,8 @@ dfs_process_phyerr(struct ieee80211com *ic, void *buf, u_int16_t datalen,
          event->re_ts = (e.rs_tstamp) & DFS_TSMASK;
          event->re_rssi = e.rssi;
          event->sidx = e.sidx;
+         event->re_delta_diff = e.pulse_delta_diff;
+         event->re_delta_peak = e.pulse_delta_peak;
 
          /*
           * Handle chirp flags.
@@ -920,5 +922,13 @@ dfs_process_phyerr(struct ieee80211com *ic, void *buf, u_int16_t datalen,
 #undef   EXT_CH_RADAR_FOUND
 #undef   PRI_CH_RADAR_FOUND
 #undef   EXT_CH_RADAR_EARLY_FOUND
+}
+#else
+void
+dfs_process_phyerr(struct ieee80211com *ic, void *buf,
+				   u_int16_t datalen, u_int8_t r_rssi,
+				   u_int8_t r_ext_rssi, u_int32_t r_rs_tstamp,
+				   u_int64_t r_fulltsf, bool enable_log)
+{
 }
 #endif /* ATH_SUPPORT_DFS */

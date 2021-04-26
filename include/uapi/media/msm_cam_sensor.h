@@ -1,6 +1,10 @@
 #ifndef __UAPI_LINUX_MSM_CAM_SENSOR_H
 #define __UAPI_LINUX_MSM_CAM_SENSOR_H
 
+#ifdef CONFIG_LENOVO_DIR_CAMERA
+#include <uapi/media/msm_cam_sensor_lenovo.h>
+#else
+
 #include <linux/v4l2-mediabus.h>
 #include <media/msm_camsensor_sdk.h>
 
@@ -83,8 +87,10 @@ enum sensor_sub_module_t {
 	SUB_MODULE_CSIPHY_3D,
 	SUB_MODULE_OIS,
 	SUB_MODULE_EXT,
+#if !defined(CONFIG_MACH_LENOVO_TB8703)
 	SUB_MODULE_IR_LED,
 	SUB_MODULE_IR_CUT,
+#endif
 	SUB_MODULE_MAX,
 };
 
@@ -302,7 +308,7 @@ struct msm_eeprom_cfg_data {
 	enum eeprom_cfg_type_t cfgtype;
 	uint8_t is_supported;
 	union {
-		char eeprom_name[MAX_EEPROM_NAME];
+		char eeprom_name[MAX_SENSOR_NAME];
 		struct eeprom_get_t get_data;
 		struct eeprom_read_t read_data;
 		struct eeprom_write_t write_data;
@@ -598,11 +604,15 @@ struct sensor_init_cfg_data {
 #define VIDIOC_MSM_OIS_CFG_DOWNLOAD \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 14, struct msm_ois_cfg_download_data)
 
+#if !defined(CONFIG_MACH_LENOVO_TB8703)
 #define VIDIOC_MSM_IR_LED_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 15, struct msm_ir_led_cfg_data_t)
 
 #define VIDIOC_MSM_IR_CUT_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 15, struct msm_ir_cut_cfg_data_t)
+#endif
+
+#endif
 
 #endif
 

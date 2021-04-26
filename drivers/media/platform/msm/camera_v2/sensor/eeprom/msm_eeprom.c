@@ -10,6 +10,7 @@
  * GNU General Public License for more details.
  */
 
+
 #include <linux/module.h>
 #include <linux/of_gpio.h>
 #include <linux/delay.h>
@@ -20,20 +21,22 @@
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
-int8_t module_id;
+
+#if defined(CONFIG_MACH_LENOVO_TB8703) || defined(CONFIG_MACH_LENOVO_TBX704) || defined (CONFIG_MACH_LENOVO_TB8704) ||defined (CONFIG_MACH_LENOVO_TB8804) || defined (CONFIG_MACH_LENOVO_TB8504)
+struct vendor_eeprom s_vendor_eeprom[CAMERA_VENDOR_EEPROM_COUNT_MAX];
+#endif
+
 DEFINE_MSM_MUTEX(msm_eeprom_mutex);
 #ifdef CONFIG_COMPAT
 static struct v4l2_file_operations msm_eeprom_v4l2_subdev_fops;
 #endif
 
-int lsc_group_avail = -1;
 /**
   * msm_get_read_mem_size - Get the total size for allocation
   * @eeprom_map_array:	mem map
   *
   * Returns size after computation size, returns error in case of error
   */
-
 static int msm_get_read_mem_size
 	(struct msm_eeprom_memory_map_array *eeprom_map_array) {
 	int size = 0, i, j;
@@ -149,7 +152,7 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 	struct msm_eeprom_memory_block_t *block)
 {
 	int rc = 0;
-	int j;
+	int j, otp_idx;
 	struct msm_eeprom_memory_map_t *emap = block->map;
 	struct msm_eeprom_board_info *eb_info;
 	uint8_t *memptr = block->mapdata;
@@ -168,13 +171,18 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 					eb_info->i2c_slaveaddr >> 1;
 			pr_err("qcom,slave-addr = 0x%X\n",
 				eb_info->i2c_slaveaddr);
+			printk("<3>""%s:qcom,slave-addr = 0x%X \n", __func__, eb_info->i2c_slaveaddr);
+
 		}
+
 		if (emap[j].page.valid_size) {
 			e_ctrl->i2c_client.addr_type = emap[j].page.addr_t;
 			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
 				&(e_ctrl->i2c_client), emap[j].page.addr,
 				emap[j].page.data, emap[j].page.data_t);
 				msleep(emap[j].page.delay);
+			printk("<3>""%s:reg_addr 0x%x data 0x%x delay %d \n", __func__,
+					emap[j].page.addr, emap[j].page.data, emap[j].page.delay);
 			if (rc < 0) {
 				pr_err("%s: page write failed\n", __func__);
 				return rc;
@@ -205,16 +213,24 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 
 		if (emap[j].mem.valid_size) {
 			e_ctrl->i2c_client.addr_type = emap[j].mem.addr_t;
+			printk("<3>""%s:read data size %d \n", __func__, emap[j].mem.valid_size);
 			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
 				&(e_ctrl->i2c_client), emap[j].mem.addr,
 				memptr, emap[j].mem.valid_size);
+				memptr += emap[j].mem.valid_size;
+			for (otp_idx = 0; otp_idx < emap[j].mem.valid_size; otp_idx = otp_idx+8) {
+				printk("<3>""%s:read otp data: 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n", __func__,
+						block->mapdata[otp_idx], block->mapdata[otp_idx+1], block->mapdata[otp_idx+2],
+						block->mapdata[otp_idx+3], block->mapdata[otp_idx+4], block->mapdata[otp_idx+5],
+						block->mapdata[otp_idx+6], block->mapdata[otp_idx+7]);
+			}
+			printk("<3>""%s:seg1_flag 0x%x seg2_flag 0x%x seg3_flag 0x%x \n", __func__,
+					block->mapdata[0], block->mapdata[52], block->mapdata[143]);
 			if (rc < 0) {
 				pr_err("%s: read failed\n", __func__);
 				return rc;
 			}
-			memptr += emap[j].mem.valid_size;
 		}
-           
 		if (emap[j].pageen.valid_size) {
 			e_ctrl->i2c_client.addr_type = emap[j].pageen.addr_t;
 			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
@@ -225,12 +241,6 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 				return rc;
 			}
 		}
-	}
-	if((*(block->mapdata + 63) & 0x40) == 1){
-		lsc_group_avail = 0;		
-	}
-	if((*(block->mapdata + 63) & 0x10) == 1){
-        	lsc_group_avail = 2;          
 	}
 	return rc;
 }
@@ -250,6 +260,7 @@ static int msm_eeprom_parse_memory_map(struct device_node *of,
 	char property[PROPERTY_MAXSIZE];
 	uint32_t count = 6;
 	struct msm_eeprom_memory_map_t *map;
+
 	snprintf(property, PROPERTY_MAXSIZE, "qcom,num-blocks");
 	rc = of_property_read_u32(of, property, &data->num_map);
 	CDBG("%s: %s %d\n", __func__, property, data->num_map);
@@ -307,6 +318,7 @@ static int msm_eeprom_parse_memory_map(struct device_node *of,
 	}
 
 	CDBG("%s num_bytes %d\n", __func__, data->num_data);
+
 	data->mapdata = kzalloc(data->num_data, GFP_KERNEL);
 	if (!data->mapdata) {
 		rc = -ENOMEM;
@@ -334,6 +346,7 @@ static int eeprom_parse_memory_map(struct msm_eeprom_ctrl_t *e_ctrl,
 	int rc =  0, i, j;
 	uint8_t *memptr;
 	struct msm_eeprom_mem_map_t *eeprom_map;
+
 	e_ctrl->cal_data.mapdata = NULL;
 	e_ctrl->cal_data.num_data = msm_get_read_mem_size(eeprom_map_array);
 	if (e_ctrl->cal_data.num_data <= 0) {
@@ -420,7 +433,7 @@ static int eeprom_parse_memory_map(struct msm_eeprom_ctrl_t *e_ctrl,
 	}
 	memptr = e_ctrl->cal_data.mapdata;
 	for (i = 0; i < e_ctrl->cal_data.num_data; i++)
-		pr_err("sbing_memory_data[%d] = 0x%X\n", i, memptr[i]);
+		CDBG("memory_data[%d] = 0x%X\n", i, memptr[i]);
 	return rc;
 
 clean_up:
@@ -440,6 +453,7 @@ clean_up:
 static int msm_eeprom_power_up(struct msm_eeprom_ctrl_t *e_ctrl,
 	struct msm_camera_power_ctrl_t *power_info) {
 	int32_t rc = 0;
+
 	rc = msm_camera_fill_vreg_params(
 		power_info->cam_vreg, power_info->num_vreg,
 		power_info->power_setting, power_info->power_setting_size);
@@ -507,7 +521,7 @@ static int eeprom_init_config(struct msm_eeprom_ctrl_t *e_ctrl,
 			__func__, __LINE__);
 		goto free_mem;
 	}
-	pr_err("%s:%d Size of power setting array: %d\n",
+	CDBG("%s:%d Size of power setting array: %d\n",
 		__func__, __LINE__, power_setting_array->size);
 	if (copy_from_user(memory_map_arr,
 		cdata->cfg.eeprom_info.mem_map_array,
@@ -607,8 +621,7 @@ static int eeprom_config_read_cal_data(struct msm_eeprom_ctrl_t *e_ctrl,
 			cdata->cfg.read_data.num_bytes);
 		return -EINVAL;
 	}
-     
-        pr_err("%s, -----AABB---", __func__);
+
 	rc = copy_to_user(cdata->cfg.read_data.dbuffer,
 		e_ctrl->cal_data.mapdata,
 		cdata->cfg.read_data.num_bytes);
@@ -623,7 +636,7 @@ static int msm_eeprom_config(struct msm_eeprom_ctrl_t *e_ctrl,
 		(struct msm_eeprom_cfg_data *)argp;
 	int rc = 0;
 	size_t length = 0;
-        pr_err("%s, ------SSQQ-----", __func__);
+
 	CDBG("%s E\n", __func__);
 	switch (cdata->cfgtype) {
 	case CFG_EEPROM_GET_INFO:
@@ -662,7 +675,13 @@ static int msm_eeprom_config(struct msm_eeprom_ctrl_t *e_ctrl,
 		if (e_ctrl->userspace_probe == 0) {
 			pr_err("%s:%d Eeprom already probed at kernel boot",
 				__func__, __LINE__);
+#if defined(CONFIG_MACH_LENOVO_TB8703) || defined(CONFIG_MACH_LENOVO_TBX704)
+			rc = 0;
+#elif defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8804) || defined(CONFIG_MACH_LENOVO_TB8504)
+			rc = -EALREADY;//return a special errno tell user space eeprom has already probed at kernel boot
+#else
 			rc = -EINVAL;
+#endif
 			break;
 		}
 		if (e_ctrl->cal_data.num_data == 0) {
@@ -700,6 +719,221 @@ static int msm_eeprom_get_subdev_id(struct msm_eeprom_ctrl_t *e_ctrl,
 	return 0;
 }
 
+#if defined(CONFIG_MACH_LENOVO_TB8703) || defined(CONFIG_MACH_LENOVO_TBX704) || defined (CONFIG_MACH_LENOVO_TB8704) || defined (CONFIG_MACH_LENOVO_TB8804) || defined (CONFIG_MACH_LENOVO_TB8504)
+//lct.huk added for eeprom check id begin 20160523
+
+static int qtech_f5695ak_get_group_index(uint8_t mid)
+{
+  int8_t group_index = -1 ;
+  mid = mid & 0xFC ;
+  if((mid&0xC0) == 0x40){
+    group_index = 0 ;
+  }else if((mid&0x30) == 0x10){
+    group_index = 1 ;
+  }else if((mid&0x0C) == 0x04){
+    group_index = 2 ;
+  }else{
+    group_index = -1 ;
+  }
+  CDBG("%s:group_index:%d",__func__,group_index);
+  return group_index ;
+}
+
+static camera_vendor_module_id ov5695_get_otp_vendor_module_id(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	uint8_t mid = 0;
+	uint8_t Flag = 0;
+	uint8_t PageSize = 5;
+	uint8_t *buffer = e_ctrl->cal_data.mapdata;
+
+	Flag = qtech_f5695ak_get_group_index(buffer[0]);
+	CDBG("Lucas: buffer[0]= %d Flag = %d \n",buffer[0],Flag);
+
+	if(Flag != -1)
+	{
+		mid = buffer[1+PageSize*Flag];
+		switch(mid){
+			case MID_QTECH:
+				CDBG("It is QTECH model");
+				break;
+			case MID_AVC:
+				CDBG("It is MID_AVC model");
+				break;
+			case MID_LITEARRAY:
+				CDBG("It is MID_LITEARRAY model");
+				break;
+			default:
+				pr_err("It is not suport model");
+				break;
+		}
+	}
+	return mid;
+
+}
+
+static camera_vendor_module_id ov8856_ofilm_get_otp_vendor_module_id(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	uint8_t MID_FLAG_OFFSET = 0x00;
+	uint8_t MODULE_INFO_OFFSET = MID_FLAG_OFFSET+1;//please reference the otp spec.
+	uint8_t OTP_MODULE_INFO_GROUP_SIZE = (0x7019-0x7011);
+	uint8_t mid=0;
+	uint8_t flag=0;
+	uint8_t *buffer = e_ctrl->cal_data.mapdata;
+	bool rc = false;
+
+	flag = buffer[MID_FLAG_OFFSET];
+
+	if((flag&0xC0) == 0x40){
+		mid = buffer[MODULE_INFO_OFFSET];
+		rc = (mid==MID_OFILM) ? true : false;
+	}else if((flag&0x30) == 0x10){
+		mid = buffer[MODULE_INFO_OFFSET + OTP_MODULE_INFO_GROUP_SIZE];
+		rc = (mid==MID_OFILM) ? true : false;
+	}else
+		rc = false;
+	printk("%s mid=0x%x, flag=0x%x\n", __func__, mid, flag);
+
+	if(rc==false) mid = MID_NULL;
+	return mid;
+
+}
+
+
+static camera_vendor_module_id imx219_qtech_get_otp_vendor_module_id(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	uint8_t MID_FLAG_OFFSET = 0x00;
+	uint8_t MODULE_INFO_OFFSET = MID_FLAG_OFFSET+1;//please reference the otp spec.
+	uint8_t OTP_MODULE_INFO_GROUP_SIZE = (0x3211-0x3205);
+	uint8_t mid=0;
+	uint8_t flag=0;
+	uint8_t *buffer = e_ctrl->cal_data.mapdata;
+	bool rc = false;
+
+	flag = buffer[MID_FLAG_OFFSET];
+	if((flag&0xC0) == 0x40){
+		mid = buffer[MODULE_INFO_OFFSET];
+		rc = (mid==MID_QTECH) ? true : false;
+	}else if((flag&0x30) == 0x10){
+		mid = buffer[MODULE_INFO_OFFSET + OTP_MODULE_INFO_GROUP_SIZE];
+		rc = (mid==MID_QTECH) ? true : false;
+	}else
+		rc = false;
+	CDBG("%s mid=0x%x, flag=0x%x\n", __func__, mid, flag);
+
+	if(rc==false) mid = MID_NULL;
+	return mid;
+}
+
+static camera_vendor_module_id imx219_ofilm_get_otp_vendor_module_id(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	uint8_t MID_FLAG_OFFSET = 0x00;
+	uint8_t MODULE_INFO_OFFSET = MID_FLAG_OFFSET+1;//please reference the otp spec.
+	uint8_t IMX219_PAGE_SIZE= (0x3211-0x3205);
+	uint8_t mid=0;
+	uint8_t flag=0;
+	uint8_t *buffer = e_ctrl->cal_data.mapdata;
+	bool rc = false;
+	flag = buffer[MID_FLAG_OFFSET];
+	if((flag&0xC0) == 0x40){
+		mid = buffer[MODULE_INFO_OFFSET];
+		rc = (mid==MID_OFILM) ? true : false;
+	}
+	else if((flag&0x30) == 0x10){
+		mid = buffer[MODULE_INFO_OFFSET + IMX219_PAGE_SIZE];
+		rc = (mid==MID_OFILM) ? true : false;
+	}else
+		rc = false;
+	CDBG("%s mid=0x%x, flag=0x%x\n", __func__, mid, flag);
+
+	if(rc==false) mid = MID_NULL;
+	return mid;
+}
+
+static camera_vendor_module_id qtech_ov5695_get_otp_vendor_module_id(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	uint8_t MID_FLAG_OFFSET = 0x00;
+	uint8_t MODULE_INFO_OFFSET = MID_FLAG_OFFSET+1;//please reference the otp spec.
+	uint8_t OTP_MODULE_INFO_GROUP_SIZE = 7;
+	uint8_t mid=0;
+	uint8_t flag=0;
+	uint8_t *buffer = e_ctrl->cal_data.mapdata;
+	bool rc = false;
+
+	flag = buffer[MID_FLAG_OFFSET];
+	if((flag&0xC0) == 0x40){
+		mid = buffer[MODULE_INFO_OFFSET];
+		rc = (mid==MID_QTECH) ? true : false;
+	}else if((flag&0x0C) == 0x04){
+		mid = buffer[MODULE_INFO_OFFSET + OTP_MODULE_INFO_GROUP_SIZE];
+		rc = (mid==MID_QTECH) ? true : false;
+	}else
+		rc = false;
+	CDBG("%s mid=0x%x, flag=0x%x\n", __func__, mid, flag);
+
+	if(rc==false) mid = MID_NULL;
+	return mid;
+}
+
+static camera_vendor_module_id sunny_ov5695_get_otp_vendor_module_id(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	uint8_t MID_FLAG_OFFSET = 0x00;
+	uint8_t MODULE_INFO_OFFSET = MID_FLAG_OFFSET+1;//please reference the otp spec.
+	uint8_t OTP_MODULE_INFO_GROUP_SIZE = 7;
+	uint8_t mid=0;
+	uint8_t flag=0;
+	uint8_t *buffer = e_ctrl->cal_data.mapdata;
+	bool rc = false;
+
+	flag = buffer[MID_FLAG_OFFSET];
+	if((flag&0xC0) == 0x40){
+		mid = buffer[MODULE_INFO_OFFSET];
+		rc = (mid==MID_SUNNY) ? true : false;
+	}else if((flag&0x0C) == 0x04){
+		mid = buffer[MODULE_INFO_OFFSET + OTP_MODULE_INFO_GROUP_SIZE];
+		rc = (mid==MID_SUNNY) ? true : false;
+	}else
+		rc = false;
+	CDBG("%s mid=0x%x, flag=0x%x\n", __func__, mid, flag);
+
+	if(rc==false) mid = MID_NULL;
+	return mid;
+}
+
+static uint8_t get_otp_vendor_module_id(struct msm_eeprom_ctrl_t *e_ctrl, const char *eeprom_name)
+{
+	camera_vendor_module_id module_id=MID_NULL;
+	if((strcmp(eeprom_name, "qtech_f5695ak") == 0)){
+	CDBG("%s eeprom_name=%s, module_id=%d\n",__func__,eeprom_name,module_id);
+		module_id = ov5695_get_otp_vendor_module_id(e_ctrl);
+	}
+	else if(strcmp(eeprom_name,"qtech_imx219_fx219bh") == 0){
+		module_id = imx219_qtech_get_otp_vendor_module_id(e_ctrl);
+	}
+	else if(strcmp(eeprom_name,"ofilm_imx219_l219a00") == 0){
+		module_id = imx219_ofilm_get_otp_vendor_module_id(e_ctrl);
+	}
+	else if(strcmp(eeprom_name,"ofilm_ov8856") == 0){
+		module_id = ov8856_ofilm_get_otp_vendor_module_id(e_ctrl);
+	}
+	else if(strcmp(eeprom_name,"qtech_ov5695") == 0){
+		module_id = qtech_ov5695_get_otp_vendor_module_id(e_ctrl);
+	}
+	else if(strcmp(eeprom_name,"sunny_ov5695") == 0){
+		module_id = sunny_ov5695_get_otp_vendor_module_id(e_ctrl);
+	}
+	else if((strcmp(eeprom_name,"qtech_imx219_fx219aq") == 0) 
+		|| (strcmp(eeprom_name,"qtech_imx219") == 0)){
+		module_id = 0x06;
+        };
+
+	CDBG("%s eeprom_name=%s, module_id=%d\n",__func__,eeprom_name,module_id);
+	if(module_id>=MID_MAX) module_id = MID_NULL;
+
+	return ((uint8_t)module_id);
+}
+
+//lct.huk added for eeprom check id end 20160523
+#endif
 static long msm_eeprom_subdev_ioctl(struct v4l2_subdev *sd,
 		unsigned int cmd, void *arg)
 {
@@ -792,6 +1026,7 @@ static int msm_eeprom_i2c_probe(struct i2c_client *client,
 	int rc = 0;
 	struct msm_eeprom_ctrl_t *e_ctrl = NULL;
 	CDBG("%s E\n", __func__);
+
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		pr_err("%s i2c_check_functionality failed\n", __func__);
 		goto probe_failure;
@@ -925,44 +1160,20 @@ static int msm_eeprom_spi_parse_of(struct msm_camera_spi_client *spic)
 	}
 	spic->mfr_id0 = tmp[0];
 	spic->device_id0 = tmp[1];
+
 	return 0;
 }
-
-#define CHECK_ID 1
-#ifdef CHECK_ID
-static int msm_eeprom_i2c_match_id(struct msm_eeprom_ctrl_t *e_ctrl) {
-    int rc;
-    uint16_t chipid = 0;
-    struct msm_camera_i2c_client *client = &e_ctrl->i2c_client;
-    client->addr_type = MSM_CAMERA_I2C_WORD_ADDR;
-    client->cci_client->sid = e_ctrl->eboard_info->i2c_slaveaddr >> 1;
-    rc = client->i2c_func_tbl->i2c_read(
-        client, e_ctrl->eboard_info->sensorid_addr, 
-        &chipid, MSM_CAMERA_I2C_WORD_DATA);
-    if (rc < 0) {
-        pr_err("%s: %s: read failed\n", __func__, e_ctrl->eboard_info->eeprom_name);
-        return rc;
-    }
-
-    pr_err("%s chipid = 0x%x,sensorid = 0x%x\n", __func__, chipid, e_ctrl->eboard_info->sensorid);
-    if (chipid == e_ctrl->eboard_info->sensorid) {
-        return 1;
-    }
-
-    return 0;
-}
-#endif
 
 static int msm_eeprom_match_id(struct msm_eeprom_ctrl_t *e_ctrl)
 {
 	int rc;
 	struct msm_camera_i2c_client *client = &e_ctrl->i2c_client;
 	uint8_t id[2];
-        
+
 	rc = msm_camera_spi_query_id(client, 0, &id[0], 2);
 	if (rc < 0)
 		return rc;
-	CDBG("%s:read 0x%x 0x%x, check 0x%x 0x%x\n", __func__, id[0],
+	CDBG("%s: read 0x%x 0x%x, check 0x%x 0x%x\n", __func__, id[0],
 		id[1], client->spi_client->mfr_id0,
 		client->spi_client->device_id0);
 	if (id[0] != client->spi_client->mfr_id0
@@ -1099,6 +1310,7 @@ static int msm_eeprom_spi_setup(struct spi_device *spi)
 	struct msm_eeprom_board_info *eb_info;
 	struct msm_camera_power_ctrl_t *power_info = NULL;
 	int rc = 0;
+
 	e_ctrl = kzalloc(sizeof(*e_ctrl), GFP_KERNEL);
 	if (!e_ctrl) {
 		pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
@@ -1358,7 +1570,6 @@ static int eeprom_config_read_cal_data32(struct msm_eeprom_ctrl_t *e_ctrl,
 	struct msm_eeprom_cfg_data32 *cdata32 =
 		(struct msm_eeprom_cfg_data32 *) arg;
 	struct msm_eeprom_cfg_data cdata;
-        char *qtech_imx219="qtech_imx219";
 
 	cdata.cfgtype = cdata32->cfgtype;
 	cdata.is_supported = cdata32->is_supported;
@@ -1375,12 +1586,10 @@ static int eeprom_config_read_cal_data32(struct msm_eeprom_ctrl_t *e_ctrl,
 		return -EFAULT;
 
 	ptr_dest = (uint8_t *) compat_ptr(cdata32->cfg.read_data.dbuffer);
+
 	rc = copy_to_user(ptr_dest, e_ctrl->cal_data.mapdata,
 		cdata.cfg.read_data.num_bytes);
-        if(!strncmp(e_ctrl->eboard_info->eeprom_name,qtech_imx219,strlen(qtech_imx219)))
-        {
-             module_id=ptr_dest[1];
-        }
+
 	return rc;
 }
 
@@ -1427,7 +1636,7 @@ static int eeprom_init_config32(struct msm_eeprom_ctrl_t *e_ctrl,
 			__func__, __LINE__);
 		goto free_mem;
 	}
-	pr_err("%s:%d Size of power setting array: %d",
+	CDBG("%s:%d Size of power setting array: %d",
 		__func__, __LINE__, power_setting_array32->size);
 	if (copy_from_user(mem_map_array,
 		(void *)compat_ptr(cdata32->cfg.eeprom_info.mem_map_array),
@@ -1536,7 +1745,7 @@ static int msm_eeprom_config32(struct msm_eeprom_ctrl_t *e_ctrl,
 			e_ctrl->eboard_info->eeprom_name, length);
 		break;
 	case CFG_EEPROM_GET_CAL_DATA:
-		pr_err("%s E CFG_EEPROM_GET_CAL_DATA\n", __func__);
+		CDBG("%s E CFG_EEPROM_GET_CAL_DATA\n", __func__);
 		cdata->cfg.get_data.num_bytes =
 			e_ctrl->cal_data.num_data;
 		break;
@@ -1548,7 +1757,13 @@ static int msm_eeprom_config32(struct msm_eeprom_ctrl_t *e_ctrl,
 		if (e_ctrl->userspace_probe == 0) {
 			pr_err("%s:%d Eeprom already probed at kernel boot",
 				__func__, __LINE__);
+#if defined(CONFIG_MACH_LENOVO_TB8703) || defined(CONFIG_MACH_LENOVO_TBX704)
+			rc = 0;
+#elif defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804) || defined(CONFIG_MACH_LENOVO_TB8504)
+			rc = -EALREADY;//return a special errno tell user space eeprom has already probed at kernel boot
+#else
 			rc = -EINVAL;
+#endif
 			break;
 		}
 		if (e_ctrl->cal_data.num_data == 0) {
@@ -1575,7 +1790,7 @@ static long msm_eeprom_subdev_ioctl32(struct v4l2_subdev *sd,
 	struct msm_eeprom_ctrl_t *e_ctrl = v4l2_get_subdevdata(sd);
 	void __user *argp = (void __user *)arg;
 
-	pr_err("%s E\n", __func__);
+	CDBG("%s E\n", __func__);
 	CDBG("%s:%d a_ctrl %pK argp %pK\n", __func__, __LINE__, e_ctrl, argp);
 	switch (cmd) {
 	case VIDIOC_MSM_SENSOR_GET_SUBDEV_ID:
@@ -1609,13 +1824,17 @@ static long msm_eeprom_subdev_fops_ioctl32(struct file *file, unsigned int cmd,
 static int msm_eeprom_platform_probe(struct platform_device *pdev)
 {
 	int rc = 0;
+	int j = 0;
 	uint32_t temp;
+
 	struct msm_camera_cci_client *cci_client = NULL;
 	struct msm_eeprom_ctrl_t *e_ctrl = NULL;
 	struct msm_eeprom_board_info *eb_info = NULL;
 	struct device_node *of_node = pdev->dev.of_node;
 	struct msm_camera_power_ctrl_t *power_info = NULL;
+
 	CDBG("%s E\n", __func__);
+
 	e_ctrl = kzalloc(sizeof(*e_ctrl), GFP_KERNEL);
 	if (!e_ctrl) {
 		pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
@@ -1676,7 +1895,6 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 	rc = of_property_read_u32(of_node, "cell-index",
 		&pdev->id);
 	CDBG("cell-index %d, rc %d\n", pdev->id, rc);
-        pr_err("cell-index %d, rc %d\n", pdev->id, rc);
 	if (rc < 0) {
 		pr_err("failed rc %d\n", rc);
 		goto board_free;
@@ -1696,8 +1914,6 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		&eb_info->eeprom_name);
 	CDBG("%s qcom,eeprom-name %s, rc %d\n", __func__,
 		eb_info->eeprom_name, rc);
-        pr_err("%s qcom,eeprom-name %s, rc %d\n", __func__,
-                 eb_info->eeprom_name, rc);
 	if (rc < 0) {
 		pr_err("%s failed %d\n", __func__, __LINE__);
 		e_ctrl->userspace_probe = 1;
@@ -1736,7 +1952,6 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		cci_client->sid = eb_info->i2c_slaveaddr >> 1;
 
 		rc = msm_eeprom_parse_memory_map(of_node, &e_ctrl->cal_data);
-                pr_err("%s, %d----rc---%d", __func__, __LINE__, rc);
 		if (rc < 0)
 			goto board_free;
 
@@ -1746,41 +1961,26 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 			pr_err("failed rc %d\n", rc);
 			goto memdata_free;
 		}
-#ifdef CHECK_ID
-                rc = of_property_read_u32(of_node, "qcom,sensor-id",
-                                          &temp);
-                if (rc < 0) {
-                    pr_err("%s failed rc %d,no sensor id\n", __func__, rc);
-                    eb_info->sensorid = 0;
-                } else {
-                    eb_info->sensorid = temp;
-                }
-
-                rc = of_property_read_u32(of_node, "qcom,sensor-id-addr",
-                          &temp);
-                if (rc < 0) {
-                    pr_err("%s failed rc %d,no sensor id\n", __func__, rc);
-                    eb_info->sensorid_addr = 0;
-                } else {
-                    eb_info->sensorid_addr = temp;
-                }
-
-                pr_err("%s sensorid = 0x%x\n", __func__, e_ctrl->eboard_info->sensorid);
-
-                if (e_ctrl->eboard_info->sensorid != 0) {
-                    if (msm_eeprom_i2c_match_id(e_ctrl) != 1) {
-                        pr_err("%s msm_eeprom_i2c_match_id failed,sensorid = 0x%x\n", __func__, e_ctrl->eboard_info->sensorid);
-                        rc = -EINVAL;
-                        goto power_down;
-                    }
-                }
-#endif
 		rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
 		if (rc < 0) {
 			pr_err("%s read_eeprom_memory failed\n", __func__);
 			goto power_down;
 		}
+		for (j = 0; j < e_ctrl->cal_data.num_data; j++)
+			CDBG("memory_data[%d] = 0x%X\n", j,
+				e_ctrl->cal_data.mapdata[j]);
 
+#if defined(CONFIG_MACH_LENOVO_TB8703) || defined(CONFIG_MACH_LENOVO_TBX704) || defined (CONFIG_MACH_LENOVO_TB8704) ||defined (CONFIG_MACH_LENOVO_TB8804) || defined (CONFIG_MACH_LENOVO_TB8504)
+		//lct.huk added for eeprom check id 20160523
+
+		if(eb_info->eeprom_name != NULL){
+			pr_err("Lucas:  eb_info->eeprom_name != NULL \n");
+			s_vendor_eeprom[pdev->id].module_id = get_otp_vendor_module_id(e_ctrl, eb_info->eeprom_name);
+			strcpy(s_vendor_eeprom[pdev->id].eeprom_name, eb_info->eeprom_name);
+		} else {
+			strcpy(s_vendor_eeprom[pdev->id].eeprom_name, "NULL");
+		}
+#endif
 		e_ctrl->is_supported |= msm_eeprom_match_crc(&e_ctrl->cal_data);
 
 		rc = msm_camera_power_down(power_info,
@@ -1912,9 +2112,9 @@ static int __init msm_eeprom_init_module(void)
 	int rc = 0;
 	CDBG("%s E\n", __func__);
 	rc = platform_driver_register(&msm_eeprom_platform_driver);
-       CDBG("%s:%d platform rc %d\n", __func__, __LINE__, rc);
+	CDBG("%s:%d platform rc %d\n", __func__, __LINE__, rc);
 	rc = spi_register_driver(&msm_eeprom_spi_driver);
-       CDBG("%s:%d spi rc %d\n", __func__, __LINE__, rc);
+	CDBG("%s:%d spi rc %d\n", __func__, __LINE__, rc);
 	return i2c_add_driver(&msm_eeprom_i2c_driver);
 }
 

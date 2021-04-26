@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -35,6 +35,9 @@
 #ifndef CSRAPI_H__
 #define CSRAPI_H__
 
+#ifdef WLAN_FEATURE_FILS_SK
+#include "lim_fils_defs.h"
+#endif
 #include "sirApi.h"
 #include "sirMacProtDef.h"
 #include "csrLinkList.h"
@@ -45,6 +48,7 @@ typedef enum
     // MAC layer authentication types
     eCSR_AUTH_TYPE_OPEN_SYSTEM,
     eCSR_AUTH_TYPE_SHARED_KEY,
+    eCSR_AUTH_TYPE_SAE,
     eCSR_AUTH_TYPE_AUTOSWITCH,
 
     // Upper layer authentication types
@@ -70,6 +74,13 @@ typedef enum
     eCSR_AUTH_TYPE_RSN_PSK_SHA256,
     eCSR_AUTH_TYPE_RSN_8021X_SHA256,
 #endif
+#ifdef WLAN_FEATURE_FILS_SK
+    eCSR_AUTH_TYPE_FILS_SHA256,
+    eCSR_AUTH_TYPE_FILS_SHA384,
+    eCSR_AUTH_TYPE_FT_FILS_SHA256,
+    eCSR_AUTH_TYPE_FT_FILS_SHA384,
+#endif
+    eCSR_AUTH_TYPE_OWE,
     eCSR_NUM_OF_SUPPORT_AUTH_TYPE,
     eCSR_AUTH_TYPE_FAILED = 0xff,
     eCSR_AUTH_TYPE_UNKNOWN = eCSR_AUTH_TYPE_FAILED,
@@ -224,6 +235,7 @@ typedef enum
 
 
 #define CSR_RSN_PMKID_SIZE          16
+#define CSR_RSN_MAX_PMK_LEN         48
 #define CSR_MAX_PMKID_ALLOWED       32
 #define CSR_WEP40_KEY_LEN       5
 #define CSR_WEP104_KEY_LEN      13
@@ -242,7 +254,8 @@ typedef enum
 #ifdef FEATURE_WLAN_ESE
 #define CSR_KRK_KEY_LEN 16
 #endif
-
+/* Cache ID length */
+#define CACHE_ID_LEN 2
 
 typedef struct tagCsrChannelInfo
 {
@@ -310,6 +323,14 @@ typedef struct tagCsrScanRequest
     eCsrRequestType requestType;    //11d scan or full scan
     tANI_BOOLEAN p2pSearch;
     tANI_BOOLEAN skipDfsChnlInP2pSearch;
+
+    uint32_t enable_scan_randomization;
+    uint8_t mac_addr[VOS_MAC_ADDR_SIZE];
+    uint8_t mac_addr_mask[VOS_MAC_ADDR_SIZE];
+    bool ie_whitelist;
+    uint32_t probe_req_ie_bitmap[PROBE_REQ_BITMAP_LEN];
+    uint32_t num_vendor_oui;
+    struct vendor_oui *voui;
 }tCsrScanRequest;
 
 typedef struct tagCsrBGScanRequest
@@ -379,10 +400,9 @@ typedef struct tagCsrEseCckmInfo
 #endif
 
 #if defined(FEATURE_WLAN_ESE) && defined(FEATURE_WLAN_ESE_UPLOAD)
-#define CSR_DOT11F_IE_RSN_MAX_LEN   (114)  /*TODO: duplicate one in dot11f.h */
 typedef struct tagCsrEseCckmIe
 {
-    tANI_U8 cckmIe[CSR_DOT11F_IE_RSN_MAX_LEN];
+    tANI_U8 cckmIe[DOT11F_IE_RSN_MAX_LEN];
     tANI_U8 cckmIeLen;
 } tCsrEseCckmIe;
 #endif /* FEATURE_WLAN_ESE && FEATURE_WLAN_ESE_UPLOAD */
@@ -426,6 +446,14 @@ typedef struct tagCsrScanResultFilter
      * used to support whitelist ssid feature.
      */
     uint8_t scan_filter_for_roam;
+    tCsrBssid bssid_hint;
+#ifdef FEATURE_WLAN_DISABLE_CHANNEL_SWITCH
+    tVOS_CON_MODE csrPersona;
+#endif
+#ifdef WLAN_FEATURE_FILS_SK
+    bool realm_check;
+    uint8_t fils_realm[2];
+#endif
 }tCsrScanResultFilter;
 
 
@@ -538,9 +566,11 @@ typedef enum
     // Channel sw update notification
     eCSR_ROAM_DFS_CHAN_SW_NOTIFY,
     eCSR_ROAM_EXT_CHG_CHNL_IND,
+    eCSR_ROAM_STA_CHANNEL_SWITCH,
 
     eCSR_ROAM_NDP_STATUS_UPDATE,
     eCSR_ROAM_UPDATE_SCAN_RESULT,
+    eCSR_ROAM_SAE_COMPUTE,
 }eRoamCmdStatus;
 
 
@@ -897,6 +927,11 @@ typedef struct tagPmkidCacheInfo
 {
     tCsrBssid BSSID;
     tANI_U8 PMKID[CSR_RSN_PMKID_SIZE];
+    uint8_t pmk[CSR_RSN_MAX_PMK_LEN];
+    uint8_t pmk_len;
+    uint8_t ssid_len;
+    uint8_t ssid[SIR_MAC_MAX_SSID_LENGTH];
+    uint8_t cache_id[CACHE_ID_LEN];
 }tPmkidCacheInfo;
 
 #ifdef FEATURE_WLAN_WAPI
@@ -1021,6 +1056,13 @@ typedef struct tagCsrRoamProfile
     uint16_t beacon_tx_rate;
     tSirMacRateSet  supported_rates;
     tSirMacRateSet  extended_rates;
+    uint8_t sub20_channelwidth;
+    bool force_24ghz_in_ht20;
+    tCsrBssid bssid_hint;
+#ifdef WLAN_FEATURE_FILS_SK
+    bool fils_connection;
+    struct cds_fils_connection_info *fils_con_info;
+#endif
 }tCsrRoamProfile;
 
 
@@ -1147,6 +1189,7 @@ enum sta_roam_policy_dfs_mode {
 struct csr_sta_roam_policy_params {
 	enum sta_roam_policy_dfs_mode dfs_mode;
 	bool skip_unsafe_channels;
+	uint8_t sap_operating_band;
 };
 
 typedef struct tagCsrConfigParam
@@ -1216,8 +1259,6 @@ typedef struct tagCsrConfigParam
     tANI_U32  nInitialDwellTime;      //in units of milliseconds
     bool      initial_scan_no_dfs_chnl;
 
-    tANI_U32  nActiveMinChnTimeBtc;     //in units of milliseconds
-    tANI_U32  nActiveMaxChnTimeBtc;     //in units of milliseconds
     tANI_U32  disableAggWithBtc;
 #ifdef WLAN_AP_STA_CONCURRENCY
     tANI_U32  nPassiveMinChnTimeConc;    //in units of milliseconds
@@ -1225,10 +1266,6 @@ typedef struct tagCsrConfigParam
     tANI_U32  nActiveMinChnTimeConc;     //in units of milliseconds
     tANI_U32  nActiveMaxChnTimeConc;     //in units of milliseconds
     tANI_U32  nRestTimeConc;             //in units of milliseconds
-    tANI_U8   nNumStaChanCombinedConc;   //number of channels combined for
-                                         //STA in each split scan operation
-    tANI_U8   nNumP2PChanCombinedConc;   //number of channels combined for
-                                         //P2P in each split scan operation
 #endif
     /*In units of milliseconds*/
     uint32_t       min_rest_time_conc;
@@ -1333,6 +1370,11 @@ typedef struct tagCsrConfigParam
     eCsrBand  scanBandPreference;
 #ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
     tANI_U8  cc_switch_mode;
+    bool     band_switch_enable;
+    bool     ap_p2pgo_concurrency_enable;
+    bool     ap_p2pclient_concur_enable;
+    uint16_t ch_width_24g_orig;
+    uint16_t ch_width_5g_orig;
 #endif
     tANI_U8  allowDFSChannelRoam;
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
@@ -1352,6 +1394,14 @@ typedef struct tagCsrConfigParam
     bool    enable_fatal_event;
     uint32_t tx_aggregation_size;
     uint32_t rx_aggregation_size;
+    uint32_t tx_aggr_sw_retry_threshhold_be;
+    uint32_t tx_aggr_sw_retry_threshhold_bk;
+    uint32_t tx_aggr_sw_retry_threshhold_vi;
+    uint32_t tx_aggr_sw_retry_threshhold_vo;
+    uint32_t tx_non_aggr_sw_retry_threshhold_be;
+    uint32_t tx_non_aggr_sw_retry_threshhold_bk;
+    uint32_t tx_non_aggr_sw_retry_threshhold_vi;
+    uint32_t tx_non_aggr_sw_retry_threshhold_vo;
     bool enable_edca_params;
     uint32_t edca_vo_cwmin;
     uint32_t edca_vi_cwmin;
@@ -1366,6 +1416,14 @@ typedef struct tagCsrConfigParam
     uint32_t edca_bk_aifs;
     uint32_t edca_be_aifs;
     struct csr_sta_roam_policy_params sta_roam_policy_params;
+    uint32_t sta_auth_retries_for_code17;
+#ifdef WLAN_FEATURE_FILS_SK
+    uint8_t fils_max_chan_guard_time;
+#endif
+#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+    tANI_U32    sap_ch_switch_with_csa;
+#endif//#ifdef WLAN_FEATURE_SAP_TO_FOLLOW_STA_CHAN
+    bool enable_bcast_probe_rsp;
 }tCsrConfigParam;
 
 //Tush
@@ -1493,6 +1551,33 @@ typedef struct tagCsrRoamInfo
         struct ndi_delete_rsp ndi_delete_params;
     } ndp;
 #endif
+    tDot11fIEHTCaps ht_caps;
+    tDot11fIEVHTCaps vht_caps;
+    tDot11fIEhs20vendor_ie hs20vendor_ie;
+    tDot11fIEVHTOperation vht_operation;
+    tDot11fIEHTInfo ht_operation;
+    bool reassoc;
+    /* Extended capabilities of STA */
+    uint8_t ecsa_capable;
+    bool                 ampdu;
+    bool                 sgi_enable;
+    bool                 tx_stbc;
+    bool                 rx_stbc;
+    tSirMacHTChannelWidth ch_width;
+    enum sir_sme_phy_mode mode;
+    uint8_t              max_supp_idx;
+    uint8_t              max_ext_idx;
+    uint8_t              max_mcs_idx;
+    uint8_t              rx_mcs_map;
+    uint8_t              tx_mcs_map;
+#ifdef WLAN_FEATURE_FILS_SK
+    bool is_fils_connection;
+    uint16_t fils_seq_num;
+    struct fils_join_rsp_params *fils_join_rsp;
+#endif
+#ifdef WLAN_FEATURE_SAE
+    struct sir_sae_info *sae_info;
+#endif
 }tCsrRoamInfo;
 
 
@@ -1523,6 +1608,19 @@ typedef struct sSirSmeAssocIndToUpperLayerCnf
     /* Timing and fine Timing measurement capability clubbed together */
     tANI_U8              timingMeasCap;
     tSirSmeChanInfo      chan_info;
+    /* Extended capabilities of STA */
+    uint8_t              ecsa_capable;
+    bool                 ampdu;
+    bool                 sgi_enable;
+    bool                 tx_stbc;
+    tSirMacHTChannelWidth ch_width;
+    enum sir_sme_phy_mode mode;
+    bool                 rx_stbc;
+    uint8_t              max_supp_idx;
+    uint8_t              max_ext_idx;
+    uint8_t              max_mcs_idx;
+    uint8_t              rx_mcs_map;
+    uint8_t              tx_mcs_map;
 } tSirSmeAssocIndToUpperLayerCnf, *tpSirSmeAssocIndToUpperLayerCnf;
 
 typedef struct tagCsrSummaryStatsInfo
@@ -1724,6 +1822,17 @@ struct tagCsrDelStaParams
 };
 
 /**
+ * struct csr_set_tx_max_pwr_per_band - Req params to
+ * set max tx power per band
+ * @band: band for which power to be set
+ * @power: power to set in dB
+ */
+struct csr_set_tx_max_pwr_per_band {
+	eCsrBand band;
+	tPowerdBm power;
+};
+
+/**
  * struct wep_update_default_key_idx: wep default key index structure
  *
  * @session_id: session ID for the connection session
@@ -1810,7 +1919,12 @@ typedef eHalStatus (*csrRoamSessionCloseCallback)(void *pContext);
 
 ///////////////////////////////////////////Common Roam ends
 
-
+#ifdef WLAN_FEATURE_SAE
+#define CSR_IS_AUTH_TYPE_SAE(auth_type) \
+	(eCSR_AUTH_TYPE_SAE == auth_type)
+#else
+#define CSR_IS_AUTH_TYPE_SAE(auth_type) (false)
+#endif
 
 /* ---------------------------------------------------------------------------
     \fn csrSetChannels
@@ -1969,4 +2083,30 @@ typedef void (*csr_mib_stats_callback)
  */
 typedef void (*tcsr_fw_state_callback)(void *context);
 void csr_packetdump_timer_stop(void);
+#ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
+typedef struct _session_info{
+	tVOS_CON_MODE con_mode;
+	eCsrBand band;
+	v_U16_t och;
+	v_U16_t lfreq;
+	v_U16_t hfreq;
+	v_U16_t cfreq;
+	v_U16_t hbw;
+}session_info_t;
+tANI_BOOLEAN csr_find_all_session_info(
+	tHalHandle hHal,
+	session_info_t *session_info,
+	v_U8_t * session_count);
+tANI_BOOLEAN csr_find_sta_session_info(
+	tHalHandle hHal,
+	session_info_t *info);
+tANI_BOOLEAN csr_create_sap_session_info(
+	tHalHandle hHal,
+	eCsrPhyMode sap_phymode,
+	v_U16_t sap_ch,
+	session_info_t *session_info);
+#endif
+struct lim_channel_status *csr_get_channel_status(
+	void *p_mac, uint32_t channel_id);
+void csr_clear_channel_status(void *p_mac);
 #endif

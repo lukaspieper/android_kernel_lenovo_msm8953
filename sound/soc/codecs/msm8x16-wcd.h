@@ -228,7 +228,32 @@ struct msm8916_asoc_mach_data {
 	int ext_pa;
 	int us_euro_gpio;
 	int spk_ext_pa_gpio;
+#ifdef CONFIG_MACH_LENOVO_TBX704
 	int spk_ext_pa1_gpio;
+#endif
+
+#if defined(CONFIG_MACH_LENOVO_TB8504)
+	struct mutex speaker_pa_mutex;
+	struct delayed_work speaker_pa_enable_work;
+	unsigned char spk_is_on;
+#endif
+
+#if defined(CONFIG_SPEAKER_EXT_PA)
+	int spk_ext_pa_l_gpio;
+    int spk_ext_pa_r_gpio;
+#endif
+#if defined(CONFIG_SPEAKER_HEADPHONE_SWITCH)
+    int spk_hs_switch_gpio;
+    struct delayed_work hs_gpio_work;
+    unsigned char hs_is_on;
+#endif
+#if defined(CONFIG_RECEIVER_EXT_PA)
+#if !(defined (CONFIG_MACH_LENOVO_TB8804) || defined (CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8504))
+	int spk_rec_switch_gpio_lc;
+#endif
+    struct delayed_work rec_gpio_work;
+    unsigned char rec_is_on;
+#endif
 	int mclk_freq;
 	int lb_mode;
 	int afe_clk_ver;
@@ -246,6 +271,9 @@ struct msm8916_asoc_mach_data {
 	void __iomem *vaddr_gpio_mux_mic_ctl;
 	void __iomem *vaddr_gpio_mux_quin_ctl;
 	void __iomem *vaddr_gpio_mux_pcm_ctl;
+#ifdef CONFIG_MACH_LENOVO_KUNTAO
+	struct regulator *vdd;
+#endif
 	struct on_demand_supply wsa_switch_supply;
 };
 

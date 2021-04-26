@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -38,7 +38,7 @@
  *
  */
 #include "palTypes.h"
-#include "wniCfgSta.h"
+#include "wni_cfg.h"
 #include "wniApi.h"
 #include "sirCommon.h"
 #include "sirDebug.h"
@@ -243,6 +243,17 @@ static void __limInitStates(tpAniSirGlobal pMac)
     pMac->lim.gLimProbeRespDisableFlag = 0; // control over probe response
 }
 
+#ifdef FEATURE_OEM_DATA_SUPPORT
+static void lim_set_oem_data_req(tpAniSirGlobal mac)
+{
+	mac->lim.gpLimMlmOemDataReq = NULL;
+}
+#else
+static inline void lim_set_oem_data_req(tpAniSirGlobal mac)
+{
+}
+#endif
+
 static void __limInitVars(tpAniSirGlobal pMac)
 {
     // Place holder for Measurement Req/Rsp/Ind related info
@@ -293,7 +304,7 @@ static void __limInitVars(tpAniSirGlobal pMac)
     /* Init SAP deffered Q Head */
     lim_init_sap_deferred_msg_queue(pMac);
 #endif
-    pMac->lim.gpLimMlmOemDataReq = NULL;
+    lim_set_oem_data_req(pMac);
 }
 
 static void __limInitAssocVars(tpAniSirGlobal pMac)
@@ -903,6 +914,7 @@ tSirRetStatus peOpen(tpAniSirGlobal pMac, tMacOpenParameters *pMacOpenParam)
 
     pMac->lim.maxBssId = pMacOpenParam->maxBssId;
     pMac->lim.maxStation = pMacOpenParam->maxStation;
+    adf_os_spinlock_init(&pMac->sys.bbt_mgmt_lock);
 
     if ((pMac->lim.maxBssId == 0) || (pMac->lim.maxStation == 0)) {
          PELOGE(limLog(pMac, LOGE,
@@ -947,7 +959,6 @@ tSirRetStatus peOpen(tpAniSirGlobal pMac, tMacOpenParameters *pMacOpenParam)
         status = eSIR_FAILURE;
         goto pe_open_lock_fail;
     }
-    pMac->lim.deauthMsgCnt = 0;
     pMac->lim.retry_packet_cnt = 0;
     pMac->lim.gLimIbssRetryCnt = 0;
 
@@ -976,6 +987,24 @@ pe_open_psession_fail:
     return status;
 }
 
+#ifdef FEATURE_OEM_DATA_SUPPORT
+static void lim_free_oem_data_req(tpAniSirGlobal mac)
+{
+	if (mac->lim.gpLimMlmOemDataReq) {
+		if (mac->lim.gpLimMlmOemDataReq->data) {
+			vos_mem_free(mac->lim.gpLimMlmOemDataReq->data);
+			mac->lim.gpLimMlmOemDataReq->data = NULL;
+		}
+		vos_mem_free(mac->lim.gpLimMlmOemDataReq);
+		mac->lim.gpLimMlmOemDataReq = NULL;
+	}
+}
+#else
+static inline void lim_free_oem_data_req(tpAniSirGlobal mac)
+{
+}
+#endif
+
 /** -------------------------------------------------------------
 \fn peClose
 \brief will be called in close sequence from macClose
@@ -990,6 +1019,7 @@ tSirRetStatus peClose(tpAniSirGlobal pMac)
     if (ANI_DRIVER_TYPE(pMac) == eDRIVER_TYPE_MFG)
         return eSIR_SUCCESS;
 
+    adf_os_spinlock_destroy(&pMac->sys.bbt_mgmt_lock);
     for(i =0; i < pMac->lim.maxBssId; i++)
     {
         if(pMac->lim.gpSession[i].valid == TRUE)
@@ -999,16 +1029,7 @@ tSirRetStatus peClose(tpAniSirGlobal pMac)
     }
     vos_mem_free(pMac->lim.limTimers.gpLimCnfWaitTimer);
     pMac->lim.limTimers.gpLimCnfWaitTimer = NULL;
-
-    if (pMac->lim.gpLimMlmOemDataReq) {
-        if (pMac->lim.gpLimMlmOemDataReq->data) {
-            vos_mem_free(pMac->lim.gpLimMlmOemDataReq->data);
-            pMac->lim.gpLimMlmOemDataReq->data = NULL;
-        }
-        vos_mem_free(pMac->lim.gpLimMlmOemDataReq);
-        pMac->lim.gpLimMlmOemDataReq = NULL;
-    }
-
+    lim_free_oem_data_req(pMac);
     vos_mem_free(pMac->lim.gpSession);
     pMac->lim.gpSession = NULL;
     vos_mem_free(pMac->pmm.gPmmTim.pTim);
@@ -1253,6 +1274,60 @@ tSirRetStatus peProcessMessages(tpAniSirGlobal pMac, tSirMsgQ* pMsg)
     return eSIR_SUCCESS;
 }
 
+/**
+ * pe_drop_pending_rx_mgmt_frames: To drop pending RX mgmt frames
+ * @mac_ctx: Pointer to global MAC structure
+ * @hdr: Management header
+ * @vos_pkt: Packet
+ *
+ * This function is used to drop RX pending mgmt frames if pe mgmt queue
+ * reaches threshold
+ *
+ * Return: VOS_STATUS_SUCCESS on success or VOS_STATUS_E_FAILURE on failure
+ */
+static VOS_STATUS pe_drop_pending_rx_mgmt_frames(tpAniSirGlobal mac_ctx,
+                               tpSirMacMgmtHdr hdr, vos_pkt_t *vos_pkt)
+{
+       adf_os_spin_lock(&mac_ctx->sys.bbt_mgmt_lock);
+       if (mac_ctx->sys.sys_bbt_pending_mgmt_count >=
+            MGMT_RX_PACKETS_THRESHOLD) {
+               adf_os_spin_unlock(&mac_ctx->sys.bbt_mgmt_lock);
+               limLog(mac_ctx, LOG1,
+                       FL("No.of pending RX management frames reaches to threshold, dropping management frames"));
+               vos_pkt_return_packet(vos_pkt);
+               vos_pkt = NULL;
+               mac_ctx->rx_packet_drop_counter++;
+               return VOS_STATUS_E_FAILURE;
+       } else if (mac_ctx->sys.sys_bbt_pending_mgmt_count >
+                  (MGMT_RX_PACKETS_THRESHOLD / 2)) {
+               /* drop all probereq, proberesp and beacons */
+               if (hdr->fc.subType == SIR_MAC_MGMT_BEACON ||
+                   hdr->fc.subType == SIR_MAC_MGMT_PROBE_REQ ||
+                   hdr->fc.subType == SIR_MAC_MGMT_PROBE_RSP) {
+                       adf_os_spin_unlock(&mac_ctx->sys.bbt_mgmt_lock);
+                       if (!(mac_ctx->rx_packet_drop_counter % 100))
+                               limLog(mac_ctx, LOG1,
+                                       FL("No.of pending RX mgmt frames reaches 1/2 thresh, dropping frame subtype: %d rx_packet_drop_counter: %d"),
+                                       hdr->fc.subType,
+                                       mac_ctx->rx_packet_drop_counter);
+                       mac_ctx->rx_packet_drop_counter++;
+                       vos_pkt_return_packet(vos_pkt);
+                       vos_pkt = NULL;
+                       return VOS_STATUS_E_FAILURE;
+               }
+       }
+       mac_ctx->sys.sys_bbt_pending_mgmt_count++;
+       adf_os_spin_unlock(&mac_ctx->sys.bbt_mgmt_lock);
+       if (mac_ctx->sys.sys_bbt_pending_mgmt_count ==
+           (MGMT_RX_PACKETS_THRESHOLD / 4)) {
+               if (!(mac_ctx->rx_packet_drop_counter % 100))
+                      limLog(mac_ctx, LOG1,
+                              FL("No.of pending RX management frames reaches to 1/4th of threshold, rx_packet_drop_counter: %d"),
+                              mac_ctx->rx_packet_drop_counter);
+               mac_ctx->rx_packet_drop_counter++;
+       }
+       return VOS_STATUS_SUCCESS;
+}
 
 
 // ---------------------------------------------------------------------------
@@ -1335,6 +1410,9 @@ VOS_STATUS peHandleMgmtFrame( v_PVOID_t pvosGCtx, v_PVOID_t vosBuff)
                                    pVosPkt->pkt_meta.sessionId, RX_MGMT_PKT);
     }
 
+    if (VOS_STATUS_SUCCESS !=
+        pe_drop_pending_rx_mgmt_frames(pMac, mHdr, pVosPkt))
+        return VOS_STATUS_E_FAILURE;
 
     // Forward to MAC via mesg = SIR_BB_XPORT_MGMT_MSG
     msg.type = SIR_BB_XPORT_MGMT_MSG;
@@ -1348,6 +1426,11 @@ VOS_STATUS peHandleMgmtFrame( v_PVOID_t pvosGCtx, v_PVOID_t vosBuff)
     {
         vos_pkt_return_packet(pVosPkt);
         pVosPkt = NULL;
+        /*
+         * Decrement sys_bbt_pending_mgmt_count if packet
+         * is dropped before posting to LIM
+         */
+        lim_decrement_pending_mgmt_count(pMac);
         return VOS_STATUS_E_FAILURE;
     }
 
@@ -2415,6 +2498,7 @@ void lim_mon_init_session(tpAniSirGlobal mac_ptr,
 		return;
 	}
 	psession_entry->vhtCapability = 1;
+	psession_entry->sub20_channelwidth = mac_ptr->sub20_channelwidth;
 }
 
 /** -----------------------------------------------------------------

@@ -110,10 +110,10 @@ static struct pwm_chip *pwmchip_find_by_name(const char *name)
 static int pwm_device_request(struct pwm_device *pwm, const char *label)
 {
 	int err;
-	//  remove this flag to support led green and red request pwm devices twice
-	//if (test_bit(PWMF_REQUESTED, &pwm->flags))
-	//	return -EBUSY;
-
+#ifndef CONFIG_MACH_LENOVO_TBX704
+	if (test_bit(PWMF_REQUESTED, &pwm->flags))
+		return -EBUSY;
+#endif
 	if (!try_module_get(pwm->chip->ops->owner))
 		return -ENODEV;
 
@@ -292,6 +292,8 @@ int pwmchip_remove(struct pwm_chip *chip)
 {
 	unsigned int i;
 	int ret = 0;
+
+	pwmchip_sysfs_unexport_children(chip);
 
 	mutex_lock(&pwm_lock);
 

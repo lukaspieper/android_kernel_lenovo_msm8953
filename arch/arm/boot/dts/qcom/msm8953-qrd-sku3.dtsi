@@ -67,18 +67,16 @@
 };
 
 &mdss_dsi0 {
-	//lab-supply = <&lab_regulator>;
-	//ibb-supply = <&ibb_regulator>;
-	///delete-property/ vdd-supply;
+	lab-supply = <&lab_regulator>;
+	ibb-supply = <&ibb_regulator>;
+	/delete-property/ vdd-supply;
 
-	qcom,dsi-pref-prim-pan = <&dsi_nt51021b_inx_wuxga_vid>;
+	qcom,dsi-pref-prim-pan = <&dsi_r69006_1080p_cmd>;
 	pinctrl-names = "mdss_default", "mdss_sleep";
 	pinctrl-0 = <&mdss_dsi_active &mdss_te_active>;
 	pinctrl-1 = <&mdss_dsi_suspend &mdss_te_suspend>;
 	qcom,platform-te-gpio = <&tlmm 24 0>;
 	qcom,platform-reset-gpio = <&tlmm 61 0>;
-	qcom,platform-power-en-gpio = <&tlmm 16 0>;
-	qcom,platform-lcd-level-shift-en-gpio = <&tlmm 17 0>;
 };
 
 &mdss_dsi1 {
@@ -90,12 +88,6 @@
 	qpnp,qpnp-labibb-mode = "lcd";
 };
 
-/* Add-Begin by Phoenix.Wu for Achillies4 Plus LCD 
-&dsi_nt51021b_inx_wuxga_vid {
-	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
-};
-/* Add-end by Phoenix.Wu for Achillies4 Plus LCD */
-
 &dsi_r69006_1080p_cmd {
 	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
 };
@@ -105,19 +97,19 @@
 };
 
 &int_codec {
-	status = "ok";
+	status = "disabled";
 };
 
 &pm8953_diangu_dig {
-	status = "ok";
+	status = "disabled";
 };
 
 &pm8953_diangu_analog {
-	status = "ok";
+	status = "disabled";
 };
 
 &ext_codec {
-	status = "disabled";
+	status = "ok";
 	qcom,model = "msm8953-sku3-tasha-snd-card";
 
 	qcom,audio-routing =
@@ -144,18 +136,25 @@
 };
 
 &slim_msm {
-	status = "disabled";
+	status = "ok";
 };
 
 &dai_slim {
-	status = "disabled";
+	status = "ok";
+};
+
+&wcd9xxx_intc {
+	status = "ok";
 };
 
 &clock_audio {
-	status = "disabled";
+	status = "ok";
 };
 
 &wcd9335 {
-	status = "disabled";
+	status = "ok";
 };
 
+&wcd_rst_gpio {
+	status = "ok";
+};

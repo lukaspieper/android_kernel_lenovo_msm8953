@@ -120,6 +120,7 @@ static const int NR_TYPES = ARRAY_SIZE(max_vals);
 static struct input_handler kbd_handler;
 static DEFINE_SPINLOCK(kbd_event_lock);
 static DEFINE_SPINLOCK(led_lock);
+static DEFINE_SPINLOCK(func_buf_lock); /* guard 'func_buf'  and friends */
 static unsigned long key_down[BITS_TO_LONGS(KEY_CNT)];	/* keyboard key bitmap */
 static unsigned char shift_down[NR_SHIFT];		/* shift state counters.. */
 static bool dead_key_next;
@@ -365,34 +366,22 @@ static void to_utf8(struct vc_data *vc, uint c)
 
 static void do_compute_shiftstate(void)
 {
-	unsigned int i, j, k, sym, val;
+	unsigned int k, sym, val;
 
 	shift_state = 0;
 	memset(shift_down, 0, sizeof(shift_down));
 
-	for (i = 0; i < ARRAY_SIZE(key_down); i++) {
-
-		if (!key_down[i])
+	for_each_set_bit(k, key_down, min(NR_KEYS, KEY_CNT)) {
+		sym = U(key_maps[0][k]);
+		if (KTYP(sym) != KT_SHIFT && KTYP(sym) != KT_SLOCK)
 			continue;
 
-		k = i * BITS_PER_LONG;
+		val = KVAL(sym);
+		if (val == KVAL(K_CAPSSHIFT))
+			val = KVAL(K_SHIFT);
 
-		for (j = 0; j < BITS_PER_LONG; j++, k++) {
-
-			if (!test_bit(k, key_down))
-				continue;
-
-			sym = U(key_maps[0][k]);
-			if (KTYP(sym) != KT_SHIFT && KTYP(sym) != KT_SLOCK)
-				continue;
-
-			val = KVAL(sym);
-			if (val == KVAL(K_CAPSSHIFT))
-				val = KVAL(K_SHIFT);
-
-			shift_down[val]++;
-			shift_state |= (1 << val);
-		}
+		shift_down[val]++;
+		shift_state |= BIT(val);
 	}
 }
 
@@ -1877,11 +1866,12 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 	char *p;
 	u_char *q;
 	u_char __user *up;
-	int sz;
+	int sz, fnw_sz;
 	int delta;
 	char *first_free, *fj, *fnw;
 	int i, j, k;
 	int ret;
+	unsigned long flags;
 
 	if (!capable(CAP_SYS_TTY_CONFIG))
 		perm = 0;
@@ -1924,7 +1914,14 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 			goto reterr;
 		}
 
+		fnw = NULL;
+		fnw_sz = 0;
+		/* race aginst other writers */
+		again:
+		spin_lock_irqsave(&func_buf_lock, flags);
 		q = func_table[i];
+
+		/* fj pointer to next entry after 'q' */
 		first_free = funcbufptr + (funcbufsize - funcbufleft);
 		for (j = i+1; j < MAX_NR_FUNC && !func_table[j]; j++)
 			;
@@ -1932,10 +1929,12 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 			fj = func_table[j];
 		else
 			fj = first_free;
-
+		/* buffer usage increase by new entry */
 		delta = (q ? -strlen(q) : 1) + strlen(kbs->kb_string);
+
 		if (delta <= funcbufleft) { 	/* it fits in current buf */
 		    if (j < MAX_NR_FUNC) {
+			/* make enough space for new entry at 'fj' */
 			memmove(fj + delta, fj, first_free - fj);
 			for (k = j; k < MAX_NR_FUNC; k++)
 			    if (func_table[k])
@@ -1948,20 +1947,28 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 		    sz = 256;
 		    while (sz < funcbufsize - funcbufleft + delta)
 		      sz <<= 1;
-		    fnw = kmalloc(sz, GFP_KERNEL);
-		    if(!fnw) {
-		      ret = -ENOMEM;
-		      goto reterr;
+		    if (fnw_sz != sz) {
+		      spin_unlock_irqrestore(&func_buf_lock, flags);
+		      kfree(fnw);
+		      fnw = kmalloc(sz, GFP_KERNEL);
+		      fnw_sz = sz;
+		      if (!fnw) {
+			ret = -ENOMEM;
+			goto reterr;
+		      }
+		      goto again;
 		    }
 
 		    if (!q)
 		      func_table[i] = fj;
+		    /* copy data before insertion point to new location */
 		    if (fj > funcbufptr)
 			memmove(fnw, funcbufptr, fj - funcbufptr);
 		    for (k = 0; k < j; k++)
 		      if (func_table[k])
 			func_table[k] = fnw + (func_table[k] - funcbufptr);
 
+		    /* copy data after insertion point to new location */
 		    if (first_free > fj) {
 			memmove(fnw + (fj - funcbufptr) + delta, fj, first_free - fj);
 			for (k = j; k < MAX_NR_FUNC; k++)
@@ -1974,7 +1981,9 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 		    funcbufleft = funcbufleft - delta + sz - funcbufsize;
 		    funcbufsize = sz;
 		}
+		/* finally insert item itself */
 		strcpy(func_table[i], kbs->kb_string);
+		spin_unlock_irqrestore(&func_buf_lock, flags);
 		break;
 	}
 	ret = 0;

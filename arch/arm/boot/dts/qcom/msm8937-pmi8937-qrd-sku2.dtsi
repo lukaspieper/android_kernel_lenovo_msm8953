@@ -110,13 +110,12 @@
 };
 
 &mdss_dsi0 {
-	qcom,dsi-pref-prim-pan = <&dsi_nt35521s_wxga_video>;
+	qcom,dsi-pref-prim-pan = <&dsi_hx8394f_720p_video>;
 	pinctrl-names = "mdss_default", "mdss_sleep";
 	pinctrl-0 = <&mdss_dsi_active &mdss_te_active>;
 	pinctrl-1 = <&mdss_dsi_suspend &mdss_te_suspend>;
 
 	qcom,platform-te-gpio = <&tlmm 24 0>;
-	qcom,platform-enable-gpio = <&tlmm 46 0>;
 	qcom,platform-reset-gpio = <&tlmm 60 0>;
 };
 
@@ -134,7 +133,7 @@
 	status = "disabled";
 };
 
-&dsi_nt35521s_wxga_video {
+&dsi_hx8394f_720p_video {
 	qcom,esd-check-enabled;
 	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
 };

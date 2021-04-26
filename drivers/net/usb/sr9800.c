@@ -421,6 +421,9 @@ sr_set_wol(struct net_device *net, struct ethtool_wolinfo *wolinfo)
 	struct usbnet *dev = netdev_priv(net);
 	u8 opt = 0;
 
+	if (wolinfo->wolopts & ~(WAKE_PHY | WAKE_MAGIC))
+		return -EINVAL;
+
 	if (wolinfo->wolopts & WAKE_PHY)
 		opt |= SR_MONITOR_LINK;
 	if (wolinfo->wolopts & WAKE_MAGIC)
@@ -761,7 +764,7 @@ static int sr9800_bind(struct usbnet *dev, struct usb_interface *intf)
 		netdev_dbg(dev->net, "Failed to read MAC address: %d\n", ret);
 		return ret;
 	}
-	netdev_dbg(dev->net, "mac addr : %pM\n", dev->net->dev_addr);
+	netdev_dbg(dev->net, "mac addr : %pKM\n", dev->net->dev_addr);
 
 	/* Initialize MII structure */
 	dev->mii.dev = dev->net;
