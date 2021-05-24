@@ -33,6 +33,7 @@
   -------------------------------------------------------------------------*/
 #include <wlan_hdd_includes.h>
 #include "wlan_hdd_cfg.h"
+#include <ol_txrx_htt_api.h>
 
 /*---------------------------------------------------------------------------
   Preprocessor definitions and constants
@@ -97,14 +98,6 @@ int hdd_capture_tsf(hdd_adapter_t *adapter, uint32_t *buf, int len);
  */
 int hdd_indicate_tsf(hdd_adapter_t *adapter, uint32_t *buf, int len);
 
-/**
- * wlan_get_ts_info() - return ts info to uplayer
- * @dev: pointer to net_device
- * @info: pointer to ethtool_ts_info
- *
- * Return: Describe the execute result of this routine
- */
-int wlan_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info);
 #else
 static inline void
 wlan_hdd_tsf_init(hdd_context_t *hdd_ctx)
@@ -123,12 +116,6 @@ static inline int hdd_indicate_tsf(hdd_adapter_t *adapter,
 
 static inline int
 hdd_capture_tsf(hdd_adapter_t *adapter, uint32_t *buf, int len)
-{
-	return -ENOTSUPP;
-}
-
-static inline int
-wlan_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info)
 {
 	return -ENOTSUPP;
 }
@@ -221,7 +208,7 @@ void hdd_tsf_notify_wlan_state_change(hdd_adapter_t *adapter,
  *
  * Return: Describe the execute result of this routine
  */
-int hdd_tx_timestamp(adf_nbuf_t netbuf, uint64_t target_time);
+int hdd_tx_timestamp(int32_t status, adf_nbuf_t netbuf, uint64_t target_time);
 
 /**
  * hdd_rx_timestamp() - time stamp RX netbuf
@@ -278,7 +265,7 @@ void hdd_tsf_notify_wlan_state_change(hdd_adapter_t *adapter,
 }
 
 static inline
-int hdd_tx_timestamp(adf_nbuf_t netbuf, uint64_t target_time)
+int hdd_tx_timestamp(int32_t status, adf_nbuf_t netbuf, uint64_t target_time)
 {
 	return -ENOTSUPP;
 }
@@ -293,6 +280,17 @@ static inline void
 hdd_tsf_record_sk_for_skb(hdd_context_t *hdd_ctx, adf_nbuf_t nbuf)
 {
 }
+#endif
+
+#ifdef WLAN_FEATURE_TSF_PTP
+/**
+ * wlan_get_ts_info() - return ts info to uplayer
+ * @dev: pointer to net_device
+ * @info: pointer to ethtool_ts_info
+ *
+ * Return: Describe the execute result of this routine
+ */
+int wlan_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info);
 #endif
 
 #endif

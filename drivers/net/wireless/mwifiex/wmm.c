@@ -241,7 +241,7 @@ mwifiex_wmm_setup_queue_priorities(struct mwifiex_private *priv,
 
 	dev_dbg(priv->adapter->dev, "info: WMM Parameter IE: version=%d, "
 		"qos_info Parameter Set Count=%d, Reserved=%#x\n",
-		wmm_ie->vend_hdr.version, wmm_ie->qos_info_bitmap &
+		wmm_ie->version, wmm_ie->qos_info_bitmap &
 		IEEE80211_WMM_IE_AP_QOSINFO_PARAM_SET_CNT_MASK,
 		wmm_ie->reserved);
 
@@ -790,6 +790,10 @@ int mwifiex_ret_wmm_get_status(struct mwifiex_private *priv,
 				" WMM Parameter Set Count: %d\n",
 				wmm_param_ie->qos_info_bitmap &
 				IEEE80211_WMM_IE_AP_QOSINFO_PARAM_SET_CNT_MASK);
+
+			if (wmm_param_ie->vend_hdr.len + 2 >
+				sizeof(struct ieee_types_wmm_parameter))
+				break;
 
 			memcpy((u8 *) &priv->curr_bss_params.bss_descriptor.
 			       wmm_ie, wmm_param_ie,

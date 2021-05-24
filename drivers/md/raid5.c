@@ -1920,6 +1920,9 @@ static int resize_stripes(struct r5conf *conf, int newsize)
 	}
 	put_online_cpus();
 
+	conf->slab_cache = sc;
+	conf->active_name = 1-conf->active_name;
+
 	/* Step 4, return new stripes to service */
 	while(!list_empty(&newstripes)) {
 		nsh = list_entry(newstripes.next, struct stripe_head, lru);
@@ -1937,8 +1940,6 @@ static int resize_stripes(struct r5conf *conf, int newsize)
 	}
 	/* critical section pass, GFP_NOIO no longer needed */
 
-	conf->slab_cache = sc;
-	conf->active_name = 1-conf->active_name;
 	if (!err)
 		conf->pool_size = newsize;
 	return err;
@@ -2074,7 +2075,9 @@ static void raid5_end_read_request(struct bio * bi, int error)
 		    && !test_bit(R5_ReadNoMerge, &sh->dev[i].flags))
 			retry = 1;
 		if (retry)
-			if (test_bit(R5_ReadNoMerge, &sh->dev[i].flags)) {
+			if (sh->qd_idx >= 0 && sh->pd_idx == i)
+				set_bit(R5_ReadError, &sh->dev[i].flags);
+			else if (test_bit(R5_ReadNoMerge, &sh->dev[i].flags)) {
 				set_bit(R5_ReadError, &sh->dev[i].flags);
 				clear_bit(R5_ReadNoMerge, &sh->dev[i].flags);
 			} else

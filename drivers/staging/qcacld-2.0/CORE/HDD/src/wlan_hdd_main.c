@@ -141,6 +141,8 @@ extern int hdd_hostapd_stop (struct net_device *dev);
 #include <net/cnss_nl.h>
 #endif
 
+#include <wlan_hdd_spectral.h>
+
 #if defined(LINUX_QCMBR)
 #define SIOCIOCTLTX99 (SIOCDEVPRIVATE+13)
 #endif
@@ -187,6 +189,9 @@ static struct kparam_string fwpath = {
 static char *country_code;
 static int   enable_11d = -1;
 static int   enable_dfs_chan_scan = -1;
+#ifdef FEATURE_LARGE_PREALLOC
+static char *version_string = QWLAN_VERSIONSTR;
+#endif
 
 #ifndef MODULE
 static int wlan_hdd_inited;
@@ -1102,9 +1107,9 @@ static int __hdd_netdev_notifier_call(struct notifier_block * nb,
    hdd_context_t *pHddCtx;
 
    //Make sure that this callback corresponds to our device.
-   if ((strncmp(dev->name, "wlan", 4)) &&
+   if ((strncmp(dev->name, "wlan" IFNAME_SUFFIX, 4 + IFNAME_SUFFIX_SIZE)) &&
       (strncmp(dev->name, "softAP", 6)) &&
-      (strncmp(dev->name, "p2p", 3)))
+      (strncmp(dev->name, "p2p" IFNAME_SUFFIX, 3 + IFNAME_SUFFIX_SIZE)))
       return NOTIFY_DONE;
 
    if ((pAdapter->magic != WLAN_HDD_ADAPTER_MAGIC) ||
@@ -4112,7 +4117,8 @@ void hdd_indicate_mgmt_frame(tSirSmeMgmtFrameInd *frame_ind)
 						frame_ind->frameBuf,
 						frame_ind->frameType,
 						frame_ind->rxChan,
-						frame_ind->rxRssi);
+						frame_ind->rxRssi,
+						frame_ind->rx_flags);
 	return;
 }
 
@@ -8793,6 +8799,11 @@ static void hdd_update_tgt_services(hdd_context_t *hdd_ctx,
     } else {
         hdd_ctx->prevent_suspend = false;
     }
+
+    if (!cfg->fast_chswitch_cali_support)
+        cfg_ini->enable_fast_ch_switch_cali = false;
+    hddLog(VOS_TRACE_LEVEL_INFO, "%s: FastChSwitchCali support flag %d",
+           __func__, cfg_ini->enable_fast_ch_switch_cali);
 }
 
 /**
@@ -10369,10 +10380,7 @@ void hdd_full_pwr_cbk(void *callbackContext, eHalStatus status)
    hdd_context_t *pHddCtx = (hdd_context_t*)callbackContext;
 
    hddLog(VOS_TRACE_LEVEL_INFO_HIGH,"HDD full Power callback status = %d", status);
-   if(&pHddCtx->full_pwr_comp_var)
-   {
-      complete(&pHddCtx->full_pwr_comp_var);
-   }
+   complete(&pHddCtx->full_pwr_comp_var);
 }
 
 static void hdd_tx_fail_ind_callback(v_U8_t *MacAddr, v_U8_t seqNo)
@@ -10862,22 +10870,28 @@ static void hdd_set_multicast_list(struct net_device *dev)
   \return - ac, Queue Index/access category corresponding to UP in IP header
 
   --------------------------------------------------------------------------*/
-static v_U16_t hdd_select_queue(struct net_device *dev,
-                         struct sk_buff *skb
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
-                         , void *accel_priv
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
+uint16_t hdd_select_queue(struct net_device *dev, struct sk_buff *skb,
+			  struct net_device *sb_dev,
+			  select_queue_fallback_t fallback)
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+uint16_t hdd_select_queue(struct net_device *dev, struct sk_buff *skb,
+			  void *accel_priv, select_queue_fallback_t fallback)
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
+uint16_t hdd_select_queue(struct net_device *dev, struct sk_buff *skb,
+			  void *accel_priv)
+#else
+uint16_t hdd_select_queue(struct net_device *dev, struct sk_buff *skb)
 #endif
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0))
-                         , select_queue_fallback_t fallback
-#endif
-)
 {
-   return hdd_wmm_select_queue(dev, skb);
+	return hdd_wmm_select_queue(dev, skb);
 }
 
+#ifdef WLAN_FEATURE_TSF_PTP
 static const struct ethtool_ops wlan_ethtool_ops = {
 	.get_ts_info = wlan_get_ts_info,
 };
+#endif
 
 static struct net_device_ops wlan_drv_ops = {
       .ndo_open = hdd_open,
@@ -10911,6 +10925,7 @@ static struct net_device_ops wlan_mon_dev_ops = {
 	.ndo_stop = hdd_vir_mon_stop,
 };
 
+#ifdef WLAN_FEATURE_TSF_PTP
 void hdd_set_station_ops( struct net_device *pWlanDev )
 {
 	if (VOS_MONITOR_MODE == hdd_get_conparam())
@@ -10919,6 +10934,15 @@ void hdd_set_station_ops( struct net_device *pWlanDev )
 		pWlanDev->netdev_ops = &wlan_drv_ops;
 	pWlanDev->ethtool_ops = &wlan_ethtool_ops;
 }
+#else
+void hdd_set_station_ops( struct net_device *pWlanDev )
+{
+	if (VOS_MONITOR_MODE == hdd_get_conparam())
+		pWlanDev->netdev_ops = &wlan_mon_drv_ops;
+	else
+		pWlanDev->netdev_ops = &wlan_drv_ops;
+}
+#endif
 
 void hdd_set_monitor_ops(struct net_device *pwlan_dev)
 {
@@ -11085,11 +11109,12 @@ static hdd_adapter_t* hdd_alloc_station_adapter(hdd_context_t *pHddCtx,
        */
       hdd_set_needed_headroom(pWlanDev, pWlanDev->hard_header_len);
 
-      if (pHddCtx->cfg_ini->enableIPChecksumOffload)
+      if (pHddCtx->cfg_ini->enableIPChecksumOffload) {
          pWlanDev->features |= NETIF_F_HW_CSUM;
-      else if (pHddCtx->cfg_ini->enableTCPChkSumOffld)
+      } else if (pHddCtx->cfg_ini->enableTCPChkSumOffld) {
          pWlanDev->features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
-      pWlanDev->features |= NETIF_F_RXCSUM;
+         pWlanDev->features |= NETIF_F_RXCSUM;
+      }
       hdd_set_station_ops( pAdapter->dev );
 
       hdd_dev_setup_destructor(pWlanDev);
@@ -14801,6 +14826,8 @@ void hdd_wlan_exit(hdd_context_t *pHddCtx)
       hdd_set_idle_ps_config(pHddCtx, FALSE);
    }
 
+   hdd_spectral_deinit(pHddCtx);
+
    TRACK_UNLOAD_STATUS(unload_debugfs_exit);
    hdd_debugfs_exit(pHddCtx);
 
@@ -16426,7 +16453,7 @@ static void hdd_state_info_dump(char **buf_ptr, uint16_t *size)
 			len += scnprintf(buf + len, *size - len,
 				"\n device name: %s", adapter->dev->name);
 		len += scnprintf(buf + len, *size - len,
-				"\n device_mode: %d", adapter->device_mode);
+			"\n device_mode: %d", adapter->device_mode);
 		switch (adapter->device_mode) {
 		case WLAN_HDD_INFRA_STATION:
 		case WLAN_HDD_P2P_CLIENT:
@@ -16744,6 +16771,7 @@ int hdd_wlan_startup(struct device *dev, v_VOID_t *hif_sc)
 #endif
    int set_value;
    struct sme_5g_band_pref_params band_pref_params;
+   tpAniSirGlobal mac_ptr;
 
    ENTER();
 
@@ -17330,16 +17358,19 @@ int hdd_wlan_startup(struct device *dev, v_VOID_t *hif_sc)
       goto err_wiphy_unregister;
 #endif
 
-   /*Start VOSS which starts up the SME/MAC/HAL modules and everything else */
-   status = vos_start( pHddCtx->pvosContext );
-   if ( !VOS_IS_STATUS_SUCCESS( status ) )
-   {
-      hddLog(VOS_TRACE_LEVEL_FATAL,"%s: vos_start failed",__func__);
+   if (hdd_spectral_init(pHddCtx) == VOS_STATUS_E_FAILURE)
 #ifdef IPA_OFFLOAD
       goto err_ipa_cleanup;
 #else
       goto err_wiphy_unregister;
 #endif
+
+   /*Start VOSS which starts up the SME/MAC/HAL modules and everything else */
+   status = vos_start( pHddCtx->pvosContext );
+   if ( !VOS_IS_STATUS_SUCCESS( status ) )
+   {
+      hddLog(VOS_TRACE_LEVEL_FATAL,"%s: vos_start failed",__func__);
+      goto err_spectral_deinit;
    }
 
    /* Register Smart Antenna Module */
@@ -17409,7 +17440,7 @@ int hdd_wlan_startup(struct device *dev, v_VOID_t *hif_sc)
                                   rtnl_lock_enable);
    } else {
 #ifndef SUPPORT_P2P_BY_ONE_INTF_WLAN
-      pAdapter = hdd_open_adapter(pHddCtx, WLAN_HDD_INFRA_STATION, "wlan%d",
+      pAdapter = hdd_open_adapter(pHddCtx, WLAN_HDD_INFRA_STATION, "wlan" IFNAME_SUFFIX "%d",
                                   wlan_hdd_get_intf_addr(pHddCtx),
                                   NET_NAME_UNKNOWN,
                                   rtnl_lock_enable);
@@ -17447,7 +17478,7 @@ int hdd_wlan_startup(struct device *dev, v_VOID_t *hif_sc)
          }
 
 #ifndef SUPPORT_P2P_BY_ONE_INTF_WLAN
-         pP2pAdapter = hdd_open_adapter(pHddCtx, WLAN_HDD_P2P_DEVICE, "p2p%d",
+         pP2pAdapter = hdd_open_adapter(pHddCtx, WLAN_HDD_P2P_DEVICE, "p2p" IFNAME_SUFFIX "%d",
 #else
          pP2pAdapter = hdd_open_adapter(pHddCtx, WLAN_HDD_INFRA_STATION, "wlan%d",
 #endif
@@ -17870,6 +17901,26 @@ int hdd_wlan_startup(struct device *dev, v_VOID_t *hif_sc)
    hdd_set_btc_bt_wlan_interval(pHddCtx);
 
    hdd_runtime_suspend_init(pHddCtx);
+
+   if (vos_is_fast_chswitch_cali_enabled()) {
+       mac_ptr = PMAC_STRUCT(pHddCtx->hHal);
+       init_completion(&mac_ptr->full_chan_cal);
+       ret = process_wma_set_command(0, WMI_PDEV_CHECK_CAL_VERSION_CMDID,
+                                     0, PDEV_CMD);
+       if (0 != ret) {
+           hddLog(VOS_TRACE_LEVEL_ERROR,
+                  "%s: WMI_PDEV_CHECK_CAL_VERSION_CMDID failed %d",
+                  __func__, ret);
+       }
+       sme_set_cali_chanlist(mac_ptr);
+       rc = wait_for_completion_timeout(
+	 &mac_ptr->full_chan_cal,
+	 msecs_to_jiffies(6000));
+       if (!rc)
+           hddLog(VOS_TRACE_LEVEL_ERROR,
+                  "%s: cali timeout", __func__);
+   }
+
    pHddCtx->isLoadInProgress = FALSE;
    vos_set_load_unload_in_progress(VOS_MODULE_ID_VOSS, FALSE);
    vos_set_load_in_progress(VOS_MODULE_ID_VOSS, FALSE);
@@ -17948,8 +17999,8 @@ err_close_cesium:
 err_ptt_sock_activate_svc:
 #ifdef PTT_SOCK_SVC_ENABLE
    ptt_sock_deactivate_svc();
-#endif
 err_oem_activate_service:
+#endif
 #ifdef FEATURE_OEM_DATA_SUPPORT
    oem_deactivate_service();
 #endif
@@ -17990,6 +18041,9 @@ err_close_adapter:
 
 err_vosstop:
    vos_stop(pVosContext);
+
+err_spectral_deinit:
+   hdd_spectral_deinit(pHddCtx);
 
 #ifdef IPA_OFFLOAD
 err_ipa_cleanup:
@@ -18297,7 +18351,9 @@ static int hdd_driver_init( void)
 
    return ret_status;
 }
-
+#ifdef FEATURE_LARGE_PREALLOC
+EXPORT_SYMBOL(hdd_driver_init);
+#endif
 /**---------------------------------------------------------------------------
 
   \brief hdd_module_init() - Init Function
@@ -18309,6 +18365,7 @@ static int hdd_driver_init( void)
   \return - 0 for success, non zero for failure
 
   --------------------------------------------------------------------------*/
+#ifndef FEATURE_LARGE_PREALLOC
 #ifdef MODULE
 static int __init hdd_module_init ( void)
 {
@@ -18321,6 +18378,7 @@ static int __init hdd_module_init ( void)
    return 0;
 }
 #endif /* #ifdef MODULE */
+#endif /* #ifndef FEATURE_LARGE_PREALLOC*/
 
 static struct timer_list unload_timer;
 static bool unload_timer_started;
@@ -18332,18 +18390,6 @@ static bool unload_timer_started;
 #endif
 
 /**
- * hdd_unload_timer_init() - API to initialize unload timer
- *
- * initialize unload timer
- *
- * Return: None
- */
-static void hdd_unload_timer_init(void)
-{
-	init_timer(&unload_timer);
-}
-
-/**
  * hdd_unload_timer_del() - API to Delete unload timer
  *
  * Delete unload timer
@@ -18352,7 +18398,7 @@ static void hdd_unload_timer_init(void)
  */
 static void hdd_unload_timer_del(void)
 {
-	del_timer(&unload_timer);
+	adf_os_timer_cancel(&unload_timer);
 	unload_timer_started = false;
 }
 
@@ -18363,7 +18409,11 @@ static void hdd_unload_timer_del(void)
  *
  * Return: None
  */
-static void hdd_unload_timer_cb(unsigned long data)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+static void hdd_unload_timer_cb(struct timer_list *t)
+#else
+static void hdd_unload_timer_cb(void *data)
+#endif
 {
 	v_CONTEXT_t vos_context = NULL;
 	hdd_context_t *hdd_ctx = NULL;
@@ -18389,6 +18439,19 @@ static void hdd_unload_timer_cb(unsigned long data)
 }
 
 /**
+ * hdd_unload_timer_init() - API to initialize unload timer
+ *
+ * initialize unload timer
+ *
+ * Return: None
+ */
+static void hdd_unload_timer_init(void)
+{
+	adf_os_timer_init(NULL, &unload_timer,
+			  hdd_unload_timer_cb, NULL, ADF_NON_DEFERRABLE_TIMER);
+}
+
+/**
  * hdd_unload_timer_start() - API to start unload timer
  * @msec: timer interval in msec units
  *
@@ -18402,9 +18465,7 @@ static void hdd_unload_timer_start(int msec)
 		hddLog(VOS_TRACE_LEVEL_FATAL,
 			"%s: Starting unload timer when it's running!",
 			__func__);
-	unload_timer.expires = jiffies + msecs_to_jiffies(msec);
-	unload_timer.function = hdd_unload_timer_cb;
-	add_timer(&unload_timer);
+	adf_os_timer_start(&unload_timer, msec);
 	unload_timer_started = true;
 }
 /**---------------------------------------------------------------------------
@@ -18512,6 +18573,9 @@ done:
    hdd_wlan_wakelock_destroy();
    pr_info("%s: driver unloaded\n", WLAN_MODULE_NAME);
 }
+#ifdef FEATURE_LARGE_PREALLOC
+EXPORT_SYMBOL(hdd_driver_exit);
+#endif
 
 /**---------------------------------------------------------------------------
 
@@ -18524,6 +18588,7 @@ done:
   \return - None
 
   --------------------------------------------------------------------------*/
+#ifndef FEATURE_LARGE_PREALLOC
 static void __exit hdd_module_exit(void)
 {
    hdd_driver_exit();
@@ -18617,6 +18682,7 @@ static int con_mode_handler(const char *kmessage,
 #endif
 #endif /* #ifdef MODULE */
 
+#endif
 /**---------------------------------------------------------------------------
 
   \brief hdd_get_conparam() -
@@ -19410,7 +19476,8 @@ void hdd_ch_avoid_cb
                        ch_avoid_indi->avoid_freq_range[range_loop].end_freq) {
                end_channel_idx = channel_loop;
                if (rfChannels[channel_loop].targetFreq >
-                        ch_avoid_indi->avoid_freq_range[range_loop].end_freq)
+                   ch_avoid_indi->avoid_freq_range[range_loop].end_freq &&
+                   end_channel_idx > 0)
                    end_channel_idx--;
                break;
             }
@@ -20869,6 +20936,7 @@ void hdd_initialize_adapter_common(hdd_adapter_t *adapter)
 }
 
 //Register the module init/exit functions
+#ifndef FEATURE_LARGE_PREALLOC
 module_init(hdd_module_init);
 module_exit(hdd_module_exit);
 
@@ -20907,3 +20975,26 @@ module_param(enable_11d, int,
 module_param(country_code, charp,
              S_IRUSR | S_IRGRP | S_IROTH);
 
+#else /* FEATURE_LARGE_PREALLOC */
+
+/**
+ * register_wlan_module_parameters_callback() - set module params
+ * @con_mode_set: con_mode
+ * @country_code_set: pointer to country code
+ * @version_string_set: pointer to version string
+ *
+ * At the time of driver startup, set basic initial params
+ *
+ * No return
+ */
+void register_wlan_module_parameters_callback(int con_mode_set,
+                                char* country_code_set,
+                                char* version_string_set
+)
+{
+	con_mode = con_mode_set;
+	country_code = country_code_set;
+	version_string = version_string_set;
+}
+EXPORT_SYMBOL(register_wlan_module_parameters_callback);
+#endif /* #ifndef FEATURE_LARGE_PREALLOC */

@@ -100,7 +100,7 @@ struct panel_param {
 
 static inline const char *mdss_panel2str(u32 panel)
 {
-	static const char const *names[] = {
+	static const char * const names[] = {
 #define PANEL_NAME(n) [n ## _PANEL] = __stringify(n)
 		PANEL_NAME(MIPI_VIDEO),
 		PANEL_NAME(MIPI_CMD),
@@ -1153,18 +1153,6 @@ static inline u8 mdss_panel_calc_frame_rate(struct mdss_panel_info *pinfo)
  * controller.
  */
 struct mdss_panel_cfg *mdss_panel_intf_type(int intf_val);
-
-#if defined(CONFIG_MACH_LENOVO_TB8703) || defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804)
-/**
- * mdss_panel_get_boot_cfg() - checks if bootloader config present
- *
- * Function returns true if bootloader has configured the parameters
- * for primary controller and panel config data.
- *
- * returns true if bootloader configured, else false
- */
-int mdss_panel_get_boot_cfg(void);
-#endif
 
 /**
  * mdss_is_ready() - checks if mdss is probed and ready

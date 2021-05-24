@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2018 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2019 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -39,43 +39,13 @@
 #include <linux/msm_bcl.h>
 #include <linux/ktime.h>
 #include <linux/pmic-voter.h>
-#ifdef CONFIG_MACH_LENOVO_TBX704
-#include "couloMeter.h"  //stone add
 
-///* stone add for debug start *///
-//#define DEBUG
-#define  COULOMETER_QPNP_SMBCHARGER_DEBUG
-#ifdef      COULOMETER_QPNP_SMBCHARGER_DEBUG
-#define LOG_INF pr_err
-#else
-#define LOG_INF pr_debug
-#endif
-///* stone add for debug end *///
-#endif
-
-#ifdef CONFIG_USB_FUSB302
-extern bool have_fusb302;
-#endif
 /* Mask/Bit helpers */
 #define _SMB_MASK(BITS, POS) \
 	((unsigned char)(((1 << (BITS)) - 1) << (POS)))
 #define SMB_MASK(LEFT_BIT_POS, RIGHT_BIT_POS) \
 		_SMB_MASK((LEFT_BIT_POS) - (RIGHT_BIT_POS) + 1, \
 				(RIGHT_BIT_POS))
-
-bool g_charger_present;
-#if defined(CONFIG_MACH_LENOVO_TB8704)
-/*2017-03-06 Bert add for usb prevent short*/
-bool usb_conn_flag = 1;
-int usb_ss_sel;
-#endif
-
-#if defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804) //modify_liml_2016_12_15_for battery runin test
-#define runin_test_for_battery_level
-#ifdef runin_test_for_battery_level
-static int BatteryTestStatus_enable = 0;
-#endif
-#endif
 /* Config registers */
 struct smbchg_regulator {
 	struct regulator_desc	rdesc;
@@ -125,9 +95,7 @@ struct smbchg_version_tables {
 	int				aicl_rerun_period_len;
 	int				rchg_thr_mv;
 };
-#ifdef CONFIG_MACH_LENOVO_TBX704
-extern int is_pd_5v_insertion;
-#endif
+
 struct smbchg_chip {
 	struct device			*dev;
 	struct spmi_device		*spmi;
@@ -211,10 +179,6 @@ struct smbchg_chip {
 	int				max_pulse_allowed;
 	int				wake_reasons;
 	int				previous_soc;
-	#ifdef CONFIG_MACH_LENOVO_TBX704
-	int                           last_soc;
-	ktime_t                  last_time;
-	#endif
 	int				usb_online;
 	bool				dc_present;
 	bool				usb_present;
@@ -237,9 +201,6 @@ struct smbchg_chip {
 	u32				wa_flags;
 	int				usb_icl_delta;
 	bool				typec_dfp;
-#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
-	bool                             usb_pd_flag;
-#endif
 
 	/* jeita and temperature */
 	bool				batt_hot;
@@ -292,15 +253,7 @@ struct smbchg_chip {
 	struct smbchg_regulator		ext_otg_vreg;
 	struct work_struct		usb_set_online_work;
 	struct delayed_work		vfloat_adjust_work;
-#if defined(CONFIG_MACH_LENOVO_TB8704)
-/*2017-03-06 Bert add for usb prevent short*/
-	struct delayed_work		usb_conn_check_work;
-	struct workqueue_struct *usb_conn_check_workqueue;
-#endif
 	struct delayed_work		hvdcp_det_work;
-	#ifdef CONFIG_MACH_LENOVO_TBX704
-	ktime_t                         last_hvdcp9v;
-	#endif
 	spinlock_t			sec_access_lock;
 	struct mutex			therm_lvl_lock;
 	struct mutex			usb_set_online_lock;
@@ -320,10 +273,7 @@ struct smbchg_chip {
 	bool				skip_usb_notification;
 	u32				vchg_adc_channel;
 	struct qpnp_vadc_chip		*vchg_vadc_dev;
-#if defined(CONFIG_MACH_LENOVO_TB8704)
-/*2017-03-06 Bert add for usb prevent short*/
-	struct qpnp_vadc_chip		*mpp1_vadc_dev;
-#endif
+
 	/* voters */
 	struct votable			*fcc_votable;
 	struct votable			*usb_icl_votable;
@@ -467,20 +417,12 @@ enum wake_reason {
 #define	HVDCP_OTG_VOTER			"HVDCP_OTG_VOTER"
 #define	HVDCP_PULSING_VOTER		"HVDCP_PULSING_VOTER"
 
-#ifdef CONFIG_MACH_LENOVO_TBX704
-static int smbchg_debug_mask=0xff;
-#else
 static int smbchg_debug_mask;
-#endif
 module_param_named(
 	debug_mask, smbchg_debug_mask, int, S_IRUSR | S_IWUSR
 );
 
-#ifdef CONFIG_MACH_LENOVO_TB8703
-static int smbchg_parallel_en = 0;
-#else
 static int smbchg_parallel_en = 1;
-#endif
 module_param_named(
 	parallel_en, smbchg_parallel_en, int, S_IRUSR | S_IWUSR
 );
@@ -496,30 +438,20 @@ module_param_named(
 	main_chg_icl_percent, smbchg_main_chg_icl_percent,
 	int, S_IRUSR | S_IWUSR
 );
-#ifdef CONFIG_MACH_LENOVO_TBX704
-static int smbchg_default_hvdcp_icl_ma = 2500;
-#else
+
 static int smbchg_default_hvdcp_icl_ma = 1800;
-#endif
 module_param_named(
 	default_hvdcp_icl_ma, smbchg_default_hvdcp_icl_ma,
 	int, S_IRUSR | S_IWUSR
 );
-#ifdef CONFIG_MACH_LENOVO_TBX704
-static int smbchg_default_hvdcp3_icl_ma = 2500;
-#else
+
 static int smbchg_default_hvdcp3_icl_ma = 3000;
-#endif
 module_param_named(
 	default_hvdcp3_icl_ma, smbchg_default_hvdcp3_icl_ma,
 	int, S_IRUSR | S_IWUSR
 );
 
-#if defined(CONFIG_MACH_LENOVO_TBX704) || defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804) || defined(CONFIG_MACH_LENOVO_TB8504)
-static int smbchg_default_dcp_icl_ma = 2000;
-#else
 static int smbchg_default_dcp_icl_ma = 1800;
-#endif
 module_param_named(
 	default_dcp_icl_ma, smbchg_default_dcp_icl_ma,
 	int, S_IRUSR | S_IWUSR
@@ -972,18 +904,9 @@ static void read_usb_type(struct smbchg_chip *chip, char **usb_type_name,
 		*usb_supply_type = POWER_SUPPLY_TYPE_UNKNOWN;
 		return;
 	}
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	if (is_pd_5v_insertion == 2)
-	{
-		*usb_type_name = "SDP";
-		*usb_supply_type = POWER_SUPPLY_TYPE_USB;
-	}else
-#endif
-	{
-		type = get_type(reg);
-		*usb_type_name = get_usb_type_name(type);
-		*usb_supply_type = get_usb_supply_type(type);
-	}
+	type = get_type(reg);
+	*usb_type_name = get_usb_type_name(type);
+	*usb_supply_type = get_usb_supply_type(type);
 }
 
 #define CHGR_STS			0x0E
@@ -1005,8 +928,6 @@ static int get_prop_batt_status(struct smbchg_chip *chip)
 
 	charger_present = is_usb_present(chip) | is_dc_present(chip) |
 			  chip->hvdcp_3_det_ignore_uv;
-	g_charger_present = charger_present;
-
 	if (!charger_present)
 		return POWER_SUPPLY_STATUS_DISCHARGING;
 
@@ -1138,160 +1059,20 @@ static int get_property_from_fg(struct smbchg_chip *chip,
 	*val = ret.intval;
 	return rc;
 }
-#ifdef CONFIG_MACH_LENOVO_TBX704
-static int get_prop_batt_voltage_now(struct smbchg_chip *chip);
-static bool get_prop_batt_fg_soc_changed(struct smbchg_chip *chip );
-static int get_prop_batt_current_now(struct smbchg_chip *chip);
-#endif
 
 #define DEFAULT_BATT_CAPACITY	50
 static int get_prop_batt_capacity(struct smbchg_chip *chip)
 {
-#ifdef CONFIG_MACH_LENOVO_TBX704
-    int capacity;
-    int capacity_int;
-    int rc;  //s64 elapsed_us ;
-    int chg_status = POWER_SUPPLY_STATUS_UNKNOWN;
-    int voltage_ext;
-    int voltage_int;
-    int current_int;
-    ktime_t now = ktime_get_boottime();
-
-	if(g_power_is_couloMeter == 0)
-		goto  internal_soc;
-
-	capacity = cm_get_StateOfCharge();
-	if((capacity == 50) && (g_power_is_couloMeter==0 ))
-		goto	internal_soc;
-
-	capacity_int = capacity;
-	if ((capacity_int > 100) || (capacity_int < 0))
-		goto internal_soc;
-
-	if((capacity_int ==100)&&(chip->last_soc == 99))
-	{
-		voltage_ext = cm_get_Voltage();
-		voltage_int = voltage_ext;
-		pr_err("lvchen external voltage is %d, chip->last_soc=%d\n", voltage_int, chip->last_soc);
-	}
-	   goto return_soc;
-
-internal_soc:
-	if (chip->fake_battery_soc >= 0)
-		return chip->fake_battery_soc;
-
-	rc = get_property_from_fg(chip, POWER_SUPPLY_PROP_CAPACITY, &capacity_int);
-	if (rc) {
-		pr_smb(PR_STATUS, "Couldn't get capacity rc = %d\n", rc);
-		capacity_int = DEFAULT_BATT_CAPACITY;
-	}
-	pr_smb(PR_STATUS, "wangs: get internal capcity is %d\n", capacity_int);
-
-	if( ( chip->last_soc == 50 ) &&( abs( capacity_int - chip->last_soc ) >1) )
-	{
-		  chip->last_soc = capacity_int;
-	}
-
-	 if( (capacity_int ==100)&&(chip->last_soc ==99) )
-    {
-		voltage_int = get_prop_batt_voltage_now(chip);
-		voltage_int /= 1000;
-		pr_err("lvchen internal voltage is %d\n", voltage_int);
-	 }
-
-return_soc:
-	if(chip->last_soc < 0)
-	{
-		pr_smb(PR_STATUS,"wangs: the first get capacity = %d\n", capacity_int);
-		chip->last_soc = capacity_int;
-		chip->last_time.tv64 = 0;
-		return chip->last_soc;
-	}
-
-	if(  ktime_to_ms(ktime_sub( now, chip->last_time)) < 2000 )
-	{
-		pr_smb(PR_STATUS,"lvchen return %d, time less than 2s\n",chip->last_soc );
-		return chip->last_soc;
-	}
-	if(  abs( capacity_int - chip->last_soc ) >1	 )
-	{
-		chg_status = get_prop_batt_status(chip) ;
-		current_int = get_prop_batt_current_now(chip);
-		pr_err("wangs: capacity_int=%d, chg_status=%d, current_int=%d", capacity_int, chg_status, current_int);
-
-		if((capacity_int - chip->last_soc  >1) &&
-			(chg_status != POWER_SUPPLY_STATUS_CHARGING) && (chg_status != POWER_SUPPLY_STATUS_FULL))
-		{
-			pr_err("lvchen return %d,chg_status no charging no full\n", chip->last_soc);
-			return chip->last_soc;
-		}
-		if((chip->last_soc - capacity_int > 1) &&
-		(chg_status == POWER_SUPPLY_STATUS_CHARGING) && (current_int < 0))
-		{
-			pr_err("lvchen return %d,chg_status real charging", chip->last_soc);
-			return chip->last_soc;
-		}
-		if(get_prop_batt_fg_soc_changed(chip) == 0)
-		{
-			pr_err("csz fg_changed no");
-			return chip->last_soc;
-		}
-
-		capacity_int = capacity_int> chip->last_soc ? chip->last_soc+1 : chip->last_soc-1 ;
-		chip->last_time.tv64= now.tv64 ;
-	}
-    if( (capacity_int == 100) && (chip->last_soc == 99) &&( voltage_int < 4360))
-	{
-		pr_err("wangs: charging No full keep capacity to 99 percent !\n");
-		return chip->last_soc;
-	}
-
-    if((capacity_int == 99) && (chip->last_soc == 100))
-    {
-        chg_status = get_prop_batt_status(chip);
-        if(chg_status == POWER_SUPPLY_STATUS_FULL) {
-            pr_err("wangs: charging full keep capacity to 100 percent !\n");
-            return chip->last_soc;
-        }
-    }
-
-	chip->last_soc = capacity_int;
-	pr_smb(PR_STATUS, "wangs: return capcity is %d\n", capacity_int);
-	return capacity_int;
-}
-
-static bool get_prop_batt_fg_soc_changed(struct smbchg_chip *chip )
-{
-	int soc_changed, rc;
-	rc = get_property_from_fg(chip,POWER_SUPPLY_PROP_CALIBRATE, &soc_changed);
-	if(rc){
-		pr_smb(PR_STATUS, "Couldn't get soc changed irq rc = %d\n",rc);
-		soc_changed = true;
-	 }
-	 return soc_changed;
-}
-
-static int get_prop_batt_capacity_ori(struct smbchg_chip *chip)
-{
-#endif
 	int capacity, rc;
 
-	if (chip->fake_battery_soc >= 0) {
-#ifdef CONFIG_MACH_LENOVO_TBX704
-		pr_err("get_prop_batt_capacity_ori  chip->fake_battery_soc = %d\n", chip->fake_battery_soc);
-#endif
+	if (chip->fake_battery_soc >= 0)
 		return chip->fake_battery_soc;
-	}
 
 	rc = get_property_from_fg(chip, POWER_SUPPLY_PROP_CAPACITY, &capacity);
 	if (rc) {
 		pr_smb(PR_STATUS, "Couldn't get capacity rc = %d\n", rc);
 		capacity = DEFAULT_BATT_CAPACITY;
 	}
-	
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	pr_err("lvchen get_prop_batt_capacity_ori return %d\n",capacity);
-#endif
 	return capacity;
 }
 
@@ -1305,10 +1086,6 @@ static int get_prop_batt_temp(struct smbchg_chip *chip)
 		pr_smb(PR_STATUS, "Couldn't get temperature rc = %d\n", rc);
 		temp = DEFAULT_BATT_TEMP;
 	}
-#ifdef CONFIG_MACH_LENOVO_TB8703
-	if (temp < -15)
-		temp -= 30;
-#endif
 	return temp;
 }
 
@@ -1339,7 +1116,6 @@ static int get_prop_batt_resistance_id(struct smbchg_chip *chip)
 	return rbatt;
 }
 
-#ifndef CONFIG_MACH_LENOVO_TB8804        //add by longcheer_liml_2016_12_15
 #define DEFAULT_BATT_FULL_CHG_CAPACITY	0
 static int get_prop_batt_full_charge(struct smbchg_chip *chip)
 {
@@ -1352,7 +1128,6 @@ static int get_prop_batt_full_charge(struct smbchg_chip *chip)
 	}
 	return bfc;
 }
-#endif
 
 #define DEFAULT_BATT_VOLTAGE_NOW	0
 static int get_prop_batt_voltage_now(struct smbchg_chip *chip)
@@ -1408,11 +1183,7 @@ static void get_property_from_typec(struct smbchg_chip *chip,
 			property, rc);
 }
 
-#ifdef CONFIG_MACH_LENOVO_TBX704
-static int  update_typec_status(struct smbchg_chip *chip)
-#else
 static void update_typec_status(struct smbchg_chip *chip)
-#endif
 {
 	union power_supply_propval type = {0, };
 	union power_supply_propval capability = {0, };
@@ -1435,16 +1206,9 @@ static void update_typec_status(struct smbchg_chip *chip)
 			pr_smb(PR_TYPEC, "SMB Type-C mode = %d, current=%d\n",
 					type.intval, capability.intval);
 		}
-		
-#ifdef CONFIG_MACH_LENOVO_TBX704
-		return 0;
-#endif
 	} else {
 		pr_smb(PR_TYPEC,
 			"typec detection not completed continuing with USB update\n");
-#ifdef CONFIG_MACH_LENOVO_TBX704
-		return 1;
-#endif
 	}
 }
 
@@ -1799,18 +1563,7 @@ static struct power_supply *get_parallel_psy(struct smbchg_chip *chip)
 		pr_smb(PR_STATUS, "parallel charger not found\n");
 	return chip->parallel.psy;
 }
-#ifdef CONFIG_MACH_LENOVO_TBX704
-static bool is_otg_present_usb(struct smbchg_chip *chip)
-{
-	union power_supply_propval prop = {0,};
-	if (chip->usb_psy)
-		chip->usb_psy->get_property(chip->usb_psy,
-				POWER_SUPPLY_PROP_USB_OTG, &prop);
-	return prop.intval != 0;
-}
 
-extern int typeC_orientation;
-#endif
 static void smbchg_usb_update_online_work(struct work_struct *work)
 {
 	struct smbchg_chip *chip = container_of(work,
@@ -1819,9 +1572,6 @@ static void smbchg_usb_update_online_work(struct work_struct *work)
 	bool user_enabled = !get_client_vote(chip->usb_suspend_votable,
 						USER_EN_VOTER);
 	int online;
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	union power_supply_propval typec_orientation;
-#endif
 
 	online = user_enabled && chip->usb_present && !chip->very_weak_charger;
 
@@ -1831,30 +1581,6 @@ static void smbchg_usb_update_online_work(struct work_struct *work)
 		power_supply_set_online(chip->usb_psy, online);
 		chip->usb_online = online;
 	}
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	if((chip->usb_online)&&(have_fusb302)) //&&(is_pd_5v_insertion) )
-	{
-		typec_orientation.intval = typeC_orientation;
-                chip->typec_psy->set_property(chip->typec_psy, POWER_SUPPLY_PROP_TYPEC_ORIENTATION, &typec_orientation);
-		if((is_otg_present(chip))&&(!is_otg_present_usb(chip)))
-		{ pr_err("\n csz re enable otg \n ");
-		  power_supply_set_usb_otg(chip->usb_psy,1);
-		}
-	}
-	if((!(chip->usb_online)) &&(have_fusb302))
-	{
-		if((!is_otg_present(chip)))
-		{
-			typec_orientation.intval = 2;
-			chip->typec_psy->set_property(chip->typec_psy, POWER_SUPPLY_PROP_TYPEC_ORIENTATION, &typec_orientation);
-		}
-		if(( !is_otg_present(chip))&&(is_otg_present_usb(chip)))
-		{
-			pr_err("\n csz re disable otg\n");
-			power_supply_set_usb_otg(chip->usb_psy,0);
-		}
-	}
-#endif
 	mutex_unlock(&chip->usb_set_online_lock);
 }
 
@@ -1931,17 +1657,6 @@ static int smbchg_set_high_usb_chg_current(struct smbchg_chip *chip,
 				USBIN_MODE_CHG_BIT, USBIN_HC_MODE);
 	if (rc < 0)
 		dev_err(chip->dev, "Couldn't write cfg 5 rc = %d\n", rc);
-//yangxiwang add 20170328
-#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
-	if(chip->usb_pd_flag == true)
-	{
-		rc = smbchg_masked_write(chip,chip->usb_chgpth_base + CMD_IL,
-					ICL_OVERRIDE_BIT, ICL_OVERRIDE_BIT);
-		if (rc < 0)
-			pr_err("Couldn't set ICL override rc = %d\n",rc);
-	}
-#endif
-// add end
 	chip->usb_max_current_ma = chip->tables.usb_ilim_ma_table[i];
 	return rc;
 }
@@ -1986,9 +1701,7 @@ static int smbchg_set_usb_current_max(struct smbchg_chip *chip,
 
 		/* handle special SDP case when USB reports high current */
 		if (current_ma > CURRENT_900_MA) {
-#ifndef CONFIG_MACH_LENOVO_TBX704
 			if (chip->cfg_override_usb_current) {
-#endif
 				/*
 				 * allow setting the current value as reported
 				 * by USB driver.
@@ -2006,12 +1719,10 @@ static int smbchg_set_usb_current_max(struct smbchg_chip *chip,
 				if (rc < 0)
 					pr_err("Couldn't set ICL override rc = %d\n",
 							rc);
-#ifndef CONFIG_MACH_LENOVO_TBX704
 			} else {
 				/* default to 500mA */
 				current_ma = CURRENT_500_MA;
 			}
-#endif
 			pr_smb(PR_STATUS,
 				"override_usb_current=%d current_ma set to %d\n",
 				chip->cfg_override_usb_current, current_ma);
@@ -4233,13 +3944,6 @@ static void check_battery_type(struct smbchg_chip *chip)
 	}
 }
 
-#ifndef CONFIG_MACH_LENOVO_TBX704
-static int rerun_apsd(struct smbchg_chip *chip);
-void update_usb_status(struct smbchg_chip *chip, bool usb_present, bool force);
-#define HVDCP_NOTIFY_MS		2500
-#endif
-
-
 static int smbchg_otg_regulator_enable(struct regulator_dev *rdev)
 {
 	int rc = 0;
@@ -4382,11 +4086,7 @@ static int smbchg_external_otg_regulator_disable(struct regulator_dev *rdev)
 	 * value in order to allow normal USBs to be recognized as a valid
 	 * input.
 	 */
-#ifdef CONFIG_MACH_LENOVO_TB8703
-	rc = vote(chip->hvdcp_enable_votable, HVDCP_OTG_VOTER, true, 0);
-#else
 	rc = vote(chip->hvdcp_enable_votable, HVDCP_OTG_VOTER, false, 1);
-#endif
 	if (rc < 0) {
 		dev_err(chip->dev, "Couldn't enable HVDCP rc=%d\n", rc);
 		return rc;
@@ -4958,13 +4658,9 @@ static int smbchg_set_optimal_charging_mode(struct smbchg_chip *chip, int type)
 
 	return 0;
 }
-#ifdef CONFIG_MACH_LENOVO_TBX704
-#define DEFAULT_SDP_MA		500
-#define DEFAULT_CDP_MA		900
-#else
+
 #define DEFAULT_SDP_MA		100
 #define DEFAULT_CDP_MA		1500
-#endif
 static int smbchg_change_usb_supply_type(struct smbchg_chip *chip,
 						enum power_supply_type type)
 {
@@ -4984,25 +4680,9 @@ static int smbchg_change_usb_supply_type(struct smbchg_chip *chip,
 	 * modes, skip all BC 1.2 current if external typec is supported.
 	 * Note: for SDP supporting current based on USB notifications.
 	 */
-#ifndef CONFIG_MACH_LENOVO_TBX704
 	if (chip->typec_psy && (type != POWER_SUPPLY_TYPE_USB))
 		current_limit_ma = chip->typec_current_ma;
-	else
-#endif
-#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
-	if (chip->typec_psy && ((type != POWER_SUPPLY_TYPE_USB)||chip->usb_pd_flag == true))
-	{
-		if(type == POWER_SUPPLY_TYPE_USB_DCP)
-			current_limit_ma = smbchg_default_dcp_icl_ma;
-		else if (type == POWER_SUPPLY_TYPE_USB_HVDCP)
-			current_limit_ma = smbchg_default_hvdcp_icl_ma;
-		else if (type == POWER_SUPPLY_TYPE_USB_HVDCP_3)
-			current_limit_ma = smbchg_default_hvdcp3_icl_ma;
-		else
-			current_limit_ma = chip->typec_current_ma;
-	}
-#endif
-	if (type == POWER_SUPPLY_TYPE_USB)
+	else if (type == POWER_SUPPLY_TYPE_USB)
 		current_limit_ma = DEFAULT_SDP_MA;
 	else if (type == POWER_SUPPLY_TYPE_USB)
 		current_limit_ma = DEFAULT_SDP_MA;
@@ -5014,12 +4694,7 @@ static int smbchg_change_usb_supply_type(struct smbchg_chip *chip,
 		current_limit_ma = smbchg_default_hvdcp3_icl_ma;
 	else
 		current_limit_ma = smbchg_default_dcp_icl_ma;
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	if (is_pd_5v_insertion == 1)
-		current_limit_ma = 2000;
-	if (is_pd_5v_insertion == 2)
-		current_limit_ma = 500;
-#endif
+
 	pr_smb(PR_STATUS, "Type %d: setting mA = %d\n",
 		type, current_limit_ma);
 	rc = vote(chip->usb_icl_votable, PSY_ICL_VOTER, true,
@@ -5132,57 +4807,7 @@ static void smbchg_hvdcp_det_work(struct work_struct *work)
 	}
 	smbchg_relax(chip, PM_DETECT_HVDCP);
 }
-#if defined(CONFIG_MACH_LENOVO_TB8704)
-/*2017-03-06 Bert add for usb prevent short*/
-static void smbchg_usb_conn_check_func(struct work_struct *work)
-{
-	struct smbchg_chip *chip = container_of(work,
-				struct smbchg_chip,
-				usb_conn_check_work.work);
-	struct qpnp_vadc_result mpp1_adc_result;
-	int rc, ret;
-	long long adc;
-	rc = qpnp_vadc_read(chip->mpp1_vadc_dev, P_MUX1_1_1, &mpp1_adc_result);
-	if (rc) {
-		pr_smb(PR_STATUS, "error in VCHG (mpp1_vadc) read rc = %d\n", rc);
-	}
-	adc = mpp1_adc_result.physical / 1000;
-	pr_smb(PR_STATUS,"Bert adc = %lld\n", adc);
 
-	if((adc > 25) && (adc < 200) && (usb_conn_flag == 1))
-	{
-		pr_err("Bert adc = %lld\n", adc);
-		if (gpio_is_valid(usb_ss_sel)) {
-			pr_err("%s, usb_ss_sel set high\n", __func__);
-			ret = gpio_direction_output(usb_ss_sel, 1);
-			if (ret) {
-				pr_smb(PR_STATUS,"usb_ss_sel set_direction for usb_ss_sel failed\n");
-				if (gpio_is_valid(usb_ss_sel)){
-					gpio_free(usb_ss_sel);
-				}
-			} else {
-				usb_conn_flag = 0;
-			}
-		}
-	} else if ((adc > 500) && (usb_conn_flag == 0)){
-		pr_err("Bert adc = %lld\n", adc);
-		if (gpio_is_valid(usb_ss_sel)) {
-			pr_err("%s, usb_ss_sel\n", __func__);
-			ret = gpio_direction_output(usb_ss_sel, 0);
-			if (ret) {
-				pr_smb(PR_STATUS,"usb_ss_sel set_direction for usb_ss_sel failed\n");
-				if (gpio_is_valid(usb_ss_sel)){
-					gpio_free(usb_ss_sel);
-				}
-			} else {
-				usb_conn_flag = 1;
-			}
-		}
-	}
-	queue_delayed_work(chip->usb_conn_check_workqueue, &chip->usb_conn_check_work, 2*HZ);
-
-}
-#endif
 static int set_usb_psy_dp_dm(struct smbchg_chip *chip, int state)
 {
 	int rc;
@@ -5217,11 +4842,7 @@ static void restore_from_hvdcp_detection(struct smbchg_chip *chip)
 		pr_err("Couldn't configure HVDCP 9V rc=%d\n", rc);
 
 	/* enable HVDCP */
-#ifdef CONFIG_MACH_LENOVO_TB8703
-	rc = vote(chip->hvdcp_enable_votable, HVDCP_PULSING_VOTER, true, 0);
-#else
 	rc = vote(chip->hvdcp_enable_votable, HVDCP_PULSING_VOTER, false, 1);
-#endif
 	if (rc < 0)
 		pr_err("Couldn't enable HVDCP rc=%d\n", rc);
 
@@ -5235,11 +4856,7 @@ static void restore_from_hvdcp_detection(struct smbchg_chip *chip)
 	/* Reset back to 5V unregulated */
 	rc = smbchg_sec_masked_write(chip,
 		chip->usb_chgpth_base + USBIN_CHGR_CFG,
-#ifdef CONFIG_MACH_LENOVO_TB8703
-			ADAPTER_ALLOWANCE_MASK, 0x0/*USBIN_ADAPTER_5V_9V_CONT*/);//modify by guodandan 2015-10-29
-#else
-			ADAPTER_ALLOWANCE_MASK, USBIN_ADAPTER_5V_UNREGULATED_9V);
-#endif
+		ADAPTER_ALLOWANCE_MASK, USBIN_ADAPTER_5V_UNREGULATED_9V);
 	if (rc < 0)
 		pr_err("Couldn't write usb allowance rc=%d\n", rc);
 
@@ -5296,9 +4913,6 @@ static void handle_usb_removal(struct smbchg_chip *chip)
 	int rc;
 
 	pr_smb(PR_STATUS, "triggered\n");
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	is_pd_5v_insertion = 0;
-#endif
 	smbchg_aicl_deglitch_wa_check(chip);
 	/* Clear the OV detected status set before */
 	if (chip->usb_ov_det)
@@ -5308,23 +4922,7 @@ static void handle_usb_removal(struct smbchg_chip *chip)
 		chip->typec_current_ma = 0;
 	/* cancel/wait for hvdcp pending work if any */
 	cancel_delayed_work_sync(&chip->hvdcp_det_work);
-#ifndef CONFIG_MACH_LENOVO_TBX704
 	smbchg_relax(chip, PM_DETECT_HVDCP);
-#endif
-#if defined(CONFIG_MACH_LENOVO_TB8704)
-/*2017-03-06 Bert add for usb prevent short*/
-	cancel_delayed_work_sync(&chip->usb_conn_check_work);
-	if (gpio_is_valid(usb_ss_sel)) {
-		pr_smb(PR_STATUS,"%s, usb_ss_sel\n", __func__);
-		rc = gpio_direction_output(usb_ss_sel, 0);
-		if (rc) {
-			pr_smb(PR_STATUS,"usb_ss_sel set_direction for usb_ss_sel failed\n");
-			if (gpio_is_valid(usb_ss_sel)){
-				gpio_free(usb_ss_sel);
-			}
-		}
-	}
-#endif
 	smbchg_change_usb_supply_type(chip, POWER_SUPPLY_TYPE_UNKNOWN);
 
 	if (chip->parallel.use_parallel_aicl) {
@@ -5360,9 +4958,7 @@ static void handle_usb_removal(struct smbchg_chip *chip)
 			ICL_OVERRIDE_BIT, 0);
 	if (rc < 0)
 		pr_err("Couldn't set override rc = %d\n", rc);
-#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
-	chip->usb_pd_flag = false;//yxw add
-#endif
+
 	vote(chip->usb_icl_votable, WEAK_CHARGER_ICL_VOTER, false, 0);
 	chip->usb_icl_delta = 0;
 	vote(chip->usb_icl_votable, SW_AICL_ICL_VOTER, false, 0);
@@ -5384,21 +4980,12 @@ static bool is_usbin_uv_high(struct smbchg_chip *chip)
 	}
 	return reg &= USBIN_UV_BIT;
 }
-#ifdef CONFIG_MACH_LENOVO_TBX704
-static int smbchg_prepare_for_pulsing_lite(struct smbchg_chip *chip);
-static int smbchg_unprepare_for_pulsing_lite(struct smbchg_chip *chip);
 
 #define HVDCP_NOTIFY_MS		2500
-static int rerun_apsd(struct smbchg_chip *chip);
-#endif
-
 static void handle_usb_insertion(struct smbchg_chip *chip)
 {
 	enum power_supply_type usb_supply_type;
 	int rc;
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	int i=0;
-#endif
 	char *usb_type_name = "null";
 
 	pr_smb(PR_STATUS, "triggered\n");
@@ -5409,40 +4996,7 @@ static void handle_usb_insertion(struct smbchg_chip *chip)
 
 	smbchg_aicl_deglitch_wa_check(chip);
 	if (chip->typec_psy)
-#ifdef CONFIG_MACH_LENOVO_TBX704
-		{
-		    for( i =0 ;i <1; i++)
-			{
-			 rc=update_typec_status(chip);
-
-			 if(rc==1)
-			 {
-				mdelay(200);
-			 }
-			 else if( i !=0 )
-				{
-				 smbchg_prepare_for_pulsing_lite(chip);
-				  read_usb_type(chip, &usb_type_name, &usb_supply_type);
-				  pr_smb(PR_STATUS,    "inserted type = %d (%s)", usb_supply_type, usb_type_name);
-				  if(usb_supply_type == POWER_SUPPLY_TYPE_USB_DCP)
-					  {
-						cancel_delayed_work_sync(&chip->hvdcp_det_work);
-						smbchg_stay_awake(chip, PM_DETECT_HVDCP);
-						schedule_delayed_work(&chip->hvdcp_det_work, msecs_to_jiffies(0));
-							  break;
-					  }
-				  else
-					break;
-				}
-			 else
-				{
-				 break;
-				}
-			}
-		}
-#else
 		update_typec_status(chip);
-#endif
 	smbchg_change_usb_supply_type(chip, usb_supply_type);
 	if (!chip->skip_usb_notification) {
 		pr_smb(PR_MISC, "setting usb psy present = %d\n",
@@ -5470,13 +5024,7 @@ static void handle_usb_insertion(struct smbchg_chip *chip)
 				POWER_SUPPLY_HEALTH_GOOD, rc);
 	}
 	schedule_work(&chip->usb_set_online_work);
-#if defined(CONFIG_MACH_LENOVO_TB8704)
-/*2017-03-06 Bert add for usb prevent short*/
-	if(usb_supply_type == 5)	//only DCP mode start usb prevent short
-	{
-		queue_delayed_work(chip->usb_conn_check_workqueue, &chip->usb_conn_check_work, 2*HZ);
-	}
-#endif
+
 	if (!chip->hvdcp_not_supported &&
 			(usb_supply_type == POWER_SUPPLY_TYPE_USB_DCP)) {
 		cancel_delayed_work_sync(&chip->hvdcp_det_work);
@@ -5775,20 +5323,12 @@ static int fake_insertion_removal(struct smbchg_chip *chip, bool insertion)
 	}
 
 	pr_smb(PR_MISC, "Allow only %s charger\n",
-#ifdef CONFIG_MACH_LENOVO_TB8703
-			insertion ? "5V" : "9V only");//modify by guodandan 2015-10-29
-#else
 			insertion ? "5-9V" : "9V only");
-#endif
 	rc = smbchg_sec_masked_write(chip,
 			chip->usb_chgpth_base + USBIN_CHGR_CFG,
 			ADAPTER_ALLOWANCE_MASK,
 			insertion ?
-#ifdef CONFIG_MACH_LENOVO_TB8703
-			0x0/*USBIN_ADAPTER_5V_9V_CONT*/ : USBIN_ADAPTER_9V);//modify by guodandan 2015-10-29
-#else
 			USBIN_ADAPTER_5V_9V_CONT : USBIN_ADAPTER_9V);
-#endif
 	if (rc < 0) {
 		pr_err("Couldn't write usb allowance rc=%d\n", rc);
 		return rc;
@@ -5974,11 +5514,7 @@ static int smbchg_unprepare_for_pulsing(struct smbchg_chip *chip)
 
 	/* enable HVDCP */
 	pr_smb(PR_MISC, "Enable HVDCP\n");
-#ifdef CONFIG_MACH_LENOVO_TB8703
-	rc = vote(chip->hvdcp_enable_votable, HVDCP_PULSING_VOTER, true, 0);
-#else
 	rc = vote(chip->hvdcp_enable_votable, HVDCP_PULSING_VOTER, false, 1);
-#endif
 	if (rc < 0) {
 		pr_err("Couldn't enable HVDCP rc=%d\n", rc);
 		return rc;
@@ -6200,9 +5736,7 @@ static int smbchg_prepare_for_pulsing_lite(struct smbchg_chip *chip)
 	 */
 	if (!is_src_detect_high(chip)) {
 		pr_smb(PR_MISC, "src det low after 500mS sleep\n");
-#ifndef CONFIG_MACH_LENOVO_TBX704
 		goto out;
-#endif
 	}
 
 	pr_smb(PR_MISC, "Disable AICL\n");
@@ -6261,9 +5795,7 @@ static int smbchg_unprepare_for_pulsing_lite(struct smbchg_chip *chip)
 		pr_err("Failed to force 9V HVDCP=%d\n",	rc);
 		return rc;
 	}
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	chip->last_hvdcp9v = ktime_get_boottime();
-#endif
+
 	pr_smb(PR_MISC, "Retracting HVDCP vote for ICL\n");
 	rc = vote(chip->usb_icl_votable, HVDCP_ICL_VOTER, false, 0);
 	if (rc < 0)
@@ -6460,10 +5992,6 @@ static void update_typec_capability_status(struct smbchg_chip *chip,
 	pr_debug("changing ICL from %dma to %dma\n", chip->typec_current_ma,
 			val->intval);
 	chip->typec_current_ma = val->intval;
-#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
-	chip->usb_supply_type = POWER_SUPPLY_TYPE_T_HUB;//yxw add
-	chip->usb_pd_flag = true;
-#endif
 	smbchg_change_usb_supply_type(chip, chip->usb_supply_type);
 }
 
@@ -6528,11 +6056,7 @@ static void smbchg_external_power_changed(struct power_supply *psy)
 	smbchg_aicl_deglitch_wa_check(chip);
 	if (chip->bms_psy) {
 		check_battery_type(chip);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-		soc = get_prop_batt_capacity_ori(chip);
-#else
 		soc = get_prop_batt_capacity(chip);
-#endif
 		if (chip->previous_soc != soc) {
 			chip->previous_soc = soc;
 			smbchg_soc_changed(chip);
@@ -6555,37 +6079,12 @@ static void smbchg_external_power_changed(struct power_supply *psy)
 				POWER_SUPPLY_PROP_CURRENT_MAX, &prop);
 	if (rc == 0)
 		current_limit = prop.intval / 1000;
+
 	rc = chip->usb_psy->get_property(chip->usb_psy,
 				POWER_SUPPLY_PROP_REAL_TYPE, &prop);
-	read_usb_type(chip, &usb_type_name, &usb_supply_type);
-#ifdef CONFIG_MACH_LENOVO_TB8703
-	pr_info("rc: %d, usb_supply_type: %d, is_usb_presend: %d\n", rc, usb_supply_type, is_usb_present(chip));
-	if (!rc && usb_supply_type == POWER_SUPPLY_TYPE_USB &&
-			prop.intval != POWER_SUPPLY_TYPE_USB &&
-			is_usb_present(chip)) {
-		/* incorrect type detected */
-		pr_smb(PR_MISC,
-			"Incorrect charger type detetced - rerun APSD\n");
-		chip->hvdcp_3_det_ignore_uv = true;
-		pr_smb(PR_MISC, "setting usb psy dp=f dm=f\n");
-		power_supply_set_dp_dm(chip->usb_psy,
-				POWER_SUPPLY_DP_DM_DPF_DMF);
-		rc = rerun_apsd(chip);
-		if (rc)
-			pr_err("APSD re-run failed\n");
-		chip->hvdcp_3_det_ignore_uv = false;
-		if (!is_src_detect_high(chip)) {
-			pr_smb(PR_MISC, "Charger removed - force removal\n");
-			update_usb_status(chip, is_usb_present(chip), true);
-			return;
-		}
 
-		read_usb_type(chip, &usb_type_name, &usb_supply_type);
-		if (usb_supply_type == POWER_SUPPLY_TYPE_USB_DCP)
-			schedule_delayed_work(&chip->hvdcp_det_work,
-				msecs_to_jiffies(HVDCP_NOTIFY_MS));
-	}
-#endif
+	read_usb_type(chip, &usb_type_name, &usb_supply_type);
+
 	if (!rc && usb_supply_type == POWER_SUPPLY_TYPE_USB &&
 			prop.intval != POWER_SUPPLY_TYPE_USB &&
 			is_usb_present(chip)) {
@@ -6626,13 +6125,6 @@ static void smbchg_external_power_changed(struct power_supply *psy)
 	if (usb_supply_type != POWER_SUPPLY_TYPE_USB)
 		goto  skip_current_for_non_sdp;
 
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	if (is_pd_5v_insertion == 1)
-		current_limit = 2000;
-	if (is_pd_5v_insertion == 2)
-		current_limit = 500;
-#endif
-
 	pr_smb(PR_MISC, "usb type = %s current_limit = %d\n",
 			usb_type_name, current_limit);
 
@@ -6643,23 +6135,6 @@ static void smbchg_external_power_changed(struct power_supply *psy)
 
 skip_current_for_non_sdp:
 	smbchg_vfloat_adjust_check(chip);
-
-#ifdef CONFIG_MACH_LENOVO_TBX704
-if (is_pd_5v_insertion != 0) 
-	{ 
-		rc = smbchg_masked_write(chip, chip->usb_chgpth_base + CMD_IL, BIT(2), BIT(2));
-		if (rc < 0)
-			dev_err(chip->dev, "set T-hub current failed!rc=%d\n ", rc);
-		//rc = smbchg_set_high_usb_chg_current(chip,500); //current_limit); t
-		//if (rc < 0) { 
-		//pr_err("Couldn't set500mA rc = %d\n", rc); 
-		//} 
-	}else{
-		rc = smbchg_masked_write(chip, chip->usb_chgpth_base + CMD_IL, BIT(2), 0);
-		if (rc < 0)
-			dev_err(chip->dev, "set T-hub current failed!rc=%d\n ", rc);
-	}
-#endif
 
 	power_supply_changed(&chip->batt_psy);
 }
@@ -6684,9 +6159,6 @@ static enum power_supply_property smbchg_battery_properties[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_RESISTANCE_ID,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
-#if defined(CONFIG_MACH_LENOVO_TB8804)//add by longcheer_liml_2016_12_15
-	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
-#endif
 	POWER_SUPPLY_PROP_SAFETY_TIMER_ENABLE,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_MAX,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED,
@@ -6816,22 +6288,12 @@ static int smbchg_battery_is_writeable(struct power_supply *psy,
 	return rc;
 }
 
-#if defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8804) //modify_liml_2016_12_15_for battery runin test
-#ifdef runin_test_for_battery_level
-void runin_work(struct smbchg_chip *chip, int batt_capacity);
-#endif
-#endif
-
-
 static int smbchg_battery_get_property(struct power_supply *psy,
 				       enum power_supply_property prop,
 				       union power_supply_propval *val)
 {
 	struct smbchg_chip *chip = container_of(psy,
 				struct smbchg_chip, batt_psy);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	static int hottempshutdown_flag = 0;
-#endif
 
 	switch (prop) {
 	case POWER_SUPPLY_PROP_STATUS:
@@ -6887,14 +6349,10 @@ static int smbchg_battery_get_property(struct power_supply *psy,
 	/* properties from fg */
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = get_prop_batt_capacity(chip);
-#if defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804) //modify_liml_2016_12_15_for battery runin test
-#ifdef runin_test_for_battery_level
-		runin_work(chip,val->intval);
-#endif
-#endif
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		val->intval = get_prop_batt_current_now(chip);
+		val->intval *= (-1);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		val->intval = get_prop_batt_voltage_now(chip);
@@ -6902,18 +6360,9 @@ static int smbchg_battery_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_RESISTANCE_ID:
 		val->intval = get_prop_batt_resistance_id(chip);
 		break;
-#if defined(CONFIG_MACH_LENOVO_TB8804)//add by longcheer_liml_2016_12_15
-	case POWER_SUPPLY_PROP_CHARGE_FULL:
-		val->intval = 4850000;//get_prop_batt_full_charge(chip);
-		break;
-	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
-		val->intval = 4850000;
-		break;
-#else
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
 		val->intval = get_prop_batt_full_charge(chip);
 		break;
-#endif
 	case POWER_SUPPLY_PROP_TEMP:
 		val->intval = get_prop_batt_temp(chip);
 		break;
@@ -6953,14 +6402,6 @@ static int smbchg_battery_get_property(struct power_supply *psy,
 	default:
 		return -EINVAL;
 	}
-	#ifdef CONFIG_MACH_LENOVO_TBX704
-	if ((hottempshutdown_flag == 0)&&(get_prop_batt_temp(chip) > 591))
-	{
-		hottempshutdown_flag = 1;
-		pr_err("lvchen---temp > 591");
-		power_supply_changed(&chip->batt_psy);
-	}
-	#endif
 	return 0;
 }
 
@@ -7098,18 +6539,7 @@ static irqreturn_t batt_warm_handler(int irq, void *_chip)
 {
 	struct smbchg_chip *chip = _chip;
 	u8 reg = 0;
-	#ifdef CONFIG_MACH_LENOVO_TBX704
-	int rc;
-	/* set the warm float voltage compensation,set the warm float voltage to 4.24V */
-	if (chip->float_voltage_comp != -EINVAL) {
-		rc = smbchg_float_voltage_comp_set(chip,
-			chip->float_voltage_comp);
-		if (rc < 0)
-			dev_err(chip->dev, "Couldn't set float voltage comp rc = %d\n",rc);
-		pr_smb(PR_STATUS, "set float voltage comp to %d\n",
-			chip->float_voltage_comp);
-	}
-	#endif
+
 	smbchg_read(chip, &reg, chip->bat_if_base + RT_STS, 1);
 	chip->batt_warm = !!(reg & HOT_BAT_SOFT_BIT);
 	pr_smb(PR_INTERRUPT, "triggered: 0x%02x\n", reg);
@@ -7125,13 +6555,7 @@ static irqreturn_t batt_cool_handler(int irq, void *_chip)
 {
 	struct smbchg_chip *chip = _chip;
 	u8 reg = 0;
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	int rc;
-	/* set the cool float voltage compensation ,set the cool float voltage to 4.4V*/
-	rc = smbchg_float_voltage_comp_set(chip,0);
-	if (rc < 0)
-		dev_err(chip->dev, "Couldn't set float voltage comp rc = %d\n",rc);
-#endif
+
 	smbchg_read(chip, &reg, chip->bat_if_base + RT_STS, 1);
 	chip->batt_cool = !!(reg & COLD_BAT_SOFT_BIT);
 	pr_smb(PR_INTERRUPT, "triggered: 0x%02x\n", reg);
@@ -7143,9 +6567,6 @@ static irqreturn_t batt_cool_handler(int irq, void *_chip)
 	return IRQ_HANDLED;
 }
 
-#ifdef CONFIG_MACH_LENOVO_TBX704
-extern void export_do_msm_poweroff(void);
-#endif
 static irqreturn_t batt_pres_handler(int irq, void *_chip)
 {
 	struct smbchg_chip *chip = _chip;
@@ -7153,17 +6574,10 @@ static irqreturn_t batt_pres_handler(int irq, void *_chip)
 
 	smbchg_read(chip, &reg, chip->bat_if_base + RT_STS, 1);
 	chip->batt_present = !(reg & BAT_MISSING_BIT);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	pr_err("lvchen------batt_pres = %d\n",chip->batt_present);
-#endif
 	pr_smb(PR_INTERRUPT, "triggered: 0x%02x\n", reg);
 	if (chip->psy_registered)
 		power_supply_changed(&chip->batt_psy);
 	smbchg_charging_status_change(chip);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	if (chip->batt_present == 0)
-		export_do_msm_poweroff();
-#endif
 	set_property_on_fg(chip, POWER_SUPPLY_PROP_HEALTH,
 			get_prop_batt_health(chip));
 	return IRQ_HANDLED;
@@ -7208,14 +6622,12 @@ static irqreturn_t fastchg_handler(int irq, void *_chip)
 	struct smbchg_chip *chip = _chip;
 
 	pr_smb(PR_INTERRUPT, "p2f triggered\n");
-#ifndef CONFIG_MACH_LENOVO_TBX704
+
 	if (is_usb_present(chip) || is_dc_present(chip)) {
-#endif	
 		smbchg_detect_parallel_charger(chip);
 		smbchg_parallel_usb_check_ok(chip);
-#ifndef CONFIG_MACH_LENOVO_TBX704
 	}
-#endif
+
 	if (chip->psy_registered)
 		power_supply_changed(&chip->batt_psy);
 	smbchg_charging_status_change(chip);
@@ -7385,9 +6797,6 @@ out:
  */
 #define ICL_MODE_MASK		SMB_MASK(5, 4)
 #define ICL_MODE_HIGH_CURRENT	0
-#ifdef CONFIG_MACH_LENOVO_TBX704
-extern int PolicyIsDFP;
-#endif
 static irqreturn_t usbin_uv_handler(int irq, void *_chip)
 {
 	struct smbchg_chip *chip = _chip;
@@ -7411,43 +6820,12 @@ static irqreturn_t usbin_uv_handler(int irq, void *_chip)
 	 * set usb_psy's dp=f dm=f if this is a new insertion, i.e. it is
 	 * not already src_detected and usbin_uv is seen falling
 	 */
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	 printk("[jack] PolicyIsDFP is %d, have_fusb302 is %d\n",PolicyIsDFP,have_fusb302);
-	if(have_fusb302)
-	{
-		if( !PolicyIsDFP)
-		{	
-			printk("[jack] start set dp dm \n");
-			if (!(reg & USBIN_UV_BIT) && !(reg & USBIN_SRC_DET_BIT) &&
-				!chip->hvdcp_3_det_ignore_uv) {
-
-			if(!is_otg_present(chip))  //cherry add
-			{
-				pr_err("csz otg no present");
-				pr_smb(PR_MISC, "setting usb psy dp=f dm=f\n");
-				power_supply_set_dp_dm(chip->usb_psy,POWER_SUPPLY_DP_DM_DPF_DMF);
-			}else{
-				pr_err("csz otg present");
-			}
-			}
-		}
-	}
-	else
-	{
-		if (!(reg & USBIN_UV_BIT) && !(reg & USBIN_SRC_DET_BIT) &&
-				!chip->hvdcp_3_det_ignore_uv) {
-				pr_smb(PR_MISC, "setting usb psy dp=f dm=f\n");
-				power_supply_set_dp_dm(chip->usb_psy,POWER_SUPPLY_DP_DM_DPF_DMF);
-		}
-	}
-#else
 	if (!(reg & USBIN_UV_BIT) && !(reg & USBIN_SRC_DET_BIT) &&
 		!chip->hvdcp_3_det_ignore_uv) {
 		pr_smb(PR_MISC, "setting usb psy dp=f dm=f\n");
 		power_supply_set_dp_dm(chip->usb_psy,
 				POWER_SUPPLY_DP_DM_DPF_DMF);
 	}
-#endif
 
 	if (reg & USBIN_UV_BIT)
 		complete_all(&chip->usbin_uv_raised);
@@ -7516,9 +6894,7 @@ static irqreturn_t src_detect_handler(int irq, void *_chip)
 	bool usb_present = is_usb_present(chip);
 	bool src_detect = is_src_detect_high(chip);
 	int rc;
-#ifdef CONFIG_MACH_LENOVO_TBX704 
-	ktime_t  now_time = ktime_get_boottime();
-#endif
+
 	pr_smb(PR_STATUS,
 		"%s chip->usb_present = %d usb_present = %d src_detect = %d hvdcp_3_det_ignore_uv=%d\n",
 		chip->hvdcp_3_det_ignore_uv ? "Ignoring":"",
@@ -7530,18 +6906,9 @@ static irqreturn_t src_detect_handler(int irq, void *_chip)
 	else
 		complete_all(&chip->src_det_lowered);
 
-#ifdef CONFIG_MACH_LENOVO_TBX704
-     pr_smb(PR_STATUS,"chip->last_hvdcp9v=%lld, now_time is %lld", chip->last_hvdcp9v.tv64, now_time.tv64);
-
-	if (ktime_to_ms(ktime_sub( now_time, chip->last_hvdcp9v)) < 1500) {
-		chip->hvdcp_not_supported = true;
-	} else {
-		chip->hvdcp_not_supported = false;
-	}
-#endif
-	if (chip->hvdcp_3_det_ignore_uv) {
+	if (chip->hvdcp_3_det_ignore_uv)
 		goto out;
-	}
+
 	/*
 	 * When VBAT is above the AICL threshold (4.25V) - 180mV (4.07V),
 	 * an input collapse due to AICL will actually cause an USBIN_UV
@@ -7564,10 +6931,7 @@ static irqreturn_t src_detect_handler(int irq, void *_chip)
 	rc = vote(chip->usb_suspend_votable, WEAK_CHARGER_EN_VOTER, false, 0);
 	if (rc < 0)
 		pr_err("could not enable charger: %d\n", rc);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	set_property_on_fg(chip,
-					   POWER_SUPPLY_PROP_CALIBRATE, 0);
-#endif
+
 	if (src_detect) {
 		update_usb_status(chip, usb_present, 0);
 	} else {
@@ -7659,41 +7023,16 @@ static irqreturn_t aicl_done_handler(int irq, void *_chip)
  */
 static irqreturn_t usbid_change_handler(int irq, void *_chip)
 {
-#if (defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)) && !defined(CONFIG_MACH_LENOVO_TBX704)
-	return IRQ_HANDLED;
-#else
 	struct smbchg_chip *chip = _chip;
 	bool otg_present;
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	union power_supply_propval typec_orientation;
-#endif
+
 	pr_smb(PR_INTERRUPT, "triggered\n");
 
 	otg_present = is_otg_present(chip);
 	if (chip->usb_psy) {
 		pr_smb(PR_MISC, "setting usb psy OTG = %d\n",
 				otg_present ? 1 : 0);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-		if((otg_present)&&(have_fusb302)&&(is_pd_5v_insertion)&&(!chip->usb_online) )
-		{
-		    pr_err("csz otg_present, but usb off so\n");
-		}
-		else if( (!otg_present) && (have_fusb302) && ( chip->usb_online) )
-		{
-		   pr_err("csz  !otg_present, but usb on");
-		}
-		else
-		{
-			if(have_fusb302)
-			{
-				typec_orientation.intval = typeC_orientation;
-				chip->typec_psy->set_property(chip->typec_psy, POWER_SUPPLY_PROP_TYPEC_ORIENTATION, &typec_orientation);
-			}
-#endif
 		power_supply_set_usb_otg(chip->usb_psy, otg_present ? 1 : 0);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-		}
-#endif
 	}
 	if (otg_present)
 		pr_smb(PR_STATUS, "OTG detected\n");
@@ -7703,17 +7042,11 @@ static irqreturn_t usbid_change_handler(int irq, void *_chip)
 			get_prop_batt_status(chip));
 
 	return IRQ_HANDLED;
-#endif
 }
 
 static int determine_initial_status(struct smbchg_chip *chip)
 {
 	union power_supply_propval type = {0, };
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	enum power_supply_type usb_supply_type;
-	char *usb_type_name;
-       int rc;
-#endif
 
 	/*
 	 * It is okay to read the interrupt status here since
@@ -7741,29 +7074,11 @@ static int determine_initial_status(struct smbchg_chip *chip)
 		pr_smb(PR_MISC, "setting usb psy dp=f dm=f\n");
 		power_supply_set_dp_dm(chip->usb_psy,
 				POWER_SUPPLY_DP_DM_DPF_DMF);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-		/*cherry add start*/
-		read_usb_type(chip, &usb_type_name, &usb_supply_type);
-		if( (usb_supply_type == POWER_SUPPLY_TYPE_USB)|| (strcmp(usb_type_name,"DCP") != 0) )
-		{
-			pr_err("csz, sbl may fail for usb_supply_type");
-			chip->hvdcp_3_det_ignore_uv = true;
-			rc = rerun_apsd(chip);
-			if (rc) {
-				pr_err("csz APSD rerun failed rc=%d\n", rc);
-				chip->hvdcp_3_det_ignore_uv = false;
-				read_usb_type(chip, &usb_type_name, &usb_supply_type);
-				pr_err("csz, rerun_apsd is %d", usb_supply_type);
-			}
-		}
-		power_supply_set_dp_dm(chip->usb_psy,
-			POWER_SUPPLY_DP_DM_DPF_DMF);
-		/*cherry add end*/
-#endif
 		handle_usb_insertion(chip);
 	} else {
 		handle_usb_removal(chip);
 	}
+
 	return 0;
 }
 
@@ -7921,10 +7236,7 @@ static int smbchg_hw_init(struct smbchg_chip *chip)
 	pr_smb(PR_STATUS, "Charger Revision DIG: %d.%d; ANA: %d.%d\n",
 			chip->revision[DIG_MAJOR], chip->revision[DIG_MINOR],
 			chip->revision[ANA_MAJOR], chip->revision[ANA_MINOR]);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	//Disbale ESR
-	smbchg_sec_masked_write(chip,chip->misc_base + 0xF6,BIT(7),BIT(7));
-#endif
+
 	/* Setup 9V HVDCP */
 	if (chip->hvdcp_not_supported) {
 		rc = vote(chip->hvdcp_enable_votable, HVDCP_PMIC_VOTER,
@@ -8308,13 +7620,6 @@ static int smbchg_hw_init(struct smbchg_chip *chip)
 		if (rc < 0)
 			dev_err(chip->dev, "Couldn't set OTG OC config rc = %d\n",
 				rc);
-		#ifdef CONFIG_USB_FUSB302
-		if(have_fusb302)
-		{
-		 	rc = smbchg_sec_masked_write(chip, chip->otg_base + OTG_CFG,
-            			OTG_EN_CTRL_MASK, OTG_CMD_CTRL_RID_EN);
-		}
-		#endif
 	}
 
 	if (chip->otg_pinctrl) {
@@ -8329,22 +7634,6 @@ static int smbchg_hw_init(struct smbchg_chip *chip)
 		}
 	}
 
-#ifdef CONFIG_MACH_LENOVO_TB8703
-	/*modify by guodandan 2015-10-29 begin*/
-	/* allow 5V only chargers */
-	rc = smbchg_sec_masked_write(chip,
-			chip->usb_chgpth_base + USBIN_CHGR_CFG,
-			ADAPTER_ALLOWANCE_MASK, 0x0);
-	if (rc < 0)
-		pr_err("Couldn't write usb allowance rc=%d\n", rc);
-
-	rc = smbchg_sec_masked_write(chip,
-				chip->usb_chgpth_base + CHGPTH_CFG,
-				HVDCP_EN_BIT, 0);
-	if (rc < 0)
-		dev_err(chip->dev, "Couldn't disable HVDCP rc=%d\n", rc);
-	/*modify by guodandan 2015-10-29 end*/
-#endif
 	if (chip->wa_flags & SMBCHG_BATT_OV_WA)
 		batt_ov_wa_check(chip);
 
@@ -9050,9 +8339,7 @@ static int smbchg_check_chg_version(struct smbchg_chip *chip)
 		chip->schg_version = QPNP_SCHG;
 		break;
 	case PMI8950:
-#ifndef CONFIG_MACH_LENOVO_TB8703
 		chip->wa_flags |= SMBCHG_RESTART_WA;
-#endif
 	case PMI8937:
 		/* fall through */
 	case PMI8940:
@@ -9095,7 +8382,6 @@ static int smbchg_check_chg_version(struct smbchg_chip *chip)
 	return 0;
 }
 
-#ifndef CONFIG_MACH_LENOVO_TBX704
 static void rerun_hvdcp_det_if_necessary(struct smbchg_chip *chip)
 {
 	enum power_supply_type usb_supply_type;
@@ -9144,85 +8430,6 @@ static void rerun_hvdcp_det_if_necessary(struct smbchg_chip *chip)
 		}
 	}
 }
-#endif
-
-#if defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804) //modify_liml_2016_12_15_for battery runin test
-#ifdef runin_test_for_battery_level
-static ssize_t smbchg_battery_test_status_show(struct device *dev,
-					struct device_attribute *attr, char *buf)
-{
-	return sprintf(buf, "%d\n", BatteryTestStatus_enable);
-}
-static ssize_t smb_battery_test_status_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	int retval;
-	unsigned int input;
-	if (sscanf(buf, "%u", &input) != 1) {
-		retval = -EINVAL;
-        BatteryTestStatus_enable = 0;
-		goto exit;
-	}
-	if (input != 1) {
-		retval = -EINVAL;
-        BatteryTestStatus_enable = 0;
-		goto exit;
-	}
-    BatteryTestStatus_enable = 1;
-
-exit:
-	return retval;
-}
-void runin_work(struct smbchg_chip *chip, int batt_capacity)
-{
-    int rc = 0;
-	u8 reg = 0;
-    int suspend = 0;
-	rc = smbchg_read(chip, &reg, chip->usb_chgpth_base + CMD_IL, 1);
-	if (rc) {
-		dev_err(chip->dev,
-			"Couldn't read CHG SUSP EN bit rc=%d, reg=%2x\n",
-							rc, CMD_IL);
-		return;
-	}
-    suspend = (reg & USBIN_SUSPEND_BIT) ? 1 : 0;
-    pr_debug("%s:BatteryTestStatus_enable = %d chip->usb_present = %d \n",__func__,BatteryTestStatus_enable,chip->usb_present);
-    pr_debug("%s:suspend = %d \n",__func__,suspend);
-    if (!BatteryTestStatus_enable){
-        if (suspend) {
-        rc = smbchg_usb_suspend(chip, false);
-        if (rc)
-			dev_err(chip->dev,
-				"Couldn't enable charge rc=%d\n", rc);
-        }
-        return;
-    }
-    if (!chip->usb_present){
-        pr_debug("%s usb_present = %d\n",__func__,chip->usb_present);
-        return;
-    }
-	if (!suspend && (batt_capacity > 59)) {
-        pr_debug("batt_capacity > 59,suspend = %d\n",suspend);
-        rc = smbchg_usb_suspend(chip, true);
-        if (rc)
-			dev_err(chip->dev,
-				"Couldn't disenable charge rc=%d\n", rc);
-	}else {
-	    if (suspend && (batt_capacity < 40)) {
-	    pr_debug("batt_capacity < 40,suspend = %d\n",suspend);
-	    rc = smbchg_usb_suspend(chip, false);
-        if (rc)
-			dev_err(chip->dev,
-				"Couldn't enable charge rc=%d\n", rc);
-	    }
-	}
-}
-static struct device_attribute attrs[] = {
-	__ATTR(BatteryTestStatus, S_IRUGO | S_IWUSR | S_IWGRP,
-			smbchg_battery_test_status_show, smb_battery_test_status_store),
-};
-#endif
-#endif
 
 static int smbchg_probe(struct spmi_device *spmi)
 {
@@ -9230,17 +8437,7 @@ static int smbchg_probe(struct spmi_device *spmi)
 	struct smbchg_chip *chip;
 	struct power_supply *usb_psy, *typec_psy = NULL;
 	struct qpnp_vadc_chip *vadc_dev = NULL, *vchg_vadc_dev = NULL;
-#if defined(CONFIG_MACH_LENOVO_TB8704)
-/*2017-03-06 Bert add for usb prevent short*/
-	struct qpnp_vadc_chip *mpp1_vadc_dev = NULL;
-#endif
 	const char *typec_psy_name;
-
-#if defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804) //modify_liml_2016_12_15_for battery runin test
-#ifdef runin_test_for_battery_level
-	unsigned char attr_count;
-#endif
-#endif
 
 	usb_psy = power_supply_get_by_name("usb");
 	if (!usb_psy) {
@@ -9277,26 +8474,6 @@ static int smbchg_probe(struct spmi_device *spmi)
 		}
 	}
 
-#if defined(CONFIG_MACH_LENOVO_TB8704)
-/*2017-03-06 Bert add for usb prevent short*/
-	if (of_find_property(spmi->dev.of_node, "qcom,mpp1_adc-vadc", NULL)) {
-		mpp1_vadc_dev = qpnp_get_vadc(&spmi->dev, "mpp1_adc");
-		if (IS_ERR(mpp1_vadc_dev)) {
-			rc = PTR_ERR(mpp1_vadc_dev);
-			if (rc != -EPROBE_DEFER)
-				dev_err(&spmi->dev, "Couldn't get mpp1_vadc rc=%d\n",
-						rc);
-			return rc;
-		}
-	}
-
-	usb_ss_sel = of_get_named_gpio(spmi->dev.of_node, "qcom,usb_ss_sel", 0);
-
-	if (usb_ss_sel < 0) {
-		pr_smb(PR_STATUS,"%s, usb_ss_sel=%d\n", __func__, usb_ss_sel);
-	}
-#endif
-
 	if (of_find_property(spmi->dev.of_node, "qcom,vchg_sns-vadc", NULL)) {
 		vchg_vadc_dev = qpnp_get_vadc(&spmi->dev, "vchg_sns");
 		if (IS_ERR(vchg_vadc_dev)) {
@@ -9313,10 +8490,7 @@ static int smbchg_probe(struct spmi_device *spmi)
 		dev_err(&spmi->dev, "Unable to allocate memory\n");
 		return -ENOMEM;
 	}
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	chip->last_soc = -1;
-	chip->last_hvdcp9v.tv64=0;
-#endif
+
 	chip->fcc_votable = create_votable("BATT_FCC",
 			VOTE_MIN,
 			set_fastchg_current_vote_cb, chip);
@@ -9405,12 +8579,6 @@ static int smbchg_probe(struct spmi_device *spmi)
 			smbchg_parallel_usb_en_work);
 	INIT_DELAYED_WORK(&chip->vfloat_adjust_work, smbchg_vfloat_adjust_work);
 	INIT_DELAYED_WORK(&chip->hvdcp_det_work, smbchg_hvdcp_det_work);
-#if defined(CONFIG_MACH_LENOVO_TB8704)
-/*2017-03-06 Bert add for usb prevent short*/
-	INIT_DELAYED_WORK(&chip->usb_conn_check_work, smbchg_usb_conn_check_func);
-	chip->usb_conn_check_workqueue = create_workqueue("usb_conn_check");
-	chip->mpp1_vadc_dev = mpp1_vadc_dev;
-#endif
 	init_completion(&chip->src_det_lowered);
 	init_completion(&chip->src_det_raised);
 	init_completion(&chip->usbin_uv_lowered);
@@ -9468,22 +8636,6 @@ static int smbchg_probe(struct spmi_device *spmi)
 		goto out;
 	}
 
-#if defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804) //modify_liml_2016_12_15_for battery runin test
-#ifdef runin_test_for_battery_level
-	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
-		rc = sysfs_create_file(&chip->dev->kobj,
-				&attrs[attr_count].attr);
-		if (rc < 0) {
-			dev_err(chip->dev,
-				"%s: Failed to create sysfs attributes\n",
-				__func__);
-			sysfs_remove_file(&chip->dev->kobj,
-				&attrs[attr_count].attr);
-		}
-	}
-#endif
-#endif
-
 	rc = determine_initial_status(chip);
 	if (rc < 0) {
 		dev_err(&spmi->dev,
@@ -9526,11 +8678,7 @@ static int smbchg_probe(struct spmi_device *spmi)
 		}
 	}
 	chip->psy_registered = true;
-#ifdef CONFIG_MACH_LENOVO_TB8703
-	chip->allow_hvdcp3_detection = false;
-#else
 	chip->allow_hvdcp3_detection = true;
-#endif
 
 	if (chip->cfg_chg_led_support &&
 			chip->schg_version == QPNP_SCHG_LITE) {
@@ -9563,11 +8711,9 @@ static int smbchg_probe(struct spmi_device *spmi)
 		power_supply_set_present(chip->usb_psy, chip->usb_present);
 	}
 
-#ifndef CONFIG_MACH_LENOVO_TBX704
 	rerun_hvdcp_det_if_necessary(chip);
 
 	update_usb_status(chip, is_usb_present(chip), false);
-#endif
 	dump_regs(chip);
 	create_debugfs_entries(chip);
 	dev_info(chip->dev,
@@ -9609,24 +8755,10 @@ votables_cleanup:
 		destroy_votable(chip->fcc_votable);
 	return rc;
 }
-#ifdef CONFIG_MACH_LENOVO_TBX704
-static void smbchg_shutdown(struct spmi_device *spmi);
-#endif
+
 static int smbchg_remove(struct spmi_device *spmi)
 {
 	struct smbchg_chip *chip = dev_get_drvdata(&spmi->dev);
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	smbchg_shutdown(spmi);
-#endif
-#if defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804) //modify_liml_2016_12_15_for battery runin test
-#ifdef runin_test_for_battery_level
-	unsigned char attr_count;
-	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
-		sysfs_remove_file(&chip->dev->kobj,
-				&attrs[attr_count].attr);
-	}
-#endif
-#endif
 
 	debugfs_remove_recursive(chip->debug_root);
 
@@ -9743,13 +8875,13 @@ static void smbchg_shutdown(struct spmi_device *spmi)
 	rc = fake_insertion_removal(chip, false);
 	if (rc < 0)
 		pr_err("Couldn't fake removal HVDCP Removed rc=%d\n", rc);
-#ifndef CONFIG_MACH_LENOVO_TBX704
+
 	/* fake an insertion */
 	pr_smb(PR_MISC, "Faking Insertion\n");
 	rc = fake_insertion_removal(chip, true);
 	if (rc < 0)
 		pr_err("Couldn't fake insertion rc=%d\n", rc);
-#endif
+
 	disable_irq(chip->src_detect_irq);
 	disable_irq(chip->usbin_uv_irq);
 

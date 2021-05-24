@@ -242,14 +242,6 @@ ifeq ($(CONFIG_MACH_LENOVO_MSM8953),y)
 dtb-$(CONFIG_MACH_LENOVO_KUNTAO) += \
 	msm8953-kuntao-p0.dtb \
 	msm8953-kuntao-p2b1.dtb
-dtb-$(CONFIG_MACH_LENOVO_TB8703) += \
-        tb8703-apq8053-mtp.dtb \
-        tb8703-msm8953-mtp.dtb
-dtb-$(CONFIG_MACH_LENOVO_TB8704) += \
-        tb8704-apq8053-mtp.dtb \
-        tb8704-msm8953-mtp.dtb
-dtb-$(CONFIG_MACH_LENOVO_TBX704) += \
-        tbx704-msm8953-qrd.dtb
 else
 dtb-$(CONFIG_ARCH_MSM8953) += msm8953-sim.dtb \
 	msm8953-rumi.dtb \
@@ -299,7 +291,8 @@ dtb-$(CONFIG_ARCH_MDM9607) += mdm9607-rumi.dtb \
 	mdm9206-mtp.dtb \
 	mdm9206-cdp.dtb \
 	mdm9206-mtp-sdcard.dtb \
-	mdm9206-rcm.dtb
+	mdm9206-rcm.dtb \
+	mdm9207c-mtp.dtb
 
 dtb-$(CONFIG_ARCH_MSM8916) += msm8952-qrd-skum.dtb \
        msm8952-cdp.dtb \

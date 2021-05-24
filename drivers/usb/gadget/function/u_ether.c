@@ -187,7 +187,7 @@ MODULE_PARM_DESC(tx_qmult, "Additional queue length multiplier for tx");
 static inline int qlen(struct usb_gadget *gadget, unsigned qmult)
 {
 	if (gadget_is_dualspeed(gadget) && (gadget->speed == USB_SPEED_HIGH ||
-					    gadget->speed == USB_SPEED_SUPER))
+					    gadget->speed >= USB_SPEED_SUPER))
 		return qmult * DEFAULT_QLEN;
 	else
 		return DEFAULT_QLEN;
@@ -329,7 +329,6 @@ rx_submit(struct eth_dev *dev, struct usb_request *req, gfp_t gfp_flags)
 		spin_unlock_irqrestore(&dev->lock, flags);
 		return -ENOTCONN;
 	}
-
 
 	/* Padding up to RX_EXTRA handles minor disagreements with host.
 	 * Normally we use the USB "terminate on short read" convention;
@@ -760,7 +759,8 @@ static void tx_complete(struct usb_ep *ep, struct usb_request *req)
 		dev->tx_aggr_cnt[n-1]++;
 
 		/* sg_ctx is only accessible here, can use lock-free version */
-		__skb_queue_purge(&sg_ctx->skbs);
+		while ((skb = __skb_dequeue(&sg_ctx->skbs)) != NULL)
+			dev_kfree_skb_any(skb);
 	}
 
 	dev->net->stats.tx_packets += n;

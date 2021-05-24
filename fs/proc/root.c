@@ -141,6 +141,8 @@ static struct dentry *proc_mount(struct file_system_type *fs_type,
 		}
 
 		sb->s_flags |= MS_ACTIVE;
+		/* User space would break if executables appear on proc */
+		sb->s_iflags |= SB_I_NOEXEC;
 	}
 
 	return dget(sb->s_root);
@@ -180,7 +182,7 @@ void __init proc_root_init(void)
 	proc_symlink("mounts", NULL, "self/mounts");
 
 	proc_net_init();
-
+	proc_uid_init();
 #ifdef CONFIG_SYSVIPC
 	proc_mkdir("sysvipc", NULL);
 #endif

@@ -39,7 +39,6 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
 	res = -ENOENT;
 	if (!IS_DEADDIR(inode)) {
 		ctx->pos = file->f_pos;
-		ctx->romnt = (inode->i_sb->s_flags & MS_RDONLY);
 		res = file->f_op->iterate(file, ctx);
 		file->f_pos = ctx->pos;
 		fsnotify_access(file);
@@ -51,12 +50,38 @@ out:
 }
 EXPORT_SYMBOL(iterate_dir);
 
-static bool hide_name(const char *name, int namlen)
+/*
+ * POSIX says that a dirent name cannot contain NULL or a '/'.
+ *
+ * It's not 100% clear what we should really do in this case.
+ * The filesystem is clearly corrupted, but returning a hard
+ * error means that you now don't see any of the other names
+ * either, so that isn't a perfect alternative.
+ *
+ * And if you return an error, what error do you use? Several
+ * filesystems seem to have decided on EUCLEAN being the error
+ * code for EFSCORRUPTED, and that may be the error to use. Or
+ * just EIO, which is perhaps more obvious to users.
+ *
+ * In order to see the other file names in the directory, the
+ * caller might want to make this a "soft" error: skip the
+ * entry, and return the error at the end instead.
+ *
+ * Note that this should likely do a "memchr(name, 0, len)"
+ * check too, since that would be filesystem corruption as
+ * well. However, that case can't actually confuse user space,
+ * which has to do a strlen() on the name anyway to find the
+ * filename length, and the above "soft error" worry means
+ * that it's probably better left alone until we have that
+ * issue clarified.
+ */
+static int verify_dirent_name(const char *name, int len)
 {
-	if (namlen == 2 && !memcmp(name, "su", 2))
-		if (!su_visible())
-			return true;
-	return false;
+	if (!len)
+		return -EIO;
+	if (memchr(name, '/', len))
+		return -EIO;
+	return 0;
 }
 
 /*
@@ -97,8 +122,6 @@ static int fillonedir(void * __buf, const char * name, int namlen, loff_t offset
 		buf->result = -EOVERFLOW;
 		return -EOVERFLOW;
 	}
-	if (hide_name(name, namlen) && buf->ctx.romnt)
-		return 0;
 	buf->result++;
 	dirent = buf->dirent;
 	if (!access_ok(VERIFY_WRITE, dirent,
@@ -168,6 +191,9 @@ static int filldir(void * __buf, const char * name, int namlen, loff_t offset,
 	int reclen = ALIGN(offsetof(struct linux_dirent, d_name) + namlen + 2,
 		sizeof(long));
 
+	buf->error = verify_dirent_name(name, namlen);
+	if (unlikely(buf->error))
+		return buf->error;
 	buf->error = -EINVAL;	/* only used if we fail.. */
 	if (reclen > buf->count)
 		return -EINVAL;
@@ -176,8 +202,6 @@ static int filldir(void * __buf, const char * name, int namlen, loff_t offset,
 		buf->error = -EOVERFLOW;
 		return -EOVERFLOW;
 	}
-	if (hide_name(name, namlen) && buf->ctx.romnt)
-		return 0;
 	dirent = buf->previous;
 	if (dirent) {
 		if (__put_user(offset, &dirent->d_off))
@@ -253,11 +277,12 @@ static int filldir64(void * __buf, const char * name, int namlen, loff_t offset,
 	int reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + namlen + 1,
 		sizeof(u64));
 
+	buf->error = verify_dirent_name(name, namlen);
+	if (unlikely(buf->error))
+		return buf->error;
 	buf->error = -EINVAL;	/* only used if we fail.. */
 	if (reclen > buf->count)
 		return -EINVAL;
-	if (hide_name(name, namlen) && buf->ctx.romnt)
-		return 0;
 	dirent = buf->previous;
 	if (dirent) {
 		if (__put_user(offset, &dirent->d_off))

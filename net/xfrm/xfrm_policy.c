@@ -328,7 +328,9 @@ static void xfrm_queue_purge(struct sk_buff_head *list)
 
 static void xfrm_policy_kill(struct xfrm_policy *policy)
 {
+	write_lock_bh(&policy->lock);
 	policy->walk.dead = 1;
+	write_unlock_bh(&policy->lock);
 
 	atomic_inc(&policy->genid);
 
@@ -731,12 +733,7 @@ static void xfrm_policy_requeue(struct xfrm_policy *old,
 static bool xfrm_policy_mark_match(struct xfrm_policy *policy,
 				   struct xfrm_policy *pol)
 {
-	u32 mark = policy->mark.v & policy->mark.m;
-
-	if (policy->mark.v == pol->mark.v && policy->mark.m == pol->mark.m)
-		return true;
-
-	if ((mark & pol->mark.m) == pol->mark.v &&
+	if (policy->mark.v == pol->mark.v &&
 	    policy->priority == pol->priority)
 		return true;
 
@@ -942,8 +939,10 @@ int xfrm_policy_flush(struct net *net, u8 type, bool task_valid)
 	write_lock_bh(&net->xfrm.xfrm_policy_lock);
 
 	err = xfrm_policy_flush_secctx_check(net, type, task_valid);
-	if (err)
+	if (err) {
+		pr_err("kp log: failed @ xfrm_policy_flush_secctx_check with err [%d]\n", err);
 		goto out;
+	}
 
 	for (dir = 0; dir < XFRM_POLICY_MAX; dir++) {
 		struct xfrm_policy *pol;
@@ -986,8 +985,10 @@ int xfrm_policy_flush(struct net *net, u8 type, bool task_valid)
 		}
 
 	}
-	if (!cnt)
+	if (!cnt) {
+		pr_err("kp log: cnt not set\n");
 		err = -ESRCH;
+	}
 out:
 	write_unlock_bh(&net->xfrm.xfrm_policy_lock);
 	return err;

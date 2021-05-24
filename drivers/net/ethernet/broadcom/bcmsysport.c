@@ -393,7 +393,7 @@ static void bcm_sysport_get_stats(struct net_device *dev,
 		else
 			p = (char *)priv;
 		p += s->stat_offset;
-		data[i] = *(u32 *)p;
+		data[i] = *(unsigned long *)p;
 	}
 }
 
@@ -461,7 +461,8 @@ static int bcm_sysport_rx_refill(struct bcm_sysport_priv *priv,
 	dma_addr_t mapping;
 	int ret;
 
-	cb->skb = netdev_alloc_skb(priv->netdev, RX_BUF_LENGTH);
+	cb->skb = __netdev_alloc_skb(priv->netdev, RX_BUF_LENGTH,
+				     GFP_ATOMIC | __GFP_NOWARN);
 	if (!cb->skb) {
 		netif_err(priv, rx_err, ndev, "SKB alloc failed\n");
 		return -ENOMEM;
@@ -654,10 +655,7 @@ static unsigned int __bcm_sysport_tx_reclaim(struct bcm_sysport_priv *priv,
 	unsigned int c_index, last_c_index, last_tx_cn, num_tx_cbs;
 	unsigned int pkts_compl = 0, bytes_compl = 0;
 	struct bcm_sysport_cb *cb;
-	struct netdev_queue *txq;
 	u32 hw_ind;
-
-	txq = netdev_get_tx_queue(ndev, ring->index);
 
 	/* Compute how many descriptors have been processed since last call */
 	hw_ind = tdma_readl(priv, TDMA_DESC_RING_PROD_CONS_INDEX(ring->index));
@@ -689,9 +687,6 @@ static unsigned int __bcm_sysport_tx_reclaim(struct bcm_sysport_priv *priv,
 
 	ring->c_index = c_index;
 
-	if (netif_tx_queue_stopped(txq) && pkts_compl)
-		netif_tx_wake_queue(txq);
-
 	netif_dbg(priv, tx_done, ndev,
 		  "ring=%d c_index=%d pkts_compl=%d, bytes_compl=%d\n",
 		  ring->index, ring->c_index, pkts_compl, bytes_compl);
@@ -703,14 +698,31 @@ static unsigned int __bcm_sysport_tx_reclaim(struct bcm_sysport_priv *priv,
 static unsigned int bcm_sysport_tx_reclaim(struct bcm_sysport_priv *priv,
 					   struct bcm_sysport_tx_ring *ring)
 {
+	struct netdev_queue *txq;
 	unsigned int released;
 	unsigned long flags;
 
+	txq = netdev_get_tx_queue(priv->netdev, ring->index);
+
 	spin_lock_irqsave(&ring->lock, flags);
 	released = __bcm_sysport_tx_reclaim(priv, ring);
+	if (released)
+		netif_tx_wake_queue(txq);
+
 	spin_unlock_irqrestore(&ring->lock, flags);
 
 	return released;
+}
+
+/* Locked version of the per-ring TX reclaim, but does not wake the queue */
+static void bcm_sysport_tx_clean(struct bcm_sysport_priv *priv,
+				 struct bcm_sysport_tx_ring *ring)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&ring->lock, flags);
+	__bcm_sysport_tx_reclaim(priv, ring);
+	spin_unlock_irqrestore(&ring->lock, flags);
 }
 
 static int bcm_sysport_tx_poll(struct napi_struct *napi, int budget)
@@ -1182,7 +1194,7 @@ static void bcm_sysport_fini_tx_ring(struct bcm_sysport_priv *priv,
 	napi_disable(&ring->napi);
 	netif_napi_del(&ring->napi);
 
-	bcm_sysport_tx_reclaim(priv, ring);
+	bcm_sysport_tx_clean(priv, ring);
 
 	kfree(ring->cbs);
 	ring->cbs = NULL;
@@ -1665,7 +1677,7 @@ static int bcm_sysport_probe(struct platform_device *pdev)
 
 	priv->phy_interface = of_get_phy_mode(dn);
 	/* Default to GMII interface mode */
-	if (priv->phy_interface < 0)
+	if ((int)priv->phy_interface < 0)
 		priv->phy_interface = PHY_INTERFACE_MODE_GMII;
 
 	/* In the case of a fixed PHY, the DT node associated
@@ -1867,6 +1879,9 @@ static int bcm_sysport_resume(struct device *d)
 		return 0;
 
 	umac_reset(priv);
+
+	/* Disable the UniMAC RX/TX */
+	umac_enable_set(priv, CMD_RX_EN | CMD_TX_EN, 0);
 
 	/* We may have been suspended and never received a WOL event that
 	 * would turn off MPD detection, take care of that now

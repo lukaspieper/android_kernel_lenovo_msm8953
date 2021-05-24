@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -988,7 +988,7 @@ static void hdd_SendFTAssocResponse(struct net_device *dev, hdd_adapter_t *pAdap
     unsigned int len = 0;
     u8 *pFTAssocRsp = NULL;
 
-    if (pCsrRoamInfo->nAssocRspLength == 0)
+    if (pCsrRoamInfo->nAssocRspLength < FT_ASSOC_RSP_IES_OFFSET)
     {
         hddLog(LOGE,
             "%s: pCsrRoamInfo->nAssocRspLength=%d",
@@ -1006,6 +1006,17 @@ static void hdd_SendFTAssocResponse(struct net_device *dev, hdd_adapter_t *pAdap
 
     // pFTAssocRsp needs to point to the IEs
     pFTAssocRsp += FT_ASSOC_RSP_IES_OFFSET;
+
+    // Send the Assoc Resp, the supplicant needs this for initial Auth.
+    len = pCsrRoamInfo->nAssocRspLength - FT_ASSOC_RSP_IES_OFFSET;
+    if (len > IW_GENERIC_IE_MAX)
+    {
+        hddLog(LOGE, "%s: Invalid assoc response IEs length %d",
+               __func__, len);
+        return;
+    }
+    wrqu.data.length = len;
+
     hddLog(LOG1, "%s: AssocRsp is now at %02x%02x", __func__,
         (unsigned int)pFTAssocRsp[0],
         (unsigned int)pFTAssocRsp[1]);
@@ -1018,9 +1029,6 @@ static void hdd_SendFTAssocResponse(struct net_device *dev, hdd_adapter_t *pAdap
         return;
     }
 
-    // Send the Assoc Resp, the supplicant needs this for initial Auth.
-    len = pCsrRoamInfo->nAssocRspLength - FT_ASSOC_RSP_IES_OFFSET;
-    wrqu.data.length = len;
     memset(buff, 0, IW_GENERIC_IE_MAX);
     memcpy(buff, pFTAssocRsp, len);
     wireless_send_event(dev, IWEVASSOCRESPIE, &wrqu, buff);
@@ -2194,8 +2202,9 @@ static void hdd_SendReAssocEvent(struct net_device *dev,
         goto done;
     }
 
-    if (pCsrRoamInfo->nAssocRspLength == 0) {
-        hddLog(LOGE, FL("Invalid assoc response length"));
+    if (pCsrRoamInfo->nAssocRspLength < FT_ASSOC_RSP_IES_OFFSET) {
+        hddLog(LOGE, FL("Invalid assoc response length %d"),
+               pCsrRoamInfo->nAssocRspLength);
         goto done;
     }
 
@@ -2220,6 +2229,10 @@ static void hdd_SendReAssocEvent(struct net_device *dev,
 
     /* Send the Assoc Resp, the supplicant needs this for initial Auth */
     len = pCsrRoamInfo->nAssocRspLength - FT_ASSOC_RSP_IES_OFFSET;
+    if (len > IW_GENERIC_IE_MAX) {
+        hddLog(LOGE, FL("Invalid Assoc resp length %d"), len);
+        goto done;
+    }
     rspRsnLength = len;
     memcpy(rspRsnIe, pFTAssocRsp, len);
     memset(rspRsnIe + len, 0, IW_GENERIC_IE_MAX - len);
@@ -2318,27 +2331,33 @@ static int hdd_change_sta_state_authenticated(hdd_adapter_t *adapter,
 
 void hdd_PerformRoamSetKeyComplete(hdd_adapter_t *pAdapter)
 {
-    eHalStatus halStatus = eHAL_STATUS_SUCCESS;
-    hdd_station_ctx_t *pHddStaCtx = WLAN_HDD_GET_STATION_CTX_PTR(pAdapter);
-    tCsrRoamInfo roamInfo;
-    roamInfo.fAuthRequired = FALSE;
-    vos_mem_copy(roamInfo.bssid,
-                 pHddStaCtx->roam_info.bssid,
-                 VOS_MAC_ADDR_SIZE);
-    vos_mem_copy(roamInfo.peerMac,
-                 pHddStaCtx->roam_info.peerMac,
-                 VOS_MAC_ADDR_SIZE);
+	eHalStatus halStatus = eHAL_STATUS_SUCCESS;
+	hdd_station_ctx_t *pHddStaCtx = WLAN_HDD_GET_STATION_CTX_PTR(pAdapter);
+	tCsrRoamInfo *roam_info;
 
-    halStatus = hdd_RoamSetKeyCompleteHandler(pAdapter,
-                                  &roamInfo,
-                                  pHddStaCtx->roam_info.roamId,
-                                  pHddStaCtx->roam_info.roamStatus,
-                                  eCSR_ROAM_RESULT_AUTHENTICATED);
-    if (halStatus != eHAL_STATUS_SUCCESS)
-    {
-        hddLog(LOGE, "%s: Set Key complete failure", __func__);
-    }
-    pHddStaCtx->roam_info.deferKeyComplete = FALSE;
+	roam_info = vos_mem_malloc(sizeof(*roam_info));
+	if (!roam_info)
+		return;
+
+	vos_mem_set(roam_info, sizeof(*roam_info), 0);
+	roam_info->fAuthRequired = FALSE;
+	vos_mem_copy(roam_info->bssid,
+	             pHddStaCtx->roam_info.bssid,
+	             VOS_MAC_ADDR_SIZE);
+	vos_mem_copy(roam_info->peerMac,
+	             pHddStaCtx->roam_info.peerMac,
+	             VOS_MAC_ADDR_SIZE);
+
+	halStatus = hdd_RoamSetKeyCompleteHandler(
+			pAdapter,
+			roam_info,
+			pHddStaCtx->roam_info.roamId,
+			pHddStaCtx->roam_info.roamStatus,
+			eCSR_ROAM_RESULT_AUTHENTICATED);
+	if (halStatus != eHAL_STATUS_SUCCESS)
+		hddLog(LOGE, "%s: Set Key complete failure", __func__);
+	pHddStaCtx->roam_info.deferKeyComplete = FALSE;
+	vos_mem_free(roam_info);
 }
 
 #if defined(WLAN_FEATURE_FILS_SK) && defined(CFG80211_FILS_SK_OFFLOAD_SUPPORT)
@@ -5568,7 +5587,7 @@ int hdd_set_csr_auth_type ( hdd_adapter_t  *pAdapter, eCsrAuthType RSNAuthType)
                 hddLog( LOG1, "%s: set authType to CCKM WPA. AKM also 802.1X.", __func__);
                 pRoamProfile->AuthType.authType[0] = eCSR_AUTH_TYPE_CCKM_WPA;
             } else
-            if ((RSNAuthType == eCSR_AUTH_TYPE_CCKM_WPA)) {
+            if (RSNAuthType == eCSR_AUTH_TYPE_CCKM_WPA) {
                 hddLog( LOG1, "%s: Last chance to set authType to CCKM WPA.", __func__);
                 pRoamProfile->AuthType.authType[0] = eCSR_AUTH_TYPE_CCKM_WPA;
             } else
@@ -5592,7 +5611,7 @@ int hdd_set_csr_auth_type ( hdd_adapter_t  *pAdapter, eCsrAuthType RSNAuthType)
                 hddLog( LOG1, "%s: set authType to CCKM RSN. AKM also 802.1X.", __func__);
                 pRoamProfile->AuthType.authType[0] = eCSR_AUTH_TYPE_CCKM_RSN;
             } else
-            if ((RSNAuthType == eCSR_AUTH_TYPE_CCKM_RSN)) {
+            if (RSNAuthType == eCSR_AUTH_TYPE_CCKM_RSN) {
                 hddLog( LOG1, "%s: Last chance to set authType to CCKM RSN.", __func__);
                 pRoamProfile->AuthType.authType[0] = eCSR_AUTH_TYPE_CCKM_RSN;
             } else
@@ -5626,6 +5645,12 @@ int hdd_set_csr_auth_type ( hdd_adapter_t  *pAdapter, eCsrAuthType RSNAuthType)
 				hddLog(LOG1, "updated profile authtype as %d", RSNAuthType);
             } else
 #endif
+            if ((RSNAuthType == eCSR_AUTH_TYPE_SAE) &&
+		((pWextState->authKeyMgmt & IW_AUTH_KEY_MGMT_802_1X)
+		== IW_AUTH_KEY_MGMT_802_1X)) {
+		/* SAE case */
+		pRoamProfile->AuthType.authType[0] = eCSR_AUTH_TYPE_SAE;
+	    } else
             if ((RSNAuthType == eCSR_AUTH_TYPE_OWE) &&
                 ((pWextState->authKeyMgmt & IW_AUTH_KEY_MGMT_802_1X)
                   == IW_AUTH_KEY_MGMT_802_1X)) {
