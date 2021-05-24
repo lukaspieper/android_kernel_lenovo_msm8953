@@ -628,6 +628,10 @@ config QPNP_TYPEC
 	  CC-orientation. The module does not support USB power-delivery. The driver
 	  adds support to report these type-C parameters via the power-supply
 	  framework.
+#add by longcheer_liml_2017_03_27
+config USB_FUSB302
+	bool "Enable fusb422 USB Power Delivery"
+	default n
 
 config MSM_BCL_CTL
 	bool "BCL Framework driver"
@@ -646,9 +650,17 @@ config MSM_BCL_PERIPHERAL_CTL
 	  provides routines to configure and monitor the BCL
 	  PMIC peripheral.
 
+config COULO_METER
+	tristate "COULO_METER Battery"
+	depends on I2C
+	help
+	  Say Y to include support for Battery COULO_METER.
+	  COULO_METER is a meter of battery.
+
 source "drivers/power/reset/Kconfig"
 
 endif # POWER_SUPPLY
 
 source "drivers/power/avs/Kconfig"
 source "drivers/power/qcom/Kconfig"
+source "drivers/power/onsemi/Kconfig"

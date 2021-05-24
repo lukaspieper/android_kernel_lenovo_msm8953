@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -52,12 +52,18 @@
 #include "debug.h"
 #include "xhci.h"
 
+#if defined(CONFIG_MACH_LENOVO_TB8804) //add by longcheer_liml_2017_04_05_for_open log
+#define DWC3_IDEV_CHG_MAX 2000 //1500
+#else
 #define DWC3_IDEV_CHG_MAX 1500
+#endif
+
 #define DWC3_HVDCP_CHG_MAX 1800
 #define DWC3_WAKEUP_SRC_TIMEOUT 5000
 
 #define MICRO_5V    5000000
 #define MICRO_9V    9000000
+
 
 /* AHB2PHY register offsets */
 #define PERIPH_SS_AHB2PHY_TOP_CFG 0x10
@@ -186,6 +192,9 @@ enum dwc3_chg_type {
 	DWC3_DCP_CHARGER,
 	DWC3_CDP_CHARGER,
 	DWC3_PROPRIETARY_CHARGER,
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+	DWC3_T_HUB_CHARGER,
+#endif
 };
 
 struct dwc3_msm {
@@ -276,6 +285,10 @@ struct dwc3_msm {
 	struct pm_qos_request   pm_qos_req_dma;
 	struct delayed_work     perf_vote_work;
 	enum dwc3_perf_mode	curr_mode;
+
+#if defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8804)
+	struct			hrtimer chg_hrtimer;
+#endif
 };
 
 #define USB_HSPHY_3P3_VOL_MIN		3050000 /* uV */
@@ -295,6 +308,85 @@ struct dwc3_msm {
 #define PM_QOS_SAMPLE_SEC		2
 #define PM_QOS_THRESHOLD_NOM		400
 
+#ifdef CONFIG_MACH_LENOVO_TBX704
+struct dwc3_msm *fusb_dwc3_msm = NULL;
+extern bool have_fusb302;
+static int current_vbus = 0;
+
+int fusb_init_vbus_regulator(void){
+	int ret = 0;
+	if(!fusb_dwc3_msm){
+		pr_err("[%s]: fusb_dwc3_msm is NULL\n",__func__);
+		ret = -EFAULT;
+		goto err;
+	}
+
+	if (NULL == fusb_dwc3_msm->vbus_reg){
+		fusb_dwc3_msm->vbus_reg = devm_regulator_get_optional(fusb_dwc3_msm->dev,
+					"vbus_dwc3");
+		if (IS_ERR(fusb_dwc3_msm->vbus_reg) &&
+				PTR_ERR(fusb_dwc3_msm->vbus_reg) == -EPROBE_DEFER) {
+			/* regulators may not be ready, so retry again later */
+			fusb_dwc3_msm->vbus_reg = NULL;
+			return -EPROBE_DEFER;
+		}
+	}
+err:
+	return ret;
+
+}
+
+int fusb_enable_vbus(unsigned int on){
+    int ret = -1, retry = 0;
+	pr_info("FUSB %s: on=%d\n", __func__, on);
+    do {
+        pr_info("FUSB %s: fusb_init_vbus_regulator(), retry: %d\n", __func__, retry);
+		ret = fusb_init_vbus_regulator();
+        if (ret < 0) {
+            msleep(1000);
+            retry++;
+        }
+    } while(ret < 0 && retry < 50);
+
+	if(ret){
+		pr_err("[%s]: fusb_init_vbus_regulator failed \n",__func__);
+		ret = -EFAULT;
+		goto err;
+	}
+
+	if(on){
+		if (!IS_ERR_OR_NULL(fusb_dwc3_msm->vbus_reg))
+		{
+			if(current_vbus != 1)
+			{
+				ret = regulator_enable(fusb_dwc3_msm->vbus_reg);
+				current_vbus = 1;
+			}
+		}else{
+			pr_err("[%s] can't get vbus_reg regulator\n",__func__);
+			ret = -EFAULT;
+			goto err;
+		}
+	}else{
+		if (!IS_ERR_OR_NULL(fusb_dwc3_msm->vbus_reg))
+		{
+			if(current_vbus != 0)
+			{
+				ret = regulator_disable(fusb_dwc3_msm->vbus_reg);
+				current_vbus = 0;
+			}
+		}else{
+			pr_err("[%s] can't get vbus_reg regulator\n",__func__);
+			ret = -EFAULT;
+			goto err;
+		}
+	}
+
+err:
+	return ret;
+};
+EXPORT_SYMBOL(fusb_enable_vbus);
+#endif
 static void dwc3_pwr_event_handler(struct dwc3_msm *mdwc);
 static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned mA);
 
@@ -1857,6 +1949,10 @@ static void dwc3_msm_notify_event(struct dwc3 *dwc, unsigned event,
 					PWR_EVNT_LPM_OUT_L1_MASK, 1);
 
 		atomic_set(&dwc->in_lpm, 0);
+#if defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8804)
+		pr_err("%s():cancel HRTIMER\n", __func__);
+				hrtimer_cancel(&mdwc->chg_hrtimer);
+#endif
 		break;
 	case DWC3_CONTROLLER_NOTIFY_OTG_EVENT:
 		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_NOTIFY_OTG_EVENT received\n");
@@ -1920,6 +2016,9 @@ static const char *chg_to_string(enum dwc3_chg_type chg_type)
 	case DWC3_DCP_CHARGER:		return "USB_DCP_CHARGER";
 	case DWC3_CDP_CHARGER:		return "USB_CDP_CHARGER";
 	case DWC3_PROPRIETARY_CHARGER:	return "USB_PROPRIETARY_CHARGER";
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+	case DWC3_T_HUB_CHARGER:	return "USB_T_HUB_CHARGER";
+#endif
 	default:			return "UNKNOWN_CHARGER";
 	}
 }
@@ -2344,6 +2443,10 @@ static void dwc3_ext_event_notify(struct dwc3_msm *mdwc)
 	} else {
 		dbg_event(0xFF, "BSV clear", 0);
 		clear_bit(B_SESS_VLD, &mdwc->inputs);
+#if defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8804)
+		pr_err("%s():cancel HRTIMER\n", __func__);
+				hrtimer_cancel(&mdwc->chg_hrtimer);
+#endif
 	}
 
 	if (mdwc->suspend) {
@@ -2632,8 +2735,14 @@ static int dwc3_msm_power_set_property_usb(struct power_supply *psy,
 						mdwc->bc1p2_current_max);
 		}
 		break;
+
 	case POWER_SUPPLY_PROP_REAL_TYPE:
 		mdwc->usb_supply_type = val->intval;
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+		pr_info("yxw dwc3 chg type = %d psy type=%d\n",mdwc->chg_type,psy->type);
+		if(mdwc->chg_type == DWC3_T_HUB_CHARGER)
+			break;
+#endif
 		/*
 		 * Update TYPE property to DCP for HVDCP/HVDCP3 charger types
 		 * so that they can be recongized as AC chargers by healthd.
@@ -2651,11 +2760,23 @@ static int dwc3_msm_power_set_property_usb(struct power_supply *psy,
 		case POWER_SUPPLY_TYPE_USB:
 			mdwc->chg_type = DWC3_SDP_CHARGER;
 			mdwc->voltage_max = MICRO_5V;
+#if defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8804)
+                        pr_err("%s(): start hrtimer\n", __func__);
+                                        hrtimer_start(&mdwc->chg_hrtimer,
+                                        ktime_set(1, 0),
+                                        HRTIMER_MODE_REL);
+#endif
 			break;
+
 		case POWER_SUPPLY_TYPE_USB_DCP:
 			mdwc->chg_type = DWC3_DCP_CHARGER;
 			mdwc->voltage_max = MICRO_5V;
 			break;
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+		case POWER_SUPPLY_TYPE_T_HUB:
+			mdwc->chg_type = DWC3_T_HUB_CHARGER;
+			break;
+#endif
 		case POWER_SUPPLY_TYPE_USB_HVDCP:
 			mdwc->chg_type = DWC3_DCP_CHARGER;
 			mdwc->voltage_max = MICRO_9V;
@@ -2676,7 +2797,7 @@ static int dwc3_msm_power_set_property_usb(struct power_supply *psy,
 		if (mdwc->chg_type != DWC3_INVALID_CHARGER)
 			mdwc->chg_state = USB_CHG_STATE_DETECTED;
 
-		dev_dbg(mdwc->dev, "%s: charger type: %s\n", __func__,
+		dev_err(mdwc->dev, "%s: charger type: %s\n", __func__,
 				chg_to_string(mdwc->chg_type));
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
@@ -2964,6 +3085,22 @@ static int dwc3_usbid_enable_gpio_pull(struct dwc3_msm *dwc3, int enable)
 	return 1;
 }
 
+#if defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8804)
+static enum hrtimer_restart chg_hrtimer_func(struct hrtimer *hrtimer)
+{
+	struct power_supply *usb_psy;
+	const union power_supply_propval ret = {500,};
+	struct dwc3_msm *mdwc = container_of(hrtimer, struct dwc3_msm,chg_hrtimer);
+	usb_psy = power_supply_get_by_name("usb");
+	pr_err("%s(): Inside timer expired.\n", __func__);
+	pr_err("%s(): DO floating charger update.\n", __func__);
+	dwc3_msm_power_set_property_usb(usb_psy,POWER_SUPPLY_PROP_CURRENT_MAX,&ret);
+	dwc3_msm_gadget_vbus_draw(mdwc, 500);
+	return HRTIMER_NORESTART;
+}
+#endif
+
+
 static int dwc3_msm_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node, *dwc3_node;
@@ -3031,6 +3168,11 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 
 	mdwc->id_state = DWC3_ID_FLOAT;
 	set_bit(ID, &mdwc->inputs);
+#if defined(CONFIG_MACH_LENOVO_TB8704) || defined(CONFIG_MACH_LENOVO_TB8804)
+	hrtimer_init(&mdwc->chg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
+		mdwc->chg_hrtimer.function = chg_hrtimer_func;
+#endif
+
 	mdwc->charging_disabled = of_property_read_bool(node,
 				"qcom,charging-disabled");
 
@@ -3392,7 +3534,9 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 		mdwc->id_state = DWC3_ID_GROUND;
 		dwc3_ext_event_notify(mdwc);
 	}
-
+#ifdef CONFIG_MACH_LENOVO_TBX704
+	fusb_dwc3_msm = mdwc;
+#endif
 	return 0;
 
 put_dwc3:
@@ -3647,8 +3791,14 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 		mdwc->hs_phy->flags |= PHY_HOST_MODE;
 		mdwc->ss_phy->flags |= PHY_HOST_MODE;
 		usb_phy_notify_connect(mdwc->hs_phy, USB_SPEED_HIGH);
-		if (!IS_ERR(mdwc->vbus_reg))
-			ret = regulator_enable(mdwc->vbus_reg);
+
+#ifdef CONFIG_MACH_LENOVO_TBX704
+		if(!have_fusb302)
+#endif
+		{
+			if (!IS_ERR(mdwc->vbus_reg))
+				ret = regulator_enable(mdwc->vbus_reg);
+		}
 		if (ret) {
 			dev_err(mdwc->dev, "unable to enable vbus_reg\n");
 			mdwc->hs_phy->flags &= ~PHY_HOST_MODE;
@@ -3676,8 +3826,13 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 			dev_err(mdwc->dev,
 				"%s: failed to add XHCI pdev ret=%d\n",
 				__func__, ret);
+#ifdef CONFIG_MACH_LENOVO_TBX704
+		if(!have_fusb302)
+#endif
+		{
 			if (!IS_ERR(mdwc->vbus_reg))
 				regulator_disable(mdwc->vbus_reg);
+		}
 			mdwc->hs_phy->flags &= ~PHY_HOST_MODE;
 			mdwc->ss_phy->flags &= ~PHY_HOST_MODE;
 			pm_runtime_put_sync(mdwc->dev);
@@ -3728,8 +3883,13 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 		dev_dbg(mdwc->dev, "%s: turn off host\n", __func__);
 
 		usb_unregister_atomic_notify(&mdwc->usbdev_nb);
+#ifdef CONFIG_MACH_LENOVO_TBX704
+		if(!have_fusb302) 
+#endif
+		{
 		if (!IS_ERR(mdwc->vbus_reg))
 			ret = regulator_disable(mdwc->vbus_reg);
+		}
 		if (ret) {
 			dev_err(mdwc->dev, "unable to disable vbus_reg\n");
 			return ret;
@@ -3841,6 +4001,10 @@ static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 	return 0;
 }
 
+#ifdef CONFIG_MACH_LENOVO_TBX704
+extern int is_pd_5v_insertion;
+#endif
+
 static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned mA)
 {
 	enum power_supply_type power_supply_type;
@@ -3863,6 +4027,10 @@ static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned mA)
 		power_supply_type = POWER_SUPPLY_TYPE_USB;
 	else if (mdwc->chg_type == DWC3_CDP_CHARGER)
 		power_supply_type = POWER_SUPPLY_TYPE_USB_CDP;
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+	else if (mdwc->chg_type == DWC3_T_HUB_CHARGER)
+		power_supply_type = POWER_SUPPLY_TYPE_T_HUB;
+#endif
 	else if (mdwc->chg_type == DWC3_DCP_CHARGER ||
 			mdwc->chg_type == DWC3_PROPRIETARY_CHARGER)
 		power_supply_type = POWER_SUPPLY_TYPE_USB_DCP;
@@ -3876,7 +4044,16 @@ static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned mA)
 skip_psy_type:
 
 	if (mdwc->chg_type == DWC3_CDP_CHARGER)
+
+#ifdef CONFIG_MACH_LENOVO_TBX704
+		mA = 900;
+	if (mdwc->chg_type == DWC3_SDP_CHARGER)
+		mA = 1000;
+	if (is_pd_5v_insertion == 1)
+		mA = 2000;
+#else
 		mA = DWC3_IDEV_CHG_MAX;
+#endif
 
 	/* Save bc1.2 max_curr if type-c charger later moves to diff mode */
 	mdwc->bc1p2_current_max = mA;
@@ -4101,10 +4278,16 @@ static void dwc3_msm_otg_sm_work(struct work_struct *w)
 			dbg_event(0xFF, "!id", 0);
 			mdwc->otg_state = OTG_STATE_A_IDLE;
 			work = 1;
-			mdwc->chg_type = DWC3_INVALID_CHARGER;
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+			if(mdwc->chg_type != DWC3_T_HUB_CHARGER)
+#endif
+				mdwc->chg_type = DWC3_INVALID_CHARGER;
 		} else if (test_bit(B_SESS_VLD, &mdwc->inputs)) {
 			dbg_event(0xFF, "b_sess_vld", 0);
 			switch (mdwc->chg_type) {
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+			case DWC3_T_HUB_CHARGER:
+#endif
 			case DWC3_DCP_CHARGER:
 			case DWC3_PROPRIETARY_CHARGER:
 				dbg_event(0xFF, "DCPCharger", 0);
@@ -4205,12 +4388,6 @@ static void dwc3_msm_otg_sm_work(struct work_struct *w)
 			pm_runtime_get_sync(mdwc->dev);
 			dbg_event(0xFF, "SUSP gsync",
 				atomic_read(&mdwc->dev->power.usage_count));
-		} else {
-			/*
-			 * Release PM Wakelock if PM resume had happened from
-			 * peripheral mode bus suspend case.
-			 */
-			pm_relax(mdwc->dev);
 		}
 		break;
 
@@ -4259,6 +4436,11 @@ static void dwc3_msm_otg_sm_work(struct work_struct *w)
 			if (!mdwc->stop_host)
 				work = 1;
 			mdwc->stop_host = false;
+#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
+			if(mdwc->chg_type == DWC3_T_HUB_CHARGER)
+				mdwc->chg_type = DWC3_INVALID_CHARGER;
+#endif
+			work = 1;
 		} else {
 			dev_dbg(mdwc->dev, "still in a_host state. Resuming root hub.\n");
 			dbg_event(0xFF, "XHCIResume", 0);
