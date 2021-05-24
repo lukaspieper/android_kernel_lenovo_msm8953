@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -1486,7 +1486,7 @@ static void hdd_conf_suspend_ind(hdd_context_t* pHddCtx,
     hddLog(VOS_TRACE_LEVEL_INFO,
       "%s: send wlan suspend indication", __func__);
 
-    if((pHddCtx->cfg_ini->nEnableSuspend == WLAN_MAP_SUSPEND_TO_MCAST_BCAST_FILTER))
+    if(pHddCtx->cfg_ini->nEnableSuspend == WLAN_MAP_SUSPEND_TO_MCAST_BCAST_FILTER)
     {
         //Configure supported OffLoads
         hdd_conf_hostoffload(pAdapter, TRUE);
@@ -1974,21 +1974,26 @@ VOS_STATUS hdd_wlan_reset_initialization(void)
    return VOS_STATUS_SUCCESS;
 }
 
-static void hdd_ssr_timer_init(void)
-{
-    init_timer(&ssr_timer);
-}
-
 static void hdd_ssr_timer_del(void)
 {
-    del_timer(&ssr_timer);
+    adf_os_timer_cancel(&ssr_timer);
     ssr_timer_started = false;
 }
 
-static void hdd_ssr_timer_cb(unsigned long data)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+static void hdd_ssr_timer_cb(struct timer_list *t)
+#else
+static void hdd_ssr_timer_cb(void *data)
+#endif
 {
     hddLog(VOS_TRACE_LEVEL_FATAL, "%s: HDD SSR timer expired!", __func__);
     VOS_BUG(0);
+}
+
+static void hdd_ssr_timer_init(void)
+{
+    adf_os_timer_init(NULL, &ssr_timer,
+                      hdd_ssr_timer_cb, NULL, ADF_NON_DEFERRABLE_TIMER);
 }
 
 static void hdd_ssr_timer_start(int msec)
@@ -1998,9 +2003,7 @@ static void hdd_ssr_timer_start(int msec)
         hddLog(VOS_TRACE_LEVEL_FATAL, "%s: Trying to start SSR timer when "
                "it's running!", __func__);
     }
-    ssr_timer.expires = jiffies + msecs_to_jiffies(msec);
-    ssr_timer.function = hdd_ssr_timer_cb;
-    add_timer(&ssr_timer);
+    adf_os_timer_start(&ssr_timer, msec);
     ssr_timer_started = true;
 }
 
@@ -2026,6 +2029,31 @@ void hdd_svc_fw_shutdown_ind(struct device *dev)
 
 	hdd_ctx ? wlan_hdd_send_svc_nlink_msg(hdd_ctx->radio_index,
 					      WLAN_SVC_FW_SHUTDOWN_IND,
+					      NULL, 0) : 0;
+}
+
+/**
+ * hdd_svc_fw_crashed_ind() - API to send FW CRASHED IND to Userspace
+ *
+ * @dev: Device Pointer
+ *
+ * Return: None
+ */
+void hdd_svc_fw_crashed_ind(struct device *dev)
+{
+	v_CONTEXT_t g_context;
+	hdd_context_t *hdd_ctx;
+
+	g_context = vos_get_global_context(VOS_MODULE_ID_SYS, NULL);
+
+	if(!g_context)
+		return;
+
+	hdd_ctx = (hdd_context_t *)vos_get_context(VOS_MODULE_ID_HDD,
+						   g_context);
+
+	hdd_ctx ? wlan_hdd_send_svc_nlink_msg(hdd_ctx->radio_index,
+					      WLAN_SVC_FW_CRASHED_IND,
 					      NULL, 0) : 0;
 }
 
@@ -2488,6 +2516,8 @@ VOS_STATUS hdd_wlan_re_init(void *hif_sc)
    pHddCtx->hdd_mcastbcast_filter_set = FALSE;
    pHddCtx->btCoexModeSet = false;
    hdd_register_mcast_bcast_filter(pHddCtx);
+
+   wlan_hdd_process_tdcc_ps(NULL, PS_TDCC_RESET, NULL, NULL);
 
    /* Allow the phone to go to sleep */
    hdd_allow_suspend(WIFI_POWER_EVENT_WAKELOCK_DRIVER_REINIT);

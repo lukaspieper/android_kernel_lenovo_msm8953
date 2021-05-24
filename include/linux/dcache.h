@@ -468,13 +468,6 @@ static inline bool d_is_positive(const struct dentry *dentry)
 	return !d_is_negative(dentry);
 }
 
-static inline bool d_is_su(const struct dentry *dentry)
-{
-	return dentry &&
-	       dentry->d_name.len == 2 &&
-	       !memcmp(dentry->d_name.name, "su", 2);
-}
-
 extern int sysctl_vfs_cache_pressure;
 
 static inline unsigned long vfs_pressure_ratio(unsigned long val)
@@ -544,5 +537,17 @@ struct name_snapshot {
 };
 void take_dentry_name_snapshot(struct name_snapshot *, struct dentry *);
 void release_dentry_name_snapshot(struct name_snapshot *);
+
+static inline struct inode *vfs_select_inode(struct dentry *dentry,
+					     unsigned open_flags)
+{
+	struct inode *inode = d_inode(dentry);
+
+	if (inode && unlikely(dentry->d_flags & DCACHE_OP_SELECT_INODE))
+		inode = dentry->d_op->d_select_inode(dentry, open_flags);
+
+	return inode;
+}
+
 
 #endif	/* __LINUX_DCACHE_H */

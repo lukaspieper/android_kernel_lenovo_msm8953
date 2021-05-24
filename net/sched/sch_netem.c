@@ -477,7 +477,7 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	 * skb will be queued.
 	 */
 	if (count > 1 && (skb2 = skb_clone(skb, GFP_ATOMIC)) != NULL) {
-		struct Qdisc *rootq = qdisc_root(sch);
+		struct Qdisc *rootq = qdisc_root_bh(sch);
 		u32 dupsave = q->duplicate; /* prevent duplicating a dup... */
 		q->duplicate = 0;
 
@@ -665,14 +665,14 @@ deliver:
 #endif
 
 			if (q->qdisc) {
+				unsigned int pkt_len = qdisc_pkt_len(skb);
 				int err = qdisc_enqueue(skb, q->qdisc);
 
-				if (unlikely(err != NET_XMIT_SUCCESS)) {
-					if (net_xmit_drop_count(err)) {
-						qdisc_qstats_drop(sch);
-						qdisc_tree_reduce_backlog(sch, 1,
-									  qdisc_pkt_len(skb));
-					}
+				if (err != NET_XMIT_SUCCESS &&
+				    net_xmit_drop_count(err)) {
+					qdisc_qstats_drop(sch);
+					qdisc_tree_reduce_backlog(sch, 1,
+								  pkt_len);
 				}
 				goto tfifo_dequeue;
 			}
@@ -725,7 +725,7 @@ static int get_dist_table(struct Qdisc *sch, const struct nlattr *attr)
 	int i;
 	size_t s;
 
-	if (n > NETEM_DIST_MAX)
+	if (!n || n > NETEM_DIST_MAX)
 		return -EINVAL;
 
 	s = sizeof(struct disttable) + n * sizeof(s16);

@@ -362,6 +362,14 @@ v_VOID_t vos_fwDumpReq(tANI_U32 cmd, tANI_U32 arg1, tANI_U32 arg2,
 
 v_BOOL_t vos_is_packet_log_enabled(void);
 
+/**
+ * vos_is_fast_chswitch_cali_enabled()
+ *
+ * This function is used to check whether fast channel switch cali enabled
+ * Return: true if function enabled
+ */
+bool vos_is_fast_chswitch_cali_enabled(void);
+
 v_BOOL_t vos_config_is_no_ack(void);
 
 #ifdef WLAN_FEATURE_TSF_PLUS
@@ -442,6 +450,7 @@ void vos_pkt_stats_to_logger_thread(void *pl_hdr, void *pkt_dump, void *data);
 int vos_get_radio_index(void);
 int vos_set_radio_index(int radio_index);
 void vos_svc_fw_shutdown_ind(struct device *dev);
+void vos_svc_fw_crashed_ind(struct device *dev);
 uint64_t vos_do_div(uint64_t, uint32_t);
 /**
  * vos_do_div64() - Do uint64/64 divsion.

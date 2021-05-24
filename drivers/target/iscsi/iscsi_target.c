@@ -997,7 +997,9 @@ int iscsit_setup_scsi_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 		hdr->cmdsn, be32_to_cpu(hdr->data_length), payload_length,
 		conn->cid);
 
-	target_get_sess_cmd(&cmd->se_cmd, true);
+	if (target_get_sess_cmd(&cmd->se_cmd, true) < 0)
+		return iscsit_add_reject_cmd(cmd,
+				ISCSI_REASON_WAITING_FOR_LOGOUT, buf);
 
 	cmd->sense_reason = transport_lookup_cmd_lun(&cmd->se_cmd,
 						     scsilun_to_int(&hdr->lun));
@@ -1116,6 +1118,18 @@ iscsit_get_immediate_data(struct iscsi_cmd *cmd, struct iscsi_scsi_req *hdr,
 	 */
 	if (dump_payload)
 		goto after_immediate_data;
+	/*
+	 * Check for underflow case where both EDTL and immediate data payload
+	 * exceeds what is presented by CDB's TRANSFER LENGTH, and what has
+	 * already been set in target_cmd_size_check() as se_cmd->data_length.
+	 *
+	 * For this special case, fail the command and dump the immediate data
+	 * payload.
+	 */
+	if (cmd->first_burst_len > cmd->se_cmd.data_length) {
+		cmd->sense_reason = TCM_INVALID_CDB_FIELD;
+		goto after_immediate_data;
+	}
 
 	immed_ret = iscsit_handle_immediate_data(cmd, hdr,
 					cmd->first_burst_len);
@@ -1795,7 +1809,9 @@ iscsit_handle_task_mgt_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 			      conn->sess->se_sess, 0, DMA_NONE,
 			      MSG_SIMPLE_TAG, cmd->sense_buffer + 2);
 
-	target_get_sess_cmd(&cmd->se_cmd, true);
+	if (target_get_sess_cmd(&cmd->se_cmd, true) < 0)
+		return iscsit_add_reject_cmd(cmd,
+				ISCSI_REASON_WAITING_FOR_LOGOUT, buf);
 
 	/*
 	 * TASK_REASSIGN for ERL=2 / connection stays inside of
@@ -1980,6 +1996,7 @@ iscsit_setup_text_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	cmd->cmd_sn		= be32_to_cpu(hdr->cmdsn);
 	cmd->exp_stat_sn	= be32_to_cpu(hdr->exp_statsn);
 	cmd->data_direction	= DMA_NONE;
+	kfree(cmd->text_in_ptr);
 
 	return 0;
 }
@@ -4356,6 +4373,8 @@ int iscsit_close_connection(
 	 * must wait until they have completed.
 	 */
 	iscsit_check_conn_usage_count(conn);
+	target_sess_cmd_list_set_waiting(sess->se_sess);
+	target_wait_for_sess_cmds(sess->se_sess);
 
 	if (conn->conn_rx_hash.tfm)
 		crypto_free_hash(conn->conn_rx_hash.tfm);
@@ -4817,6 +4836,7 @@ int iscsit_release_sessions_for_tpg(struct iscsi_portal_group *tpg, int force)
 			continue;
 		}
 		atomic_set(&sess->session_reinstatement, 1);
+		atomic_set(&sess->session_fall_back_to_erl0, 1);
 		spin_unlock(&sess->conn_lock);
 
 		list_move_tail(&se_sess->sess_list, &free_list);

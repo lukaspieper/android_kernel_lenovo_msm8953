@@ -98,6 +98,12 @@ static inline void put_binfmt(struct linux_binfmt * fmt)
 	module_put(fmt->module);
 }
 
+bool path_noexec(const struct path *path)
+{
+	return (path->mnt->mnt_flags & MNT_NOEXEC) ||
+	       (path->mnt->mnt_sb->s_iflags & SB_I_NOEXEC);
+}
+
 #ifdef CONFIG_USELIB
 /*
  * Note that a shared library must be both readable and executable due to
@@ -132,7 +138,7 @@ SYSCALL_DEFINE1(uselib, const char __user *, library)
 		goto exit;
 
 	error = -EACCES;
-	if (file->f_path.mnt->mnt_flags & MNT_NOEXEC)
+	if (path_noexec(&file->f_path))
 		goto exit;
 
 	fsnotify_open(file);
@@ -790,7 +796,7 @@ static struct file *do_open_exec(struct filename *name)
 	if (!S_ISREG(file_inode(file)->i_mode))
 		goto exit;
 
-	if (file->f_path.mnt->mnt_flags & MNT_NOEXEC)
+	if (path_noexec(&file->f_path))
 		goto exit;
 
 	fsnotify_open(file);
@@ -1157,7 +1163,7 @@ void setup_new_exec(struct linux_binprm * bprm)
 
 	/* An exec changes our domain. We are no longer part of the thread
 	   group */
-	current->self_exec_id++;
+	WRITE_ONCE(current->self_exec_id, current->self_exec_id + 1);
 	flush_signal_handlers(current, 0);
 }
 EXPORT_SYMBOL(setup_new_exec);
@@ -1249,7 +1255,7 @@ static void check_unsafe_exec(struct linux_binprm *bprm)
 	unsigned n_fs;
 
 	if (p->ptrace) {
-		if (p->ptrace & PT_PTRACE_CAP)
+		if (ptracer_capable(p, current_user_ns()))
 			bprm->unsafe |= LSM_UNSAFE_PTRACE_CAP;
 		else
 			bprm->unsafe |= LSM_UNSAFE_PTRACE;
@@ -1484,7 +1490,6 @@ static int do_execve_common(struct filename *filename,
 	struct file *file;
 	struct files_struct *displaced;
 	int retval;
-	bool is_su;
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
@@ -1560,17 +1565,9 @@ static int do_execve_common(struct filename *filename,
 	if (retval < 0)
 		goto out;
 
-	/* exec_binprm can release file and it may be freed */
-	is_su = d_is_su(file->f_dentry);
-
 	retval = exec_binprm(bprm);
 	if (retval < 0)
 		goto out;
-
-	if (is_su && capable(CAP_SYS_ADMIN)) {
-		current->flags |= PF_SU;
-		su_exec();
-	}
 
 	/* execve succeeded */
 	current->fs->in_exec = 0;

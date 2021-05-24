@@ -380,14 +380,7 @@ static int32_t msm_flash_gpio_init(
 static int32_t msm_flash_i2c_release(
 	struct msm_flash_ctrl_t *flash_ctrl)
 {
-	int32_t rc = 0;
-
-	if (!(&flash_ctrl->power_info) || !(&flash_ctrl->flash_i2c_client)) {
-		pr_err("%s:%d failed: %pK %pK\n",
-			__func__, __LINE__, &flash_ctrl->power_info,
-			&flash_ctrl->flash_i2c_client);
-		return -EINVAL;
-	}
+	int32_t rc;
 
 	rc = msm_camera_power_down(&flash_ctrl->power_info,
 		flash_ctrl->flash_device_type,
@@ -1007,18 +1000,6 @@ static int32_t msm_flash_get_dt_data(struct device_node *of_node,
 
 	fctrl->flash_driver_type = FLASH_DRIVER_DEFAULT;
 
-#ifdef CONFIG_MACH_LENOVO_TB8703
-	 /* Read the flash and torch source info from device tree node */
-	rc = msm_flash_get_pmic_source_info(of_node, fctrl);
-	if (rc < 0) {
-		pr_err("%s:%d msm_flash_get_pmic_source_info failed rc %d\n",
-			__func__, __LINE__, rc);
-		return rc;
-	}
-	if (fctrl->flash_driver_type == FLASH_DRIVER_PMIC)
-		return 0;
-#endif
-
 	/* Read the CCI master. Use M0 if not available in the node */
 	rc = of_property_read_u32(of_node, "qcom,cci-master",
 		&fctrl->cci_i2c_master);
@@ -1032,7 +1013,6 @@ static int32_t msm_flash_get_dt_data(struct device_node *of_node,
 		fctrl->flash_driver_type = FLASH_DRIVER_I2C;
 	}
 
-#ifndef CONFIG_MACH_LENOVO_TB8703
 	/* Read the flash and torch source info from device tree node */
 	rc = msm_flash_get_pmic_source_info(of_node, fctrl);
 	if (rc < 0) {
@@ -1040,7 +1020,6 @@ static int32_t msm_flash_get_dt_data(struct device_node *of_node,
 			__func__, __LINE__, rc);
 		return rc;
 	}
-#endif
 
 	/* Read the gpio information from device tree */
 	rc = msm_sensor_driver_get_gpio_data(

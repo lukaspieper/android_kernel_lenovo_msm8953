@@ -432,9 +432,6 @@ struct mdss_dsi_ctrl_pdata {
 	int rst_gpio;
 	int disp_en_gpio;
 	int bklt_en_gpio;
-#if defined (CONFIG_MACH_LENOVO_TB8703) ||  defined(CONFIG_MACH_LENOVO_TB8704)  || defined(CONFIG_MACH_LENOVO_TB8804)
-	int lcden_gpio;
-#endif
 	int mode_gpio;
 	int intf_mux_gpio;
 	int bklt_ctrl;	/* backlight ctrl */

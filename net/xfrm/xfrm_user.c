@@ -108,7 +108,8 @@ static inline int verify_sec_ctx_len(struct nlattr **attrs)
 		return 0;
 
 	uctx = nla_data(rt);
-	if (uctx->len != (sizeof(struct xfrm_user_sec_ctx) + uctx->ctx_len))
+	if (uctx->len > nla_len(rt) ||
+	    uctx->len != (sizeof(struct xfrm_user_sec_ctx) + uctx->ctx_len))
 		return -EINVAL;
 
 	return 0;
@@ -149,6 +150,25 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
 
 	err = -EINVAL;
 	switch (p->family) {
+	case AF_INET:
+		break;
+
+	case AF_INET6:
+#if IS_ENABLED(CONFIG_IPV6)
+		break;
+#else
+		err = -EAFNOSUPPORT;
+		goto out;
+#endif
+
+	default:
+		goto out;
+	}
+
+	switch (p->sel.family) {
+	case AF_UNSPEC:
+		break;
+
 	case AF_INET:
 		if (p->sel.prefixlen_d > 32 || p->sel.prefixlen_s > 32)
 			goto out;
@@ -570,9 +590,12 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 	if (err)
 		goto error;
 
-	if (attrs[XFRMA_SEC_CTX] &&
-	    security_xfrm_state_alloc(x, nla_data(attrs[XFRMA_SEC_CTX])))
-		goto error;
+	if (attrs[XFRMA_SEC_CTX]) {
+		err = security_xfrm_state_alloc(x,
+						nla_data(attrs[XFRMA_SEC_CTX]));
+		if (err)
+			goto error;
+	}
 
 	if ((err = xfrm_alloc_replay_state_esn(&x->replay_esn, &x->preplay_esn,
 					       attrs[XFRMA_REPLAY_ESN_VAL])))
@@ -609,24 +632,33 @@ static int xfrm_add_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct km_event c;
 
 	err = verify_newsa_info(p, attrs);
-	if (err)
+	if (err) {
+		pr_err("kp log: verify_newsa_info failed with err [%d]\n", err);
 		return err;
+	}
 
 	x = xfrm_state_construct(net, p, attrs, &err);
-	if (!x)
+	if (!x) {
+		pr_err("kp log: xfrm_state_construct failed with err [%d]\n", err);
 		return err;
+	}
 
 	xfrm_state_hold(x);
-	if (nlh->nlmsg_type == XFRM_MSG_NEWSA)
+	if (nlh->nlmsg_type == XFRM_MSG_NEWSA) {
 		err = xfrm_state_add(x);
-	else
+		pr_err("kp log: xfrm_state_add failed with err [%d]\n", err);
+	}
+	else {
 		err = xfrm_state_update(x);
+		pr_err("kp log: xfrm_state_update failed with err [%d]\n", err);
+	}
 
 	xfrm_audit_state_add(x, err ? 0 : 1, true);
 
 	if (err < 0) {
 		x->km.state = XFRM_STATE_DEAD;
 		__xfrm_state_put(x);
+		pr_err("kp log: updating xfrm state to be dead\n");
 		goto out;
 	}
 
@@ -684,8 +716,10 @@ static int xfrm_del_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct xfrm_usersa_id *p = nlmsg_data(nlh);
 
 	x = xfrm_user_state_lookup(net, p, attrs, &err);
-	if (x == NULL)
+	if (x == NULL) {
+		pr_err("kp log: xfrm_user_state_lookup failed\n");
 		return err;
+	}
 
 	if ((err = security_xfrm_state_delete(x)) != 0)
 		goto out;
@@ -697,8 +731,10 @@ static int xfrm_del_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 	err = xfrm_state_delete(x);
 
-	if (err < 0)
+	if (err < 0) {
+		pr_err("kp log: xfrm_state_delete failed with err [%d]\n", err);
 		goto out;
+	}
 
 	c.seq = nlh->nlmsg_seq;
 	c.portid = nlh->nlmsg_pid;
@@ -885,7 +921,8 @@ static int xfrm_dump_sa_done(struct netlink_callback *cb)
 	struct sock *sk = cb->skb->sk;
 	struct net *net = sock_net(sk);
 
-	xfrm_state_walk_done(walk, net);
+	if (cb->args[0])
+		xfrm_state_walk_done(walk, net);
 	return 0;
 }
 
@@ -910,8 +947,6 @@ static int xfrm_dump_sa(struct sk_buff *skb, struct netlink_callback *cb)
 		u8 proto = 0;
 		int err;
 
-		cb->args[0] = 1;
-
 		err = nlmsg_parse(cb->nlh, 0, attrs, XFRMA_MAX,
 				  xfrma_policy);
 		if (err < 0)
@@ -930,6 +965,7 @@ static int xfrm_dump_sa(struct sk_buff *skb, struct netlink_callback *cb)
 			proto = nla_get_u8(attrs[XFRMA_PROTO]);
 
 		xfrm_state_walk_init(walk, proto, filter);
+		cb->args[0] = 1;
 	}
 
 	(void) xfrm_state_walk(net, walk, dump_one_state, &info);
@@ -1398,6 +1434,9 @@ static int validate_tmpl(int nr, struct xfrm_user_tmpl *ut, u16 family)
 		if (ut[i].mode >= XFRM_MODE_MAX)
 			return -EINVAL;
 
+		if (ut[i].mode >= XFRM_MODE_MAX)
+			return -EINVAL;
+
 		prev_family = ut[i].family;
 
 		switch (ut[i].family) {
@@ -1411,20 +1450,8 @@ static int validate_tmpl(int nr, struct xfrm_user_tmpl *ut, u16 family)
 			return -EINVAL;
 		}
 
-		switch (ut[i].id.proto) {
-		case IPPROTO_AH:
-		case IPPROTO_ESP:
-		case IPPROTO_COMP:
-#if IS_ENABLED(CONFIG_IPV6)
-		case IPPROTO_ROUTING:
-		case IPPROTO_DSTOPTS:
-#endif
-		case IPSEC_PROTO_ANY:
-			break;
-		default:
+		if (!xfrm_id_proto_valid(ut[i].id.proto))
 			return -EINVAL;
-		}
-
 	}
 
 	return 0;
@@ -1539,15 +1566,21 @@ static int xfrm_add_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 	int excl;
 
 	err = verify_newpolicy_info(p);
-	if (err)
+	if (err) {
+		pr_err("kp log: verify_newpolicy_info failed with err[%d]\n", err);
 		return err;
+	}
 	err = verify_sec_ctx_len(attrs);
-	if (err)
+	if (err) {
+		pr_err("kp log: verify_sec_ctx_len failed with err[%d]\n", err);
 		return err;
+	}
 
 	xp = xfrm_policy_construct(net, p, attrs, &err);
-	if (!xp)
+	if (!xp) {
+		pr_err("kp log: xfrm_policy_construct failed with err[%d]\n", err);
 		return err;
+	}
 
 	/* shouldn't excl be based on nlh flags??
 	 * Aha! this is anti-netlink really i.e  more pfkey derived
@@ -1558,6 +1591,7 @@ static int xfrm_add_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 	xfrm_audit_policy_add(xp, err ? 0 : 1, true);
 
 	if (err) {
+		pr_err("kp log: xfrm_policy_insert failed with err[%d]\n", err);
 		security_xfrm_policy_free(xp->security);
 		kfree(xp);
 		return err;
@@ -1829,6 +1863,7 @@ static int xfrm_flush_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 	err = xfrm_state_flush(net, p->proto, true);
 	if (err) {
+		pr_err("kp log: xfrm_state_flush failed with err[%d]\n", err);
 		if (err == -ESRCH) /* empty table */
 			return 0;
 		return err;
@@ -2018,6 +2053,7 @@ static int xfrm_flush_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 	err = xfrm_policy_flush(net, type, true);
 	if (err) {
+		pr_err("kp log: xfrm_policy_flush failed with err [%d]\n", err);
 		if (err == -ESRCH) /* empty table */
 			return 0;
 		return err;
@@ -2149,6 +2185,9 @@ static int xfrm_add_acquire(struct sk_buff *skb, struct nlmsghdr *nlh,
 	xfrm_mark_get(attrs, &mark);
 
 	err = verify_newpolicy_info(&ua->policy);
+	if (err)
+		goto free_state;
+	err = verify_sec_ctx_len(attrs);
 	if (err)
 		goto bad_policy;
 
