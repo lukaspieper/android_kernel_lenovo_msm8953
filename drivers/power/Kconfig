@@ -664,3 +664,4 @@ endif # POWER_SUPPLY
 source "drivers/power/avs/Kconfig"
 source "drivers/power/qcom/Kconfig"
 source "drivers/power/onsemi/Kconfig"
+source "drivers/power/tusb422/Kconfig"

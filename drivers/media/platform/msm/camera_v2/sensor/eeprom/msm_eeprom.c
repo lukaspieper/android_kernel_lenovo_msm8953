@@ -10,6 +10,7 @@
  * GNU General Public License for more details.
  */
 
+
 #include <linux/module.h>
 #include <linux/of_gpio.h>
 #include <linux/delay.h>
@@ -151,7 +152,7 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 	struct msm_eeprom_memory_block_t *block)
 {
 	int rc = 0;
-	int j;
+	int j, otp_idx;
 	struct msm_eeprom_memory_map_t *emap = block->map;
 	struct msm_eeprom_board_info *eb_info;
 	uint8_t *memptr = block->mapdata;
@@ -170,6 +171,8 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 					eb_info->i2c_slaveaddr >> 1;
 			pr_err("qcom,slave-addr = 0x%X\n",
 				eb_info->i2c_slaveaddr);
+			printk("<3>""%s:qcom,slave-addr = 0x%X \n", __func__, eb_info->i2c_slaveaddr);
+
 		}
 
 		if (emap[j].page.valid_size) {
@@ -178,6 +181,8 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 				&(e_ctrl->i2c_client), emap[j].page.addr,
 				emap[j].page.data, emap[j].page.data_t);
 				msleep(emap[j].page.delay);
+			printk("<3>""%s:reg_addr 0x%x data 0x%x delay %d \n", __func__,
+					emap[j].page.addr, emap[j].page.data, emap[j].page.delay);
 			if (rc < 0) {
 				pr_err("%s: page write failed\n", __func__);
 				return rc;
@@ -208,14 +213,23 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 
 		if (emap[j].mem.valid_size) {
 			e_ctrl->i2c_client.addr_type = emap[j].mem.addr_t;
+			printk("<3>""%s:read data size %d \n", __func__, emap[j].mem.valid_size);
 			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
 				&(e_ctrl->i2c_client), emap[j].mem.addr,
 				memptr, emap[j].mem.valid_size);
+				memptr += emap[j].mem.valid_size;
+			for (otp_idx = 0; otp_idx < emap[j].mem.valid_size; otp_idx = otp_idx+8) {
+				printk("<3>""%s:read otp data: 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n", __func__,
+						block->mapdata[otp_idx], block->mapdata[otp_idx+1], block->mapdata[otp_idx+2],
+						block->mapdata[otp_idx+3], block->mapdata[otp_idx+4], block->mapdata[otp_idx+5],
+						block->mapdata[otp_idx+6], block->mapdata[otp_idx+7]);
+			}
+			printk("<3>""%s:seg1_flag 0x%x seg2_flag 0x%x seg3_flag 0x%x \n", __func__,
+					block->mapdata[0], block->mapdata[52], block->mapdata[143]);
 			if (rc < 0) {
 				pr_err("%s: read failed\n", __func__);
 				return rc;
 			}
-			memptr += emap[j].mem.valid_size;
 		}
 		if (emap[j].pageen.valid_size) {
 			e_ctrl->i2c_client.addr_type = emap[j].pageen.addr_t;

@@ -1,3 +1,4 @@
+header-y += ais/
 header-y += msm_cam_sensor.h
 header-y += msm_cam_sensor_lenovo.h
 header-y += msm_camera.h
