@@ -1501,9 +1501,9 @@ void SetStateAttachedSource(void)
     setStateSource(TRUE);
     platform_set_vbus_lvl_enable(VBUS_LVL_5V, TRUE, TRUE);                      // Enable only the 5V output
     
-    platform_notify_cc_orientation(blnCCPinIsCC2);
+    platform_notify_cc_orientation((CC_ORIENTATION) blnCCPinIsCC2);
     
-    USBPDEnable(TRUE, TRUE);                                                    // Enable the USB PD state machine if applicable (no need to write to Device again), set as DFP
+    USBPDEnable(TRUE, (SourceOrSink) TRUE);                                                    // Enable the USB PD state machine if applicable (no need to write to Device again), set as DFP
     platform_set_timer(&StateTimer, tIllegalCable);                                                 // Start dangling illegal cable timeout
 }
 #endif // FSC_HAVE_SRC
@@ -1527,10 +1527,10 @@ void SetStateAttachedSink(void)
     
     ConnState = AttachedSink;                                                   // Set the state machine variable to Attached.Sink
     setStateSink();
-    platform_notify_cc_orientation(blnCCPinIsCC2);
+    platform_notify_cc_orientation((CC_ORIENTATION) blnCCPinIsCC2);
     UpdateSinkCurrent();
 
-    USBPDEnable(TRUE, FALSE);                                      // Enable the USB PD state machine (no need to write Device again since we are doing it here)
+    USBPDEnable(TRUE, (SourceOrSink) FALSE);                                      // Enable the USB PD state machine (no need to write Device again since we are doing it here)
     platform_set_timer(&StateTimer, T_TIMER_DISABLE);                                         // Disable the state timer, not used in this state
 }
 #endif // FSC_HAVE_SNK
@@ -1742,9 +1742,9 @@ void SetStatePoweredAccessory(void)
     
 
     
-    platform_notify_cc_orientation(blnCCPinIsCC2);
+    platform_notify_cc_orientation((CC_ORIENTATION) blnCCPinIsCC2);
     
-    USBPDEnable(TRUE, TRUE);
+    USBPDEnable(TRUE, (SourceOrSink) TRUE);
 
     platform_set_timer(&StateTimer, tAMETimeout);
 }

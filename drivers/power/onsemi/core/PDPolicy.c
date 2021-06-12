@@ -434,9 +434,9 @@ void USBPDEnable(FSC_BOOL DeviceUpdate, SourceOrSink TypeCDFP)
             USBPDActive = TRUE;                                                 // Set the active flag
             ResetProtocolLayer(FALSE);                                          // Reset the protocol layer by default
             platform_set_timer(&NoResponseTimer, T_TIMER_DISABLE);                                  // Disable the no response timer by default
-            PolicyIsSource = TypeCDFP;                                          // Set whether we should be initially a source or sink
-            PolicyIsDFP = TypeCDFP;
-            IsVCONNSource = TypeCDFP;
+            PolicyIsSource = (FSC_BOOL) TypeCDFP;                                          // Set whether we should be initially a source or sink
+            PolicyIsDFP = (FSC_BOOL) TypeCDFP;
+            IsVCONNSource = (FSC_BOOL) TypeCDFP;
             // Set the initial data port direction
             if (PolicyIsSource)                                                 // If we are a source...
             {

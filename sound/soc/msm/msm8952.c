@@ -1422,10 +1422,10 @@ static int msm8952_wsa_switch_event(struct snd_soc_dapm_widget *w,
 		}
 		if (atomic_dec_return(&supply->ref) == 0)
 			ret = regulator_disable(supply->supply);
-			if (ret)
-				dev_err(w->codec->component.card->dev,
-					"%s: Failed to disable wsa switch supply\n",
-					__func__);
+		if (ret)
+			dev_err(w->codec->component.card->dev,
+				"%s: Failed to disable wsa switch supply\n",
+				__func__);
 		break;
 	default:
 		break;
@@ -2030,13 +2030,13 @@ static void *def_msm8952_wcd_mbhc_cal(void)
 	btn_low[0] = 100;
 	btn_high[0] = 100;
 	btn_low[1] = 275;
-	btn_high[1] = 287.5;
+	btn_high[1] = 287;
 	btn_low[2] = 475;
-	btn_high[2] = 512.5;
-	btn_low[3] = 512.5;
-	btn_high[3] = 512.5;
-	btn_low[4] = 512.5;
-	btn_high[4] = 512.5;
+	btn_high[2] = 512;
+	btn_low[3] = 512;
+	btn_high[3] = 512;
+	btn_low[4] = 512;
+	btn_high[4] = 512;
 #elif defined(CONFIG_MACH_LENOVO_TB8804)
 	btn_low[0] = 75;
 	btn_high[0] = 75;
