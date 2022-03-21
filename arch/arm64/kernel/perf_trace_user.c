@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014,2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -59,14 +59,14 @@ static ssize_t perf_trace_write(struct file *file,
 	preempt_disable();
 	/* stop counters, call the trace function, restart them */
 
-	asm volatile("mrs %0, pmcntenset_el0" : "=r" (cnten_val));
+	cnten_val = read_sysreg(pmcntenset_el0);
 	/* Disable all the counters that were enabled */
-	asm volatile("msr pmcntenclr_el0, %0" : : "r" (cnten_val));
+	write_sysreg(cnten_val, pmcntenclr_el0);
 
 	trace_perf_trace_user(buf, cnten_val);
 
 	/* Enable all the counters that were disabled */
-	asm volatile("msr pmcntenset_el0, %0" : : "r" (cnten_val));
+	write_sysreg(cnten_val, pmcntenset_el0);
 	preempt_enable();
 
 	return length;
@@ -82,10 +82,10 @@ static int __init init_perf_trace(void)
 	struct dentry *file;
 	unsigned int value = 1;
 
-	dir = perf_create_debug_dir();
+	dir = debugfs_create_dir("msm_perf", NULL);
 	if (!dir)
 		return -ENOMEM;
-	file = debugfs_create_file("trace_marker", S_IWUSR | S_IWGRP, dir,
+	file = debugfs_create_file("trace_marker", 0220, dir,
 		&value, &perf_trace_fops);
 	if (!file)
 		return -ENOMEM;

@@ -40,10 +40,10 @@
 #include <asm/uaccess.h>
 #include <asm/irq.h>
 #include <asm/io.h>
-#include <asm/immap_qe.h>
-#include <asm/qe.h>
-#include <asm/ucc.h>
-#include <asm/ucc_fast.h>
+#include <soc/fsl/qe/immap_qe.h>
+#include <soc/fsl/qe/qe.h>
+#include <soc/fsl/qe/ucc.h>
+#include <soc/fsl/qe/ucc_fast.h>
 #include <asm/machdep.h>
 #include <net/sch_generic.h>
 
@@ -1385,6 +1385,8 @@ static int adjust_enet_interface(struct ucc_geth_private *ugeth)
 		value = phy_read(tbiphy, ENET_TBI_MII_CR);
 		value &= ~0x1000;	/* Turn off autonegotiation */
 		phy_write(tbiphy, ENET_TBI_MII_CR, value);
+
+		put_device(&tbiphy->mdio.dev);
 	}
 
 	init_check_frame_length_mode(ug_info->lengthCheckRx, &ug_regs->maccfg2);
@@ -1703,8 +1705,10 @@ static void uec_configure_serdes(struct net_device *dev)
 	 * everything for us?  Resetting it takes the link down and requires
 	 * several seconds for it to come back.
 	 */
-	if (phy_read(tbiphy, ENET_TBI_MII_SR) & TBISR_LSTATUS)
+	if (phy_read(tbiphy, ENET_TBI_MII_SR) & TBISR_LSTATUS) {
+		put_device(&tbiphy->mdio.dev);
 		return;
+	}
 
 	/* Single clk mode, mii mode off(for serdes communication) */
 	phy_write(tbiphy, ENET_TBI_MII_ANA, TBIANA_SETTINGS);
@@ -1712,6 +1716,8 @@ static void uec_configure_serdes(struct net_device *dev)
 	phy_write(tbiphy, ENET_TBI_MII_TBICON, TBICON_CLK_SELECT);
 
 	phy_write(tbiphy, ENET_TBI_MII_CR, TBICR_SETTINGS);
+
+	put_device(&tbiphy->mdio.dev);
 }
 
 /* Configure the PHY for dev.
@@ -2591,11 +2597,10 @@ static int ucc_geth_startup(struct ucc_geth_private *ugeth)
 		} else if (ugeth->ug_info->uf_info.bd_mem_part ==
 			   MEM_PART_MURAM) {
 			out_be32(&ugeth->p_send_q_mem_reg->sqqd[i].bd_ring_base,
-				 (u32) immrbar_virt_to_phys(ugeth->
-							    p_tx_bd_ring[i]));
+				 (u32)qe_muram_dma(ugeth->p_tx_bd_ring[i]));
 			out_be32(&ugeth->p_send_q_mem_reg->sqqd[i].
 				 last_bd_completed_address,
-				 (u32) immrbar_virt_to_phys(endOfRing));
+				 (u32)qe_muram_dma(endOfRing));
 		}
 	}
 
@@ -2841,8 +2846,7 @@ static int ucc_geth_startup(struct ucc_geth_private *ugeth)
 		} else if (ugeth->ug_info->uf_info.bd_mem_part ==
 			   MEM_PART_MURAM) {
 			out_be32(&ugeth->p_rx_bd_qs_tbl[i].externalbdbaseptr,
-				 (u32) immrbar_virt_to_phys(ugeth->
-							    p_rx_bd_ring[i]));
+				 (u32)qe_muram_dma(ugeth->p_rx_bd_ring[i]));
 		}
 		/* rest of fields handled by QE */
 	}
@@ -3753,7 +3757,7 @@ static int ucc_geth_probe(struct platform_device* ofdev)
 			return -EINVAL;
 		}
 		if ((*prop < QE_CLK_NONE) || (*prop > QE_CLK24)) {
-			pr_err("invalid rx-clock propperty\n");
+			pr_err("invalid rx-clock property\n");
 			return -EINVAL;
 		}
 		ug_info->uf_info.rx_clock = *prop;
@@ -3865,9 +3869,8 @@ static int ucc_geth_probe(struct platform_device* ofdev)
 	dev = alloc_etherdev(sizeof(*ugeth));
 
 	if (dev == NULL) {
-		of_node_put(ug_info->tbi_node);
-		of_node_put(ug_info->phy_node);
-		return -ENOMEM;
+		err = -ENOMEM;
+		goto err_deregister_fixed_link;
 	}
 
 	ugeth = netdev_priv(dev);
@@ -3896,15 +3899,15 @@ static int ucc_geth_probe(struct platform_device* ofdev)
 	ugeth->phy_interface = phy_interface;
 	ugeth->max_speed = max_speed;
 
+	/* Carrier starts down, phylib will bring it up */
+	netif_carrier_off(dev);
+
 	err = register_netdev(dev);
 	if (err) {
 		if (netif_msg_probe(ugeth))
 			pr_err("%s: Cannot register net device, aborting\n",
 			       dev->name);
-		free_netdev(dev);
-		of_node_put(ug_info->tbi_node);
-		of_node_put(ug_info->phy_node);
-		return err;
+		goto err_free_netdev;
 	}
 
 	mac_addr = of_get_mac_address(np);
@@ -3917,23 +3920,36 @@ static int ucc_geth_probe(struct platform_device* ofdev)
 	ugeth->node = np;
 
 	return 0;
+
+err_free_netdev:
+	free_netdev(dev);
+err_deregister_fixed_link:
+	if (of_phy_is_fixed_link(np))
+		of_phy_deregister_fixed_link(np);
+	of_node_put(ug_info->tbi_node);
+	of_node_put(ug_info->phy_node);
+
+	return err;
 }
 
 static int ucc_geth_remove(struct platform_device* ofdev)
 {
 	struct net_device *dev = platform_get_drvdata(ofdev);
 	struct ucc_geth_private *ugeth = netdev_priv(dev);
+	struct device_node *np = ofdev->dev.of_node;
 
 	unregister_netdev(dev);
 	free_netdev(dev);
 	ucc_geth_memclean(ugeth);
+	if (of_phy_is_fixed_link(np))
+		of_phy_deregister_fixed_link(np);
 	of_node_put(ugeth->ug_info->tbi_node);
 	of_node_put(ugeth->ug_info->phy_node);
 
 	return 0;
 }
 
-static struct of_device_id ucc_geth_match[] = {
+static const struct of_device_id ucc_geth_match[] = {
 	{
 		.type = "network",
 		.compatible = "ucc_geth",
@@ -3946,7 +3962,6 @@ MODULE_DEVICE_TABLE(of, ucc_geth_match);
 static struct platform_driver ucc_geth_driver = {
 	.driver = {
 		.name = DRV_NAME,
-		.owner = THIS_MODULE,
 		.of_match_table = ucc_geth_match,
 	},
 	.probe		= ucc_geth_probe,

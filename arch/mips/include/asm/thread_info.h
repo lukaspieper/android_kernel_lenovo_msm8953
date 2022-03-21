@@ -23,18 +23,18 @@
  */
 struct thread_info {
 	struct task_struct	*task;		/* main task structure */
-	struct exec_domain	*exec_domain;	/* execution domain */
 	unsigned long		flags;		/* low level flags */
 	unsigned long		tp_value;	/* thread pointer */
 	__u32			cpu;		/* current CPU */
 	int			preempt_count;	/* 0 => preemptable, <0 => BUG */
-
+	int			r2_emul_return; /* 1 => Returning from R2 emulator */
 	mm_segment_t		addr_limit;	/*
 						 * thread address space limit:
 						 * 0x7fffffff for user-thead
 						 * 0xffffffff for kernel-thread
 						 */
 	struct pt_regs		*regs;
+	long			syscall;	/* syscall number */
 };
 
 /*
@@ -43,7 +43,6 @@ struct thread_info {
 #define INIT_THREAD_INFO(tsk)			\
 {						\
 	.task		= &tsk,			\
-	.exec_domain	= &default_exec_domain, \
 	.flags		= _TIF_FIXADE,		\
 	.cpu		= 0,			\
 	.preempt_count	= INIT_PREEMPT_COUNT,	\
@@ -53,11 +52,29 @@ struct thread_info {
 #define init_thread_info	(init_thread_union.thread_info)
 #define init_stack		(init_thread_union.stack)
 
-/* How to get the thread information struct from C.  */
+/*
+ * A pointer to the struct thread_info for the currently executing thread is
+ * held in register $28/$gp.
+ *
+ * We declare __current_thread_info as a global register variable rather than a
+ * local register variable within current_thread_info() because clang doesn't
+ * support explicit local register variables.
+ *
+ * When building the VDSO we take care not to declare the global register
+ * variable because this causes GCC to not preserve the value of $28/$gp in
+ * functions that change its value (which is common in the PIC VDSO when
+ * accessing the GOT). Since the VDSO shouldn't be accessing
+ * __current_thread_info anyway we declare it extern in order to cause a link
+ * failure if it's referenced.
+ */
+#ifdef __VDSO__
+extern struct thread_info *__current_thread_info;
+#else
+register struct thread_info *__current_thread_info __asm__("$28");
+#endif
+
 static inline struct thread_info *current_thread_info(void)
 {
-	register struct thread_info *__current_thread_info __asm__("$28");
-
 	return __current_thread_info;
 }
 
@@ -100,6 +117,7 @@ static inline struct thread_info *current_thread_info(void)
 #define TIF_SYSCALL_AUDIT	3	/* syscall auditing active */
 #define TIF_SECCOMP		4	/* secure computing */
 #define TIF_NOTIFY_RESUME	5	/* callback before returning to user */
+#define TIF_UPROBE		6	/* breakpointed or singlestepping */
 #define TIF_RESTORE_SIGMASK	9	/* restore signal mask in do_signal() */
 #define TIF_USEDFPU		16	/* FPU was used by this task this quantum (SMP) */
 #define TIF_MEMDIE		18	/* is terminating due to OOM killer */
@@ -112,6 +130,7 @@ static inline struct thread_info *current_thread_info(void)
 #define TIF_LOAD_WATCH		25	/* If set, load watch registers */
 #define TIF_SYSCALL_TRACEPOINT	26	/* syscall tracepoint instrumentation */
 #define TIF_32BIT_FPREGS	27	/* 32-bit floating point registers */
+#define TIF_HYBRID_FPREGS	28	/* 64b FP registers, odd singles in bits 63:32 of even doubles */
 #define TIF_USEDMSA		29	/* MSA has been used this quantum */
 #define TIF_MSA_CTX_LIVE	30	/* MSA context must be preserved */
 #define TIF_SYSCALL_TRACE	31	/* syscall trace active */
@@ -122,6 +141,7 @@ static inline struct thread_info *current_thread_info(void)
 #define _TIF_SYSCALL_AUDIT	(1<<TIF_SYSCALL_AUDIT)
 #define _TIF_SECCOMP		(1<<TIF_SECCOMP)
 #define _TIF_NOTIFY_RESUME	(1<<TIF_NOTIFY_RESUME)
+#define _TIF_UPROBE		(1<<TIF_UPROBE)
 #define _TIF_USEDFPU		(1<<TIF_USEDFPU)
 #define _TIF_NOHZ		(1<<TIF_NOHZ)
 #define _TIF_FIXADE		(1<<TIF_FIXADE)
@@ -131,6 +151,7 @@ static inline struct thread_info *current_thread_info(void)
 #define _TIF_FPUBOUND		(1<<TIF_FPUBOUND)
 #define _TIF_LOAD_WATCH		(1<<TIF_LOAD_WATCH)
 #define _TIF_32BIT_FPREGS	(1<<TIF_32BIT_FPREGS)
+#define _TIF_HYBRID_FPREGS	(1<<TIF_HYBRID_FPREGS)
 #define _TIF_USEDMSA		(1<<TIF_USEDMSA)
 #define _TIF_MSA_CTX_LIVE	(1<<TIF_MSA_CTX_LIVE)
 #define _TIF_SYSCALL_TRACEPOINT	(1<<TIF_SYSCALL_TRACEPOINT)
@@ -145,7 +166,8 @@ static inline struct thread_info *current_thread_info(void)
 
 /* work to do on interrupt/exception return */
 #define _TIF_WORK_MASK		\
-	(_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_NOTIFY_RESUME)
+	(_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_NOTIFY_RESUME |	\
+	 _TIF_UPROBE)
 /* work to do on any return to u-space */
 #define _TIF_ALLWORK_MASK	(_TIF_NOHZ | _TIF_WORK_MASK |		\
 				 _TIF_WORK_SYSCALL_EXIT |		\

@@ -29,7 +29,7 @@ typedef void (*ecm_ipa_callback)(void *priv,
  *
  * @device_ready_notify: callback supplied by USB core driver.
  * This callback shall be called by the Netdev once the device
- * is ready to recieve data from tethered PC.
+ * is ready to receive data from tethered PC.
  * @ecm_ipa_rx_dp_notify: ecm_ipa will set this callback (out parameter).
  * this callback shall be supplied for ipa_connect upon pipe
  * connection (USB->IPA), once IPA driver receive data packets

@@ -71,7 +71,6 @@
 
 static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(0x4348, 0x5523) },
-	{ USB_DEVICE(0x1a86, 0x7522) },
 	{ USB_DEVICE(0x1a86, 0x7523) },
 	{ USB_DEVICE(0x1a86, 0x5523) },
 	{ },
@@ -84,6 +83,10 @@ struct ch341_private {
 	u8 line_control; /* set line control value RTS/DTR */
 	u8 line_status; /* active status of modem control inputs */
 };
+
+static void ch341_set_termios(struct tty_struct *tty,
+			      struct usb_serial_port *port,
+			      struct ktermios *old_termios);
 
 static int ch341_control_out(struct usb_device *dev, u8 request,
 			     u16 value, u16 index)
@@ -115,7 +118,7 @@ static int ch341_control_in(struct usb_device *dev,
 	r = usb_control_msg(dev, usb_rcvctrlpipe(dev, 0), request,
 			    USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_DIR_IN,
 			    value, index, buf, bufsize, DEFAULT_TIMEOUT);
-	if (r < bufsize) {
+	if (r < (int)bufsize) {
 		if (r >= 0) {
 			dev_err(&dev->dev,
 				"short control message received (%d < %u)\n",
@@ -319,26 +322,18 @@ static int ch341_open(struct tty_struct *tty, struct usb_serial_port *port)
 	struct ch341_private *priv = usb_get_serial_port_data(port);
 	int r;
 
-	priv->baud_rate = DEFAULT_BAUD_RATE;
-
 	r = ch341_configure(serial->dev, priv);
 	if (r)
 		return r;
 
-	r = ch341_set_handshake(serial->dev, priv->line_control);
-	if (r)
-		return r;
-
-	r = ch341_set_baudrate(serial->dev, priv);
-	if (r)
-		return r;
+	if (tty)
+		ch341_set_termios(tty, port, NULL);
 
 	dev_dbg(&port->dev, "%s - submitting interrupt urb\n", __func__);
 	r = usb_submit_urb(port->interrupt_in_urb, GFP_KERNEL);
 	if (r) {
 		dev_err(&port->dev, "%s - failed to submit interrupt urb: %d\n",
 			__func__, r);
-		ch341_close(port);
 		return r;
 	}
 
@@ -390,7 +385,7 @@ static void ch341_set_termios(struct tty_struct *tty,
 static void ch341_break_ctl(struct tty_struct *tty, int break_state)
 {
 	const uint16_t ch341_break_reg =
-		CH341_REG_BREAK1 | ((uint16_t) CH341_REG_BREAK2 << 8);
+			((uint16_t) CH341_REG_BREAK2 << 8) | CH341_REG_BREAK1;
 	struct usb_serial_port *port = tty->driver_data;
 	int r;
 	uint16_t reg_contents;
@@ -560,13 +555,17 @@ static int ch341_tiocmget(struct tty_struct *tty)
 static int ch341_reset_resume(struct usb_serial *serial)
 {
 	struct usb_serial_port *port = serial->port[0];
-	struct ch341_private *priv = usb_get_serial_port_data(port);
+	struct ch341_private *priv;
 	int ret;
+
+	priv = usb_get_serial_port_data(port);
+	if (!priv)
+		return 0;
 
 	/* reconfigure ch341 serial port after bus-reset */
 	ch341_configure(serial->dev, priv);
 
-	if (test_bit(ASYNCB_INITIALIZED, &port->port.flags)) {
+	if (tty_port_initialized(&port->port)) {
 		ret = usb_submit_urb(port->interrupt_in_urb, GFP_NOIO);
 		if (ret) {
 			dev_err(&port->dev, "failed to submit interrupt urb: %d\n",

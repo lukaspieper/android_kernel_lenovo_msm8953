@@ -68,7 +68,7 @@ bool f2fs_available_free_memory(struct f2fs_sb_info *sbi, int type)
 		if (excess_cached_nats(sbi))
 			res = false;
 	} else if (type == DIRTY_DENTS) {
-		if (sbi->sb->s_bdi->dirty_exceeded)
+		if (sbi->sb->s_bdi->wb.dirty_exceeded)
 			return false;
 		mem_size = get_pages(sbi, F2FS_DIRTY_DENTS);
 		res = mem_size < ((avail_ram * nm_i->ram_thresh / 100) >> 1);
@@ -91,7 +91,7 @@ bool f2fs_available_free_memory(struct f2fs_sb_info *sbi, int type)
 		mem_size = get_pages(sbi, F2FS_INMEM_PAGES);
 		res = mem_size < (val.totalram / 5);
 	} else {
-		if (!sbi->sb->s_bdi->dirty_exceeded)
+		if (!sbi->sb->s_bdi->wb.dirty_exceeded)
 			return true;
 	}
 	return res;
@@ -1387,7 +1387,6 @@ out_err:
 		f2fs_put_page(page, 1);
 		return ERR_PTR(err);
 	}
-	mark_page_accessed(page);
 	return page;
 }
 
@@ -1560,7 +1559,7 @@ static int __write_node_page(struct page *page, bool atomic, bool *submitted,
 	}
 
 	if (atomic && !test_opt(sbi, NOBARRIER))
-		fio.op_flags |= WRITE_FLUSH_FUA;
+		fio.op_flags |= REQ_PREFLUSH | REQ_FUA;
 
 	set_page_writeback(page);
 	ClearPageError(page);
@@ -1883,7 +1882,7 @@ int f2fs_wait_on_node_pages_writeback(struct f2fs_sb_info *sbi,
 	struct list_head *head = &sbi->fsync_node_list;
 	unsigned long flags;
 	unsigned int cur_seq_id = 0;
-	int ret2 = 0, ret = 0;
+	int ret2, ret = 0;
 
 	while (seq_id && cur_seq_id < seq_id) {
 		spin_lock_irqsave(&sbi->fsync_node_lock, flags);
@@ -1911,10 +1910,7 @@ int f2fs_wait_on_node_pages_writeback(struct f2fs_sb_info *sbi,
 			break;
 	}
 
-	if (unlikely(test_and_clear_bit(AS_ENOSPC, &NODE_MAPPING(sbi)->flags)))
-		ret2 = -ENOSPC;
-	if (unlikely(test_and_clear_bit(AS_EIO, &NODE_MAPPING(sbi)->flags)))
-		ret2 = -EIO;
+	ret2 = filemap_check_errors(NODE_MAPPING(sbi));
 	if (!ret)
 		ret = ret2;
 
@@ -2746,7 +2742,7 @@ static int __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 	struct f2fs_journal *journal = curseg->journal;
 	nid_t start_nid = set->set * NAT_ENTRY_PER_BLOCK;
 	bool to_journal = true;
-	struct f2fs_nat_block *nat_blk = NULL;
+	struct f2fs_nat_block *nat_blk;
 	struct nat_entry *ne, *cur;
 	struct page *page = NULL;
 

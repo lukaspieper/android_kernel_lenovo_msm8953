@@ -4,6 +4,7 @@
  *
  * Copyright (C) 2010 Guennadi Liakhovetski <g.liakhovetski@gmx.de>
  * Copyright (C) 2006 Nokia Corporation
+ * Copyright (c) 2017, The Linux Foundation. All rights reserved.
  * Author: Imre Deak <imre.deak@nokia.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -59,6 +60,9 @@ enum {
 	MIPI_DSI_PACKED_PIXEL_STREAM_18			= 0x1e,
 	MIPI_DSI_PIXEL_STREAM_3BYTE_18			= 0x2e,
 	MIPI_DSI_PACKED_PIXEL_STREAM_24			= 0x3e,
+
+	MIPI_DSI_COMPRESSION_MODE			= 0x07,
+	MIPI_DSI_PPS					= 0x0a,
 };
 
 /* MIPI DSI Peripheral-to-Processor transaction types */
@@ -115,6 +119,14 @@ enum {
 	MIPI_DCS_READ_MEMORY_CONTINUE	= 0x3E,
 	MIPI_DCS_SET_TEAR_SCANLINE	= 0x44,
 	MIPI_DCS_GET_SCANLINE		= 0x45,
+	MIPI_DCS_SET_DISPLAY_BRIGHTNESS = 0x51,		/* MIPI DCS 1.3 */
+	MIPI_DCS_GET_DISPLAY_BRIGHTNESS = 0x52,		/* MIPI DCS 1.3 */
+	MIPI_DCS_WRITE_CONTROL_DISPLAY  = 0x53,		/* MIPI DCS 1.3 */
+	MIPI_DCS_GET_CONTROL_DISPLAY	= 0x54,		/* MIPI DCS 1.3 */
+	MIPI_DCS_WRITE_POWER_SAVE	= 0x55,		/* MIPI DCS 1.3 */
+	MIPI_DCS_GET_POWER_SAVE		= 0x56,		/* MIPI DCS 1.3 */
+	MIPI_DCS_SET_CABC_MIN_BRIGHTNESS = 0x5E,	/* MIPI DCS 1.3 */
+	MIPI_DCS_GET_CABC_MIN_BRIGHTNESS = 0x5F,	/* MIPI DCS 1.3 */
 	MIPI_DCS_READ_DDB_START		= 0xA1,
 	MIPI_DCS_READ_DDB_CONTINUE	= 0xA8,
 };

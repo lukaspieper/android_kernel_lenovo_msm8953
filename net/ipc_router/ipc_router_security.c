@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014,2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014,2016,2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,9 +38,9 @@
 
 struct security_rule {
 	struct list_head list;
-	uint32_t service_id;
-	uint32_t instance_id;
-	unsigned reserved;
+	u32 service_id;
+	u32 instance_id;
+	unsigned int reserved;
 	int num_group_info;
 	kgid_t *group_id;
 };
@@ -56,9 +56,11 @@ static DECLARE_COMPLETION(irsc_completion);
 void wait_for_irsc_completion(void)
 {
 	unsigned long rem_jiffies;
+
 	do {
-		rem_jiffies = wait_for_completion_timeout(&irsc_completion,
-				msecs_to_jiffies(IRSC_COMPLETION_TIMEOUT_MS));
+		rem_jiffies = wait_for_completion_timeout
+				(&irsc_completion,
+				 msecs_to_jiffies(IRSC_COMPLETION_TIMEOUT_MS));
 		if (rem_jiffies)
 			return;
 		pr_err("%s: waiting for IPC Security Conf.\n", __func__);
@@ -82,6 +84,7 @@ void signal_irsc_completion(void)
 int check_permissions(void)
 {
 	int rc = 0;
+
 	if (capable(CAP_NET_RAW) || capable(CAP_NET_BIND_SERVICE))
 		rc = 1;
 	return rc;
@@ -126,34 +129,30 @@ int msm_ipc_config_sec_rules(void *arg)
 
 	if (sec_rules_arg.num_group_info > (SIZE_MAX / sizeof(gid_t))) {
 		pr_err("%s: Integer Overflow %zu * %d\n", __func__,
-			sizeof(gid_t), sec_rules_arg.num_group_info);
+		       sizeof(gid_t), sec_rules_arg.num_group_info);
 		return -EINVAL;
 	}
 	group_info_sz = sec_rules_arg.num_group_info * sizeof(gid_t);
 
 	if (sec_rules_arg.num_group_info > (SIZE_MAX / sizeof(kgid_t))) {
 		pr_err("%s: Integer Overflow %zu * %d\n", __func__,
-			sizeof(kgid_t), sec_rules_arg.num_group_info);
+		       sizeof(kgid_t), sec_rules_arg.num_group_info);
 		return -EINVAL;
 	}
 	kgroup_info_sz = sec_rules_arg.num_group_info * sizeof(kgid_t);
 
-	rule = kzalloc(sizeof(struct security_rule), GFP_KERNEL);
-	if (!rule) {
-		pr_err("%s: security_rule alloc failed\n", __func__);
+	rule = kzalloc(sizeof(*rule), GFP_KERNEL);
+	if (!rule)
 		return -ENOMEM;
-	}
 
 	rule->group_id = kzalloc(kgroup_info_sz, GFP_KERNEL);
 	if (!rule->group_id) {
-		pr_err("%s: kgroup_id alloc failed\n", __func__);
 		kfree(rule);
 		return -ENOMEM;
 	}
 
 	group_id = kzalloc(group_info_sz, GFP_KERNEL);
 	if (!group_id) {
-		pr_err("%s: group_id alloc failed\n", __func__);
 		kfree(rule->group_id);
 		kfree(rule);
 		return -ENOMEM;
@@ -202,15 +201,12 @@ static int msm_ipc_add_default_rule(void)
 	struct security_rule *rule;
 	int key;
 
-	rule = kzalloc(sizeof(struct security_rule), GFP_KERNEL);
-	if (!rule) {
-		pr_err("%s: security_rule alloc failed\n", __func__);
+	rule = kzalloc(sizeof(*rule), GFP_KERNEL);
+	if (!rule)
 		return -ENOMEM;
-	}
 
-	rule->group_id = kzalloc(sizeof(*(rule->group_id)), GFP_KERNEL);
+	rule->group_id = kzalloc(sizeof(*rule->group_id), GFP_KERNEL);
 	if (!rule->group_id) {
-		pr_err("%s: group_id alloc failed\n", __func__);
 		kfree(rule);
 		return -ENOMEM;
 	}
@@ -218,7 +214,7 @@ static int msm_ipc_add_default_rule(void)
 	rule->service_id = ALL_SERVICE;
 	rule->instance_id = ALL_INSTANCE;
 	rule->num_group_info = 1;
-	*(rule->group_id) = AID_NET_RAW;
+	*rule->group_id = AID_NET_RAW;
 	down_write(&security_rules_lock_lha4);
 	key = (ALL_SERVICE & (SEC_RULES_HASH_SZ - 1));
 	list_add_tail(&rule->list, &security_rules[key]);
@@ -237,7 +233,7 @@ static int msm_ipc_add_default_rule(void)
  * This function is used when the service comes up and gets registered with
  * the IPC Router.
  */
-void *msm_ipc_get_security_rule(uint32_t service_id, uint32_t instance_id)
+void *msm_ipc_get_security_rule(u32 service_id, u32 instance_id)
 {
 	int key;
 	struct security_rule *rule;

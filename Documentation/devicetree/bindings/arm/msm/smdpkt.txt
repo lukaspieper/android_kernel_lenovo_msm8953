@@ -1,4 +1,4 @@
-Qualcomm Shared Memory Packet Driver (smdpkt)
+Qualcomm Technologies, Inc Shared Memory Packet Driver (smdpkt)
 
 [Root level node]
 Required properties:

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2016, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,7 +30,7 @@
 	{					        \
 		.name = "gpio" #id,			\
 		.pins = gpio##id##_pins,		\
-		.npins = (unsigned)ARRAY_SIZE(gpio##id##_pins),	\
+		.npins = (unsigned int)ARRAY_SIZE(gpio##id##_pins),	\
 		.funcs = (int[]){			\
 			msm_mux_gpio, /* gpio mode */	\
 			msm_mux_##f1,			\
@@ -69,7 +69,7 @@
 	{					        \
 		.name = #pg_name,			\
 		.pins = pg_name##_pins,			\
-		.npins = (unsigned)ARRAY_SIZE(pg_name##_pins),	\
+		.npins = (unsigned int)ARRAY_SIZE(pg_name##_pins),	\
 		.ctl_reg = ctl,				\
 		.io_reg = 0,				\
 		.intr_cfg_reg = 0,			\

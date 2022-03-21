@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,7 +20,7 @@
 		      <0x500000 0x15080>;
 		reg-names = "bimc-base", "pcnoc-base";
 
-		/*Buses*/
+		/* Buses */
 
 		fab_bimc: fab-bimc {
 			cell-id = <MSM_BUS_FAB_BIMC>;
@@ -61,7 +61,7 @@
 			coresight-child-ports = <0>;
 		};
 
-		/*Masters*/
+		/* Masters */
 
 		mas_apps_proc: mas-apps-proc {
 			cell-id = <MSM_BUS_MASTER_AMPSS_M0>;
@@ -303,7 +303,7 @@
 					 &slv_usb2 &slv_prng>;
 		};
 
-		/*Internal nodes*/
+		/* Internal nodes */
 
 		pcnoc_m_0: pcnoc-m-0 {
 			cell-id = <MSM_BUS_PNOC_M_0>;
@@ -445,7 +445,7 @@
 			qcom,slv-rpm-id = <ICBID_SLAVE_PCNOC_S_5>;
 		};
 
-		/*Slaves*/
+		/* Slaves */
 
 		slv_ebi:slv-ebi {
 			cell-id = <MSM_BUS_SLAVE_EBI_CH0>;
@@ -672,7 +672,6 @@
 			qcom,agg-ports = <1>;
 			qcom,bus-dev = <&fab_pcnoc>;
 			qcom,slv-rpm-id = <ICBID_SLAVE_QPIC>;
-
 		};
 	};
 };

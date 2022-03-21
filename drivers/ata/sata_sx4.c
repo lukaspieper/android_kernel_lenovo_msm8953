@@ -218,7 +218,7 @@ static void pdc_error_handler(struct ata_port *ap);
 static void pdc_freeze(struct ata_port *ap);
 static void pdc_thaw(struct ata_port *ap);
 static int pdc_port_start(struct ata_port *ap);
-static enum ata_completion_errors pdc20621_qc_prep(struct ata_queued_cmd *qc);
+static void pdc20621_qc_prep(struct ata_queued_cmd *qc);
 static void pdc_tf_load_mmio(struct ata_port *ap, const struct ata_taskfile *tf);
 static void pdc_exec_command_mmio(struct ata_port *ap, const struct ata_taskfile *tf);
 static unsigned int pdc20621_dimm_init(struct ata_host *host);
@@ -546,7 +546,7 @@ static void pdc20621_nodata_prep(struct ata_queued_cmd *qc)
 	VPRINTK("ata pkt buf ofs %u, mmio copied\n", i);
 }
 
-static enum ata_completion_errors pdc20621_qc_prep(struct ata_queued_cmd *qc)
+static void pdc20621_qc_prep(struct ata_queued_cmd *qc)
 {
 	switch (qc->tf.protocol) {
 	case ATA_PROT_DMA:
@@ -558,8 +558,6 @@ static enum ata_completion_errors pdc20621_qc_prep(struct ata_queued_cmd *qc)
 	default:
 		break;
 	}
-
-	return AC_ERR_OK;
 }
 
 static void __pdc20621_push_hdma(struct ata_queued_cmd *qc,
@@ -1240,8 +1238,12 @@ static unsigned int pdc20621_prog_dimm_global(struct ata_host *host)
 	readl(mmio + PDC_SDRAM_CONTROL);
 
 	/* Turn on for ECC */
-	pdc20621_i2c_read(host, PDC_DIMM0_SPD_DEV_ADDRESS,
-			  PDC_DIMM_SPD_TYPE, &spd0);
+	if (!pdc20621_i2c_read(host, PDC_DIMM0_SPD_DEV_ADDRESS,
+			       PDC_DIMM_SPD_TYPE, &spd0)) {
+		pr_err("Failed in i2c read: device=%#x, subaddr=%#x\n",
+		       PDC_DIMM0_SPD_DEV_ADDRESS, PDC_DIMM_SPD_TYPE);
+		return 1;
+	}
 	if (spd0 == 0x02) {
 		data |= (0x01 << 16);
 		writel(data, mmio + PDC_SDRAM_CONTROL);
@@ -1382,14 +1384,20 @@ static unsigned int pdc20621_dimm_init(struct ata_host *host)
 
 	/* ECC initiliazation. */
 
-	pdc20621_i2c_read(host, PDC_DIMM0_SPD_DEV_ADDRESS,
-			  PDC_DIMM_SPD_TYPE, &spd0);
+	if (!pdc20621_i2c_read(host, PDC_DIMM0_SPD_DEV_ADDRESS,
+			       PDC_DIMM_SPD_TYPE, &spd0)) {
+		pr_err("Failed in i2c read: device=%#x, subaddr=%#x\n",
+		       PDC_DIMM0_SPD_DEV_ADDRESS, PDC_DIMM_SPD_TYPE);
+		return 1;
+	}
 	if (spd0 == 0x02) {
 		void *buf;
 		VPRINTK("Start ECC initialization\n");
 		addr = 0;
 		length = size * 1024 * 1024;
 		buf = kzalloc(ECC_ERASE_BUF_SZ, GFP_KERNEL);
+		if (!buf)
+			return 1;
 		while (addr < length) {
 			pdc20621_put_to_dimm(host, buf, addr,
 					     ECC_ERASE_BUF_SZ);
@@ -1478,10 +1486,10 @@ static int pdc_sata_init_one(struct pci_dev *pdev,
 	}
 
 	/* configure and activate */
-	rc = pci_set_dma_mask(pdev, ATA_DMA_MASK);
+	rc = dma_set_mask(&pdev->dev, ATA_DMA_MASK);
 	if (rc)
 		return rc;
-	rc = pci_set_consistent_dma_mask(pdev, ATA_DMA_MASK);
+	rc = dma_set_coherent_mask(&pdev->dev, ATA_DMA_MASK);
 	if (rc)
 		return rc;
 

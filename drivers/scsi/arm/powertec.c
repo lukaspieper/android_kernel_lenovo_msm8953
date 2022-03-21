@@ -291,7 +291,7 @@ static struct scsi_host_template powertecscsi_template = {
 
 	.can_queue			= 8,
 	.this_id			= 7,
-	.sg_tablesize			= SCSI_MAX_SG_CHAIN_SEGMENTS,
+	.sg_tablesize			= SG_MAX_SEGMENTS,
 	.dma_boundary			= IOMD_DMA_BOUNDARY,
 	.cmd_per_lun			= 2,
 	.use_clustering			= ENABLE_CLUSTERING,
@@ -382,7 +382,7 @@ static int powertecscsi_probe(struct expansion_card *ec,
 
 	if (info->info.scsi.dma != NO_DMA)
 		free_dma(info->info.scsi.dma);
-	free_irq(ec->irq, info);
+	free_irq(ec->irq, host);
 
  out_release:
 	fas216_release(host);

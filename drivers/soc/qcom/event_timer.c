@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2014-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2014-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -66,9 +66,7 @@ static void irq_affinity_change_notifier(struct irq_affinity_notify *notify,
 static void irq_affinity_release(struct kref *ref);
 
 static int msm_event_debug_mask;
-module_param_named(
-	debug_mask, msm_event_debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP
-);
+module_param_named(debug_mask, msm_event_debug_mask, int, 0664);
 
 enum {
 	MSM_EVENT_TIMER_DEBUG = 1U << 0,
@@ -97,7 +95,7 @@ struct event_timer_info *add_event_timer(uint32_t irq,
 
 	if (irq) {
 		struct irq_desc *desc = irq_to_desc(irq);
-		struct cpumask *mask = desc->irq_data.affinity;
+		struct cpumask *mask = desc->irq_common_data.affinity;
 
 		get_online_cpus();
 		event_info->cpu = cpumask_any_and(mask, cpu_online_mask);
@@ -431,8 +429,8 @@ void activate_event_timer(struct event_timer_info *event, ktime_t event_time)
 EXPORT_SYMBOL(activate_event_timer);
 
 /**
- * deactivate_event_timer() : Deactivate an event timer, this removes the event from
- *                            the time ordered queue of event timers.
+ * deactivate_event_timer() : Deactivate an event timer, this removes the event
+ *				from the time ordered queue of event timers.
  * @event: event handle.
  */
 void deactivate_event_timer(struct event_timer_info *event)

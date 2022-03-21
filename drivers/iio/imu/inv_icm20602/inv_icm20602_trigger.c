@@ -1,9 +1,11 @@
 /*
  * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Copyright (C) 2012 Invensense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -29,7 +31,7 @@ int inv_icm20602_validate_trigger(struct iio_dev *indio_dev,
 	if (st->trig != trig)
 		return -EINVAL;
 
-	return MPU_SUCCESS;
+	return 0;
 }
 
 int inv_icm20602_probe_trigger(struct iio_dev *indio_dev)
@@ -50,7 +52,7 @@ int inv_icm20602_probe_trigger(struct iio_dev *indio_dev)
 				"inv_icm20602",
 				st->trig);
 	if (ret) {
-		dev_dbgerr("request_irq\n");
+		pr_err("request_irq failed\n");
 		goto error_free_trig;
 	}
 	st->trig->dev.parent = &st->client->dev;
@@ -58,7 +60,7 @@ int inv_icm20602_probe_trigger(struct iio_dev *indio_dev)
 	iio_trigger_set_drvdata(st->trig, indio_dev);
 	ret = iio_trigger_register(st->trig);
 	if (ret) {
-		dev_dbgerr("iio_trigger_register\n");
+		pr_err("iio_trigger_register failed\n");
 		goto error_free_irq;
 	}
 	indio_dev->trig = st->trig;

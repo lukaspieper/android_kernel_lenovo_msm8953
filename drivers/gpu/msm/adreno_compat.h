@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -37,20 +37,20 @@ static inline int adreno_getproperty_compat(struct kgsl_device *device,
 				unsigned int type,
 				void __user *value, size_t sizebytes)
 {
-	BUG();
+	return -EINVAL;
 }
 
 static inline int adreno_setproperty_compat(struct kgsl_device_private
 				*dev_priv, unsigned int type,
 				void __user *value, unsigned int sizebytes)
 {
-	BUG();
+	return -EINVAL;
 }
 
 static inline long adreno_compat_ioctl(struct kgsl_device_private *dev_priv,
 				unsigned int cmd, unsigned long arg)
 {
-	BUG();
+	return -EINVAL;
 }
 
 #endif /* CONFIG_COMPAT */

@@ -15,11 +15,11 @@ Required properties for child nodes:
 
 - compatible:	Must be "qcom,memshare-peripheral"
 
-- qcom,peripheral-size: Indicates the size (in bytes) required for that child.
+- qcom,peripheral-size:	Indicates the size (in bytes) required for that child.
 
-- qcom,client-id: Indicates the client id of the child node.
+- qcom,client-id:	Indicates the client id of the child node.
 
-- label: Indicates the peripheral information for the node. Should be one of
+- label:	Indicates the peripheral information for the node. Should be one of
   the following:
   - modem	/* Represent Modem Peripheral */
   - adsp	/* Represent ADSP Peripheral */
@@ -27,7 +27,11 @@ Required properties for child nodes:
 
 Optional properties for child nodes:
 
-- qcom,allocate-boot-time: Indicates whether clients needs boot time memory allocation.
+- qcom,allocate-boot-time:	Indicates whether clients needs boot time memory allocation.
+
+- qcom,allocate-on-request:	Indicates memory allocation happens only when client requests.
+
+/* "qcom,allocate-boot-time" and "qcom,allocate-on-request" are mutually exclusive properties. */
 
 Example:
 

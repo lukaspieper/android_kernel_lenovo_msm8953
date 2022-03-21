@@ -76,7 +76,9 @@ static struct fsync_inode_entry *add_fsync_inode(struct f2fs_sb_info *sbi,
 	if (IS_ERR(inode))
 		return ERR_CAST(inode);
 
-	dquot_initialize(inode);
+	err = dquot_initialize(inode);
+	if (err)
+		goto err_out;
 
 	if (quota_inode) {
 		err = dquot_alloc_inode(inode);
@@ -155,7 +157,11 @@ retry:
 			goto out_put;
 		}
 
-		dquot_initialize(einode);
+		err = dquot_initialize(einode);
+		if (err) {
+			iput(einode);
+			goto out_put;
+		}
 
 		err = f2fs_acquire_orphan_inode(F2FS_I_SB(inode));
 		if (err) {
@@ -198,8 +204,8 @@ static int recover_quota_data(struct inode *inode, struct page *page)
 
 	memset(&attr, 0, sizeof(attr));
 
-	attr.ia_uid = make_kuid(&init_user_ns, i_uid);
-	attr.ia_gid = make_kgid(&init_user_ns, i_gid);
+	attr.ia_uid = make_kuid(inode->i_sb->s_user_ns, i_uid);
+	attr.ia_gid = make_kgid(inode->i_sb->s_user_ns, i_gid);
 
 	if (!uid_eq(attr.ia_uid, inode->i_uid))
 		attr.ia_valid |= ATTR_UID;
@@ -440,12 +446,18 @@ got_it:
 	f2fs_put_page(node_page, 1);
 
 	if (ino != dn->inode->i_ino) {
+		int ret;
+
 		/* Deallocate previous index in the node page */
 		inode = f2fs_iget_retry(sbi->sb, ino);
 		if (IS_ERR(inode))
 			return PTR_ERR(inode);
 
-		dquot_initialize(inode);
+		ret = dquot_initialize(inode);
+		if (ret) {
+			iput(inode);
+			return ret;
+		}
 	} else {
 		inode = dn->inode;
 	}
@@ -762,8 +774,8 @@ skip:
 			(loff_t)MAIN_BLKADDR(sbi) << PAGE_SHIFT, -1);
 
 	if (err) {
-		truncate_inode_pages(NODE_MAPPING(sbi), 0);
-		truncate_inode_pages(META_MAPPING(sbi), 0);
+		truncate_inode_pages_final(NODE_MAPPING(sbi));
+		truncate_inode_pages_final(META_MAPPING(sbi));
 	} else {
 		clear_sbi_flag(sbi, SBI_POR_DOING);
 	}

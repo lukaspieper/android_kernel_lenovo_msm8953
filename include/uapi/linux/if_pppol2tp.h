@@ -16,7 +16,8 @@
 #define _UAPI__LINUX_IF_PPPOL2TP_H
 
 #include <linux/types.h>
-
+#include <linux/in.h>
+#include <linux/in6.h>
 #include <linux/l2tp.h>
 
 /* Structure used to connect() the socket to a particular tunnel UDP

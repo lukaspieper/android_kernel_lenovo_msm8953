@@ -3,7 +3,6 @@
  *
  * Copyright (C) 1999-2002 Russell King.
  * Copyright (C) 2012 ARM Ltd.
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -41,6 +40,10 @@
  *	the implementation assumes non-aliasing VIPT D-cache and (aliasing)
  *	VIPT or ASID-tagged VIVT I-cache.
  *
+ *	flush_cache_all()
+ *
+ *		Unconditionally clean and invalidate the entire cache.
+ *
  *	flush_cache_mm(mm)
  *
  *		Clean and invalidate all user space cache entries
@@ -67,11 +70,12 @@
  *		- size   - region size
  */
 extern void flush_cache_all(void);
-extern void flush_cache_louis(void);
 extern void flush_cache_range(struct vm_area_struct *vma, unsigned long start, unsigned long end);
 extern void flush_icache_range(unsigned long start, unsigned long end);
 extern void __flush_dcache_area(void *addr, size_t len);
-extern void __flush_cache_user_range(unsigned long start, unsigned long end);
+extern void __clean_dcache_area_poc(void *addr, size_t len);
+extern void __clean_dcache_area_pou(void *addr, size_t len);
+extern long __flush_cache_user_range(unsigned long start, unsigned long end);
 
 static inline void flush_cache_mm(struct mm_struct *mm)
 {
@@ -87,13 +91,13 @@ static inline void flush_cache_page(struct vm_area_struct *vma,
  */
 extern void __dma_map_area(const void *, size_t, int);
 extern void __dma_unmap_area(const void *, size_t, int);
-extern void __dma_flush_range(const void *, const void *);
-extern void __dma_inv_range(const void *, const void *);
-extern void __dma_clean_range(const void *, const void *);
+extern void __dma_flush_area(const void *, size_t);
+extern void __dma_inv_area(const void *, size_t);
+extern void __dma_clean_area(const void *, size_t);
 
-#define dmac_flush_range __dma_flush_range
-#define dmac_inv_range __dma_inv_range
-#define dmac_clean_range __dma_clean_range
+#define dmac_flush_range(start, end) __dma_flush_area(start, (void *)(end) - (void *)(start))
+#define dmac_inv_range(start, end) __dma_inv_area(start, (void *)(end) - (void *)(start))
+#define dmac_clean_range(start, end) __dma_clean_area(start, (void *)(end) - (void *)(start))
 
 /*
  * Copy user data from/to a page which is mapped into a different
@@ -123,13 +127,6 @@ extern void copy_to_user_page(struct vm_area_struct *, struct page *,
  */
 #define ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE 1
 extern void flush_dcache_page(struct page *);
-
-static inline void __local_flush_icache_all(void)
-{
-	asm("ic iallu");
-	dsb(nsh);
-	isb();
-}
 
 static inline void __flush_icache_all(void)
 {
@@ -164,21 +161,4 @@ int set_memory_rw(unsigned long addr, int numpages);
 int set_memory_x(unsigned long addr, int numpages);
 int set_memory_nx(unsigned long addr, int numpages);
 
-#ifdef CONFIG_DEBUG_RODATA
-void mark_rodata_ro(void);
-#endif
-
-#ifdef CONFIG_KERNEL_TEXT_RDONLY
-void set_kernel_text_ro(void);
-#else
-static inline void set_kernel_text_ro(void) { }
-#endif
-
-#ifdef CONFIG_FREE_PAGES_RDONLY
-#define mark_addr_rdonly(a)	set_memory_ro((unsigned long)a, 1);
-#define mark_addr_rdwrite(a)	set_memory_rw((unsigned long)a, 1);
-#else
-#define mark_addr_rdonly(a)
-#define mark_addr_rdwrite(a)
-#endif
 #endif

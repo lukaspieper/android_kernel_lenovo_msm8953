@@ -1,6 +1,6 @@
 /* drivers/soc/qcom/smp2p_loopback.c
  *
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2014,2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -61,7 +61,7 @@ static void remote_spinlock_test(struct smp2p_loopback_ctx *ctx)
 	uint32_t test_response;
 	unsigned long flags;
 	int n;
-	unsigned lock_count = 0;
+	unsigned int lock_count = 0;
 	remote_spinlock_t *smem_spinlock;
 
 	test_request = 0x0;
@@ -136,8 +136,8 @@ static void smp2p_rmt_lpb_worker(struct work_struct *work)
 
 	switch (lpb_cmd) {
 	case SMP2P_LB_CMD_NOOP:
-	    /* Do nothing */
-	    break;
+		/* Do nothing */
+		break;
 
 	case SMP2P_LB_CMD_ECHO:
 		SMP2P_SET_RMT_CMD_TYPE(ctx->rmt_cmd.current_value, 0);
@@ -145,13 +145,13 @@ static void smp2p_rmt_lpb_worker(struct work_struct *work)
 							lpb_data);
 		(void)msm_smp2p_out_write(ctx->out,
 					ctx->rmt_cmd.current_value);
-	    break;
+		break;
 
 	case SMP2P_LB_CMD_CLEARALL:
 		ctx->rmt_cmd.current_value = 0;
 		(void)msm_smp2p_out_write(ctx->out,
 					ctx->rmt_cmd.current_value);
-	    break;
+		break;
 
 	case SMP2P_LB_CMD_PINGPONG:
 		SMP2P_SET_RMT_CMD_TYPE(ctx->rmt_cmd.current_value, 0);
@@ -162,7 +162,7 @@ static void smp2p_rmt_lpb_worker(struct work_struct *work)
 			(void)msm_smp2p_out_write(ctx->out,
 					ctx->rmt_cmd.current_value);
 		}
-	    break;
+		break;
 
 	case SMP2P_LB_CMD_RSPIN_START:
 		remote_spinlock_test(ctx);
@@ -199,9 +199,8 @@ static int smp2p_rmt_in_edge_notify(struct notifier_block *nb,
 
 	ctx = container_of(nb, struct smp2p_loopback_ctx, in_nb);
 	if (data && ctx->in_is_active) {
-			ctx->rmt_cmd =
-			    *(struct msm_smp2p_update_notif *)data;
-			schedule_work(&ctx->rmt_lpb_work);
+		ctx->rmt_cmd = *(struct msm_smp2p_update_notif *)data;
+		schedule_work(&ctx->rmt_lpb_work);
 	}
 
 	return 0;
@@ -369,6 +368,7 @@ EXPORT_SYMBOL(msm_smp2p_get_remote_mock);
 void *msm_smp2p_get_remote_mock_smem_item(uint32_t *size)
 {
 	void *ptr = NULL;
+
 	if (remote_mock.item_exists) {
 		*size = sizeof(remote_mock.remote_item);
 		ptr = &(remote_mock.remote_item);

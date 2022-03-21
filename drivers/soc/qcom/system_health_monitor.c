@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014,2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -44,10 +44,10 @@ enum {
 };
 static int shm_debug_mask = SHM_INFO_FLAG;
 module_param_named(debug_mask, shm_debug_mask,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+		   int, 0664);
 static int shm_default_timeout_ms = 2000;
 module_param_named(default_timeout_ms, shm_default_timeout_ms,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+		   int, 0664);
 
 #define DEFAULT_SHM_RATELIMIT_INTERVAL (HZ / 5)
 #define DEFAULT_SHM_RATELIMIT_BURST 2
@@ -408,6 +408,7 @@ static int shm_svc_req_desc_cb(unsigned int msg_id,
 			       struct msg_desc **req_desc)
 {
 	int rc;
+
 	SHM_DEBUG("%s: called for msg_id %d\n", __func__, msg_id);
 	switch (msg_id) {
 	case QMI_HEALTH_MON_REG_REQ_V01:
@@ -874,7 +875,7 @@ probe_err:
 	return rc;
 }
 
-static struct of_device_id system_health_monitor_match_table[] = {
+static const struct of_device_id system_health_monitor_match_table[] = {
 	{ .compatible = "qcom,system-health-monitor" },
 	{},
 };
@@ -932,7 +933,7 @@ static int __init system_health_monitor_init(void)
 	cdev_init(&system_health_monitor_cdev, &system_health_monitor_fops);
 	system_health_monitor_cdev.owner = THIS_MODULE;
 	rc = cdev_add(&system_health_monitor_cdev,
-		      system_health_monitor_dev , 1);
+		      system_health_monitor_dev, 1);
 	if (rc < 0) {
 		SHM_ERR("%s: cdev_add() failed - rc %d\n",
 			__func__, rc);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,9 +35,9 @@
 
 struct memlat_node {
 	unsigned int ratio_ceil;
-	unsigned int freq_thresh_mhz;
-	unsigned int mult_factor;
+	unsigned int stall_floor;
 	bool mon_started;
+	bool already_zero;
 	struct list_head list;
 	void *orig_data;
 	struct memlat_hwmon *hw;
@@ -48,7 +48,8 @@ struct memlat_node {
 static LIST_HEAD(memlat_list);
 static DEFINE_MUTEX(list_lock);
 
-static int use_cnt;
+static int memlat_use_cnt;
+static int compute_use_cnt;
 static DEFINE_MUTEX(state_lock);
 
 #define show_attr(name) \
@@ -83,45 +84,48 @@ show_attr(__attr)			\
 store_attr(__attr, min, max)		\
 static DEVICE_ATTR(__attr, 0644, show_##__attr, store_##__attr)
 
-static unsigned long compute_dev_vote(struct devfreq *df)
+static ssize_t show_map(struct device *dev, struct device_attribute *attr,
+			char *buf)
 {
-	int i, lat_dev;
-	struct memlat_node *node = df->data;
-	struct memlat_hwmon *hw = node->hw;
-	unsigned long max_freq = 0;
-	unsigned int ratio;
+	struct devfreq *df = to_devfreq(dev);
+	struct memlat_node *n = df->data;
+	struct core_dev_map *map = n->hw->freq_map;
+	unsigned int cnt = 0;
 
-	hw->get_cnt(hw);
+	cnt += snprintf(buf, PAGE_SIZE, "Core freq (MHz)\tDevice BW\n");
 
-	for (i = 0; i < hw->num_cores; i++) {
-		ratio = hw->core_stats[i].inst_count;
-
-		if (hw->core_stats[i].mem_count)
-			ratio /= hw->core_stats[i].mem_count;
-
-		trace_memlat_dev_meas(dev_name(df->dev.parent),
-					hw->core_stats[i].id,
-					hw->core_stats[i].inst_count,
-					hw->core_stats[i].mem_count,
-					hw->core_stats[i].freq, ratio);
-
-		if (ratio && ratio <= node->ratio_ceil
-		    && hw->core_stats[i].freq >= node->freq_thresh_mhz
-		    && hw->core_stats[i].freq > max_freq) {
-			lat_dev = i;
-			max_freq = hw->core_stats[i].freq;
-		}
+	while (map->core_mhz && cnt < PAGE_SIZE) {
+		cnt += snprintf(buf + cnt, PAGE_SIZE - cnt, "%15u\t%9u\n",
+				map->core_mhz, map->target_freq);
+		map++;
 	}
+	if (cnt < PAGE_SIZE)
+		cnt += snprintf(buf + cnt, PAGE_SIZE - cnt, "\n");
 
-	if (max_freq)
-		trace_memlat_dev_update(dev_name(df->dev.parent),
-					hw->core_stats[lat_dev].id,
-					hw->core_stats[lat_dev].inst_count,
-					hw->core_stats[lat_dev].mem_count,
-					hw->core_stats[lat_dev].freq,
-					max_freq * node->mult_factor);
+	return cnt;
+}
 
-	return max_freq;
+static DEVICE_ATTR(freq_map, 0444, show_map, NULL);
+
+static unsigned long core_to_dev_freq(struct memlat_node *node,
+		unsigned long coref)
+{
+	struct memlat_hwmon *hw = node->hw;
+	struct core_dev_map *map = hw->freq_map;
+	unsigned long freq = 0;
+
+	if (!map)
+		goto out;
+
+	while (map->core_mhz && map->core_mhz < coref)
+		map++;
+	if (!map->core_mhz)
+		map--;
+	freq = map->target_freq;
+
+out:
+	pr_debug("freq: %lu -> dev: %lu\n", coref, freq);
+	return freq;
 }
 
 static struct memlat_node *find_memlat_node(struct devfreq *df)
@@ -221,32 +225,81 @@ static void gov_stop(struct devfreq *df)
 }
 
 static int devfreq_memlat_get_freq(struct devfreq *df,
-					unsigned long *freq,
-					u32 *flag)
+					unsigned long *freq)
 {
-	unsigned long mhz;
+	int i, lat_dev = 0;
 	struct memlat_node *node = df->data;
+	struct memlat_hwmon *hw = node->hw;
+	unsigned long max_freq = 0;
+	unsigned int ratio;
 
-	mhz = compute_dev_vote(df);
-	*freq = mhz ? (mhz * node->mult_factor) : 0;
+	hw->get_cnt(hw);
 
+	for (i = 0; i < hw->num_cores; i++) {
+		ratio = hw->core_stats[i].inst_count;
+
+		if (hw->core_stats[i].mem_count)
+			ratio /= hw->core_stats[i].mem_count;
+
+		if (!hw->core_stats[i].freq)
+			continue;
+
+		trace_memlat_dev_meas(dev_name(df->dev.parent),
+					hw->core_stats[i].id,
+					hw->core_stats[i].inst_count,
+					hw->core_stats[i].mem_count,
+					hw->core_stats[i].freq,
+					hw->core_stats[i].stall_pct, ratio);
+
+		if (ratio <= node->ratio_ceil
+		    && hw->core_stats[i].stall_pct >= node->stall_floor
+		    && hw->core_stats[i].freq > max_freq) {
+			lat_dev = i;
+			max_freq = hw->core_stats[i].freq;
+		}
+	}
+
+	if (max_freq)
+		max_freq = core_to_dev_freq(node, max_freq);
+
+	if (max_freq || !node->already_zero) {
+		trace_memlat_dev_update(dev_name(df->dev.parent),
+					hw->core_stats[lat_dev].id,
+					hw->core_stats[lat_dev].inst_count,
+					hw->core_stats[lat_dev].mem_count,
+					hw->core_stats[lat_dev].freq,
+					max_freq);
+	}
+
+	node->already_zero = !max_freq;
+
+	*freq = max_freq;
 	return 0;
 }
 
-gov_attr(ratio_ceil, 1U, 1000U);
-gov_attr(freq_thresh_mhz, 300U, 5000U);
-gov_attr(mult_factor, 1U, 10U);
+gov_attr(ratio_ceil, 1U, 10000U);
+gov_attr(stall_floor, 0U, 100U);
 
-static struct attribute *dev_attr[] = {
+static struct attribute *memlat_dev_attr[] = {
 	&dev_attr_ratio_ceil.attr,
-	&dev_attr_freq_thresh_mhz.attr,
-	&dev_attr_mult_factor.attr,
+	&dev_attr_stall_floor.attr,
+	&dev_attr_freq_map.attr,
 	NULL,
 };
 
-static struct attribute_group dev_attr_group = {
+static struct attribute *compute_dev_attr[] = {
+	&dev_attr_freq_map.attr,
+	NULL,
+};
+
+static struct attribute_group memlat_dev_attr_group = {
 	.name = "mem_latency",
-	.attrs = dev_attr,
+	.attrs = memlat_dev_attr,
+};
+
+static struct attribute_group compute_dev_attr_group = {
+	.name = "compute",
+	.attrs = compute_dev_attr,
 };
 
 #define MIN_MS	10U
@@ -295,37 +348,134 @@ static struct devfreq_governor devfreq_gov_memlat = {
 	.event_handler = devfreq_memlat_ev_handler,
 };
 
-int register_memlat(struct device *dev, struct memlat_hwmon *hw)
+static struct devfreq_governor devfreq_gov_compute = {
+	.name = "compute",
+	.get_target_freq = devfreq_memlat_get_freq,
+	.event_handler = devfreq_memlat_ev_handler,
+};
+
+#define NUM_COLS	2
+static struct core_dev_map *init_core_dev_map(struct device *dev,
+		char *prop_name)
 {
-	int ret = 0;
+	int len, nf, i, j;
+	u32 data;
+	struct core_dev_map *tbl;
+	int ret;
+
+	if (!of_find_property(dev->of_node, prop_name, &len))
+		return NULL;
+	len /= sizeof(data);
+
+	if (len % NUM_COLS || len == 0)
+		return NULL;
+	nf = len / NUM_COLS;
+
+	tbl = devm_kzalloc(dev, (nf + 1) * sizeof(struct core_dev_map),
+			GFP_KERNEL);
+	if (!tbl)
+		return NULL;
+
+	for (i = 0, j = 0; i < nf; i++, j += 2) {
+		ret = of_property_read_u32_index(dev->of_node, prop_name, j,
+				&data);
+		if (ret)
+			return NULL;
+		tbl[i].core_mhz = data / 1000;
+
+		ret = of_property_read_u32_index(dev->of_node, prop_name, j + 1,
+				&data);
+		if (ret)
+			return NULL;
+		tbl[i].target_freq = data;
+		pr_debug("Entry%d CPU:%u, Dev:%u\n", i, tbl[i].core_mhz,
+				tbl[i].target_freq);
+	}
+	tbl[i].core_mhz = 0;
+
+	return tbl;
+}
+
+static struct memlat_node *register_common(struct device *dev,
+					   struct memlat_hwmon *hw)
+{
 	struct memlat_node *node;
 
 	if (!hw->dev && !hw->of_node)
-		return -EINVAL;
+		return ERR_PTR(-EINVAL);
 
 	node = devm_kzalloc(dev, sizeof(*node), GFP_KERNEL);
 	if (!node)
-		return -ENOMEM;
-
-	node->gov = &devfreq_gov_memlat;
-	node->attr_grp = &dev_attr_group;
+		return ERR_PTR(-ENOMEM);
 
 	node->ratio_ceil = 10;
-	node->freq_thresh_mhz = 900;
-	node->mult_factor = 8;
 	node->hw = hw;
+
+	hw->freq_map = init_core_dev_map(dev, "qcom,core-dev-table");
+	if (!hw->freq_map) {
+		dev_err(dev, "Couldn't find the core-dev freq table!\n");
+		return ERR_PTR(-EINVAL);
+	}
 
 	mutex_lock(&list_lock);
 	list_add_tail(&node->list, &memlat_list);
 	mutex_unlock(&list_lock);
 
+	return node;
+}
+
+int register_compute(struct device *dev, struct memlat_hwmon *hw)
+{
+	struct memlat_node *node;
+	int ret = 0;
+
+	node = register_common(dev, hw);
+	if (IS_ERR(node)) {
+		ret = PTR_ERR(node);
+		goto out;
+	}
+
 	mutex_lock(&state_lock);
-	if (!use_cnt)
-		ret = devfreq_add_governor(&devfreq_gov_memlat);
+	node->gov = &devfreq_gov_compute;
+	node->attr_grp = &compute_dev_attr_group;
+
+	if (!compute_use_cnt)
+		ret = devfreq_add_governor(&devfreq_gov_compute);
 	if (!ret)
-		use_cnt++;
+		compute_use_cnt++;
 	mutex_unlock(&state_lock);
 
+out:
+	if (!ret)
+		dev_info(dev, "Compute governor registered.\n");
+	else
+		dev_err(dev, "Compute governor registration failed!\n");
+
+	return ret;
+}
+
+int register_memlat(struct device *dev, struct memlat_hwmon *hw)
+{
+	struct memlat_node *node;
+	int ret = 0;
+
+	node = register_common(dev, hw);
+	if (IS_ERR(node)) {
+		ret = PTR_ERR(node);
+		goto out;
+	}
+
+	mutex_lock(&state_lock);
+	node->gov = &devfreq_gov_memlat;
+	node->attr_grp = &memlat_dev_attr_group;
+
+	if (!memlat_use_cnt)
+		ret = devfreq_add_governor(&devfreq_gov_memlat);
+	if (!ret)
+		memlat_use_cnt++;
+	mutex_unlock(&state_lock);
+
+out:
 	if (!ret)
 		dev_info(dev, "Memory Latency governor registered.\n");
 	else

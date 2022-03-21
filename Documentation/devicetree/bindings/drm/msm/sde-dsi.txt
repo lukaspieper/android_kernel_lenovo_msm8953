@@ -6,13 +6,13 @@ that are compatible with MIPI display serial interface specification.
 DSI Controller:
 Required properties:
 - compatible:           Should be "qcom,dsi-ctrl-hw-v<version>". Supported
-			versions include 1.4 and 2.0.
-			eg: qcom,dsi-ctrl-hw-v1.4, qcom,dsi-ctrl-hw-v2.0
+			versions include 1.4, 2.0 and 2.2.
+			eg: qcom,dsi-ctrl-hw-v1.4, qcom,dsi-ctrl-hw-v2.0,
+			qcom,dsi-ctrl-hw-v2.2
 			And for dsi phy driver:
-			qcom,dsi-phy-v1.0, qcom,dsi-phy-v2.0, qcom,dsi-phy-v3.0,
-			qcom,dsi-phy-v4.0
-			For display manager driver:
-			qcom,dsi-display, qcom,hdmi-display, qcom,dp-display
+			qcom,dsi-phy-v0.0-hpm, qcom,dsi-phy-v0.0-lpm,
+			qcom,dsi-phy-v1.0, qcom,dsi-phy-v2.0,
+			qcom,dsi-phy-v3.0
 - reg:                  Base address and length of DSI controller's memory
 			mapped regions.
 - reg-names:            A list of strings that name the list of regs.
@@ -63,7 +63,13 @@ Optional properties:
 - qcom,dsi-ctrl: handle to dsi controller device
 - qcom,dsi-phy: handle to dsi phy device
 - qcom,dsi-manager:       Specifies dsi manager is present
-- qcom,display-manager:   Specifies display manager is present
+- qcom,dsi-display:       Specifies dsi display is present
+- qcom,hdmi-display:      Specifies hdmi is present
+- qcom,dp-display:        Specified dp is present
+- ports:                  This video port is used when external bridge is present. The connection is modelled
+                          using the OF graph bindings specified in Documentation/devicetree/bindings/graph.txt.
+                          Video port 0 is for the bridge output. The remote endpoint phandle should be
+                          mipi_dsi_device device node.
 - qcom,<type>-supply-entries:		A node that lists the elements of the supply used by the
 					a particular "type" of DSI module. The module "types"
 					can be "core", "ctrl", and "phy". Within the same type,
@@ -80,3 +86,22 @@ Optional properties:
 					-- qcom,supply-post-on-sleep: time to sleep (ms) after turning on
 					-- qcom,supply-pre-off-sleep: time to sleep (ms) before turning off
 					-- qcom,supply-post-off-sleep: time to sleep (ms) after turning off
+- qcom,mdss-mdp-transfer-time-us:	Specifies the dsi transfer time for command mode
+					panels in microseconds. Driver uses this number to adjust
+					the clock rate according to the expected transfer time.
+					Increasing this value would slow down the mdp processing
+					and can result in slower performance.
+					Decreasing this value can speed up the mdp processing,
+					but this can also impact power consumption.
+					As a rule this time should not be higher than the time
+					that would be expected with the processing at the
+					dsi link rate since anyways this would be the maximum
+					transfer time that could be achieved.
+					If ping pong split enabled, this time should not be higher
+					than two times the dsi link rate time.
+					If the property is not specified, then the default value is 14000 us.
+- qcom,dsi-phy-isolation-enabled:	A boolean property enables the phy isolation from dsi
+					controller. This must be enabled for debugging purpose
+					only with simulator panel. It should not be enabled for
+					normal DSI panels.
+- - qcom,null-insertion-enabled:	A boolean to enable NULL packet insertion feature for DSI controller.

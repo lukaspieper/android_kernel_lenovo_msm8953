@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -90,6 +90,7 @@ static unsigned long compute_rate(struct alpha_pll_clk *pll,
 	parent_rate = clk_get_rate(pll->c.parent);
 	rate = parent_rate * l_val;
 	rate += (parent_rate * a_val) >> alpha_bw;
+
 	return rate;
 }
 
@@ -97,6 +98,7 @@ static bool is_locked(struct alpha_pll_clk *pll)
 {
 	u32 reg = readl_relaxed(LOCK_REG(pll));
 	u32 mask = pll->masks->lock_mask;
+
 	return (reg & mask) == mask;
 }
 
@@ -104,6 +106,7 @@ static bool is_active(struct alpha_pll_clk *pll)
 {
 	u32 reg = readl_relaxed(ACTIVE_REG(pll));
 	u32 mask = pll->masks->active_mask;
+
 	return (reg & mask) == mask;
 }
 
@@ -145,6 +148,8 @@ static int __alpha_pll_vote_enable(struct alpha_pll_clk *pll)
 	ena = readl_relaxed(VOTE_REG(pll));
 	ena |= pll->fsm_en_mask;
 	writel_relaxed(ena, VOTE_REG(pll));
+
+	/* Make sure enable request goes through before waiting for update */
 	mb();
 
 	return wait_for_update(pll);
@@ -523,7 +528,7 @@ static int __calibrate_alpha_pll(struct alpha_pll_clk *pll)
 	int rc;
 
 	vco_val = find_vco(pll, pll->c.rate);
-	if (IS_ERR_VALUE(vco_val)) {
+	if (IS_ERR_VALUE((unsigned long)vco_val)) {
 		pr_err("alpha pll: not in a valid vco range\n");
 		return -EINVAL;
 	}
@@ -595,11 +600,10 @@ static int alpha_pll_set_rate(struct clk *c, unsigned long rate)
 {
 	struct alpha_pll_clk *pll = to_alpha_pll_clk(c);
 	struct alpha_pll_masks *masks = pll->masks;
-	unsigned long flags, freq_hz;
-	u32 regval, l_val;
+	unsigned long flags = 0, freq_hz = 0;
+	u32 l_val, regval;
 	int vco_val;
 	u64 a_val;
-	bool no_irq_dis;
 
 	freq_hz = round_rate_up(pll, rate, &l_val, &a_val);
 	if (freq_hz != rate) {
@@ -608,13 +612,12 @@ static int alpha_pll_set_rate(struct clk *c, unsigned long rate)
 	}
 
 	vco_val = find_vco(pll, freq_hz);
-	if (IS_ERR_VALUE(vco_val)) {
+	if (IS_ERR_VALUE((unsigned long)vco_val)) {
 		pr_err("alpha pll: not in a valid vco range\n");
 		return -EINVAL;
 	}
 
-	no_irq_dis = pll->no_irq_dis;
-	if (no_irq_dis)
+	if (pll->no_irq_dis)
 		spin_lock(&c->lock);
 	else
 		spin_lock_irqsave(&c->lock, flags);
@@ -650,7 +653,7 @@ static int alpha_pll_set_rate(struct clk *c, unsigned long rate)
 	if (c->count && !pll->dynamic_update)
 		c->ops->enable(c);
 
-	if (no_irq_dis)
+	if (pll->no_irq_dis)
 		spin_unlock(&c->lock);
 	else
 		spin_unlock_irqrestore(&c->lock, flags);
@@ -677,7 +680,7 @@ static long alpha_pll_round_rate(struct clk *c, unsigned long rate)
 		return freq_hz;
 
 	ret = find_vco(pll, freq_hz);
-	if (!IS_ERR_VALUE(ret))
+	if (!IS_ERR_VALUE((unsigned long)ret))
 		return freq_hz;
 
 	freq_hz = 0;
@@ -768,6 +771,13 @@ void __init_alpha_pll(struct clk *c)
 	if (pll->slew) {
 		regval = readl_relaxed(USER_CTL_HI_REG(pll));
 		regval &= ~PLL_LATCH_INTERFACE;
+		writel_relaxed(regval, USER_CTL_HI_REG(pll));
+	}
+
+	if (masks->cal_l_val_mask && pll->cal_l_val) {
+		regval = readl_relaxed(USER_CTL_HI_REG(pll));
+		regval &= ~masks->cal_l_val_mask;
+		regval |= pll->cal_l_val;
 		writel_relaxed(regval, USER_CTL_HI_REG(pll));
 	}
 
@@ -1079,7 +1089,7 @@ static enum handoff fabia_alpha_pll_handoff(struct clk *c)
 	return HANDOFF_ENABLED_CLK;
 }
 
-struct clk_ops clk_ops_alpha_pll = {
+const struct clk_ops clk_ops_alpha_pll = {
 	.enable = alpha_pll_enable,
 	.disable = alpha_pll_disable,
 	.round_rate = alpha_pll_round_rate,
@@ -1088,7 +1098,7 @@ struct clk_ops clk_ops_alpha_pll = {
 	.list_registers = alpha_pll_list_registers,
 };
 
-struct clk_ops clk_ops_alpha_pll_hwfsm = {
+const struct clk_ops clk_ops_alpha_pll_hwfsm = {
 	.enable = alpha_pll_enable_hwfsm,
 	.disable = alpha_pll_disable_hwfsm,
 	.round_rate = alpha_pll_round_rate,
@@ -1097,20 +1107,20 @@ struct clk_ops clk_ops_alpha_pll_hwfsm = {
 	.list_registers = alpha_pll_list_registers,
 };
 
-struct clk_ops clk_ops_fixed_alpha_pll = {
+const struct clk_ops clk_ops_fixed_alpha_pll = {
 	.enable = alpha_pll_enable,
 	.disable = alpha_pll_disable,
 	.handoff = alpha_pll_handoff,
 	.list_registers = alpha_pll_list_registers,
 };
 
-struct clk_ops clk_ops_fixed_fabia_alpha_pll = {
+const struct clk_ops clk_ops_fixed_fabia_alpha_pll = {
 	.enable = fabia_alpha_pll_enable,
 	.disable = fabia_alpha_pll_disable,
 	.handoff = fabia_alpha_pll_handoff,
 };
 
-struct clk_ops clk_ops_fabia_alpha_pll = {
+const struct clk_ops clk_ops_fabia_alpha_pll = {
 	.enable = fabia_alpha_pll_enable,
 	.disable = fabia_alpha_pll_disable,
 	.round_rate = alpha_pll_round_rate,
@@ -1118,7 +1128,7 @@ struct clk_ops clk_ops_fabia_alpha_pll = {
 	.handoff = fabia_alpha_pll_handoff,
 };
 
-struct clk_ops clk_ops_dyna_alpha_pll = {
+const struct clk_ops clk_ops_dyna_alpha_pll = {
 	.enable = dyna_alpha_pll_enable,
 	.disable = dyna_alpha_pll_disable,
 	.round_rate = alpha_pll_round_rate,
@@ -1161,10 +1171,8 @@ static struct alpha_pll_clk *alpha_pll_dt_parser(struct device *dev,
 	struct msmclk_data *drv;
 
 	pll = devm_kzalloc(dev, sizeof(*pll), GFP_KERNEL);
-	if (!pll) {
-		dt_err(np, "memory alloc failure\n");
+	if (!pll)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	if (of_property_read_u32(np, "qcom,base-offset", &pll->offset)) {
 		dt_err(np, "missing qcom,base-offset\n");
@@ -1176,10 +1184,8 @@ static struct alpha_pll_clk *alpha_pll_dt_parser(struct device *dev,
 					&pll->post_div_config);
 
 	pll->masks = devm_kzalloc(dev, sizeof(*pll->masks), GFP_KERNEL);
-	if (!pll->masks) {
-		dt_err(np, "memory alloc failure\n");
+	if (!pll->masks)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	if (of_device_is_compatible(np, "qcom,fixed-alpha-pll-20p") ||
 		of_device_is_compatible(np, "qcom,alpha-pll-20p")) {

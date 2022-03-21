@@ -20,6 +20,7 @@
 
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
+#include <asm/export.h>
 
 	.section	".toc","aw"
 PPC64_CACHES:
@@ -191,7 +192,7 @@ err1;	std	r0,8(r3)
 	mtctr	r6
 	mr	r8,r3
 14:
-err1;	dcbz	r0,r3
+err1;	dcbz	0,r3
 	add	r3,r3,r9
 	bdnz	14b
 
@@ -200,3 +201,4 @@ err1;	dcbz	r0,r3
 	cmpdi	r4,32
 	blt	.Lshort_clear
 	b	.Lmedium_clear
+EXPORT_SYMBOL(__clear_user)

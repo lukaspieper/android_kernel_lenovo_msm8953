@@ -179,7 +179,7 @@ static unsigned int sfq_classify(struct sk_buff *skb, struct Qdisc *sch,
 		return sfq_hash(q, skb) + 1;
 
 	*qerr = NET_XMIT_SUCCESS | __NET_XMIT_BYPASS;
-	result = tc_classify(skb, fl, &res);
+	result = tc_classify(skb, fl, &res, false);
 	if (result >= 0) {
 #ifdef CONFIG_NET_CLS_ACT
 		switch (result) {
@@ -306,10 +306,10 @@ drop:
 		len = qdisc_pkt_len(skb);
 		slot->backlog -= len;
 		sfq_dec(q, x);
-		kfree_skb(skb);
 		sch->q.qlen--;
 		qdisc_qstats_drop(sch);
 		qdisc_qstats_backlog_dec(sch, skb);
+		kfree_skb(skb);
 		return len;
 	}
 
@@ -343,7 +343,7 @@ static int sfq_headdrop(const struct sfq_sched_data *q)
 }
 
 static int
-sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch, struct sk_buff **to_free)
 {
 	struct sfq_sched_data *q = qdisc_priv(sch);
 	unsigned int hash, dropped;
@@ -367,7 +367,7 @@ sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	if (x == SFQ_EMPTY_SLOT) {
 		x = q->dep[0].next; /* get a free slot */
 		if (x >= SFQ_MAX_FLOWS)
-			return qdisc_drop(skb, sch);
+			return qdisc_drop(skb, sch, to_free);
 		q->ht[hash] = x;
 		slot = &q->slots[x];
 		slot->hash = hash;
@@ -424,16 +424,17 @@ sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	if (slot->qlen >= q->maxdepth) {
 congestion_drop:
 		if (!sfq_headdrop(q))
-			return qdisc_drop(skb, sch);
+			return qdisc_drop(skb, sch, to_free);
 
 		/* We know we have at least one packet in queue */
 		head = slot_dequeue_head(slot);
 		delta = qdisc_pkt_len(head) - qdisc_pkt_len(skb);
 		sch->qstats.backlog -= delta;
 		slot->backlog -= delta;
-		qdisc_drop(head, sch);
+		qdisc_drop(head, sch, to_free);
 
 		slot_queue_add(slot, skb);
+		qdisc_tree_reduce_backlog(sch, 0, delta);
 		return NET_XMIT_CN;
 	}
 
@@ -465,8 +466,10 @@ enqueue:
 	/* Return Congestion Notification only if we dropped a packet
 	 * from this flow.
 	 */
-	if (qlen != slot->qlen)
+	if (qlen != slot->qlen) {
+		qdisc_tree_reduce_backlog(sch, 0, dropped - qdisc_pkt_len(skb));
 		return NET_XMIT_CN;
+	}
 
 	/* As we dropped a packet, better let upper stack know this */
 	qdisc_tree_reduce_backlog(sch, 1, dropped);
@@ -520,7 +523,7 @@ sfq_reset(struct Qdisc *sch)
 	struct sk_buff *skb;
 
 	while ((skb = sfq_dequeue(sch)) != NULL)
-		kfree_skb(skb);
+		rtnl_kfree_skbs(skb, skb);
 }
 
 /*
@@ -911,7 +914,6 @@ static struct Qdisc_ops sfq_qdisc_ops __read_mostly = {
 	.enqueue	=	sfq_enqueue,
 	.dequeue	=	sfq_dequeue,
 	.peek		=	qdisc_peek_dequeued,
-	.drop		=	sfq_drop,
 	.init		=	sfq_init,
 	.reset		=	sfq_reset,
 	.destroy	=	sfq_destroy,

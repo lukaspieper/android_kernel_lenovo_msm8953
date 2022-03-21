@@ -1,6 +1,6 @@
 /*
- *  vl53l0x_device.h - Linux kernel modules for STM VL53L0 FlightSense TOF
- *						 sensor
+ *  vl53l0x_device.h - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,8 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
-
 
 /**
  * Device specific defines. To be adapted by implementer for the targeted
@@ -114,19 +112,19 @@
 #define VL_REG_SYSRANGE_START                        0x000
 	/** mask existing bit in #VL_REG_SYSRANGE_START*/
 	#define VL_REG_SYSRANGE_MODE_MASK          0x0F
-	/** bit 0 in #VL_REG_SYSRANGE_START write 1 toggle state in
-	 * continuous mode and arm next shot in single shot mode */
+	/** bit 0 in #VL_REG_SYSRANGE_START write 1 toggle state in */
+	/* continuous mode and arm next shot in single shot mode */
 	#define VL_REG_SYSRANGE_MODE_START_STOP    0x01
 	/** bit 1 write 0 in #VL_REG_SYSRANGE_START set single shot mode */
 	#define VL_REG_SYSRANGE_MODE_SINGLESHOT    0x00
-	/** bit 1 write 1 in #VL_REG_SYSRANGE_START set back-to-back
-	 *  operation mode */
+	/** bit 1 write 1 in #VL_REG_SYSRANGE_START set back-to-back */
+	/*  operation mode */
 	#define VL_REG_SYSRANGE_MODE_BACKTOBACK    0x02
-	/** bit 2 write 1 in #VL_REG_SYSRANGE_START set timed operation
-	 *  mode */
+	/** bit 2 write 1 in #VL_REG_SYSRANGE_START set timed operation */
+	/* *  mode */
 	#define VL_REG_SYSRANGE_MODE_TIMED         0x04
-	/** bit 3 write 1 in #VL_REG_SYSRANGE_START set histogram operation
-	 *  mode */
+	/** bit 3 write 1 in #VL_REG_SYSRANGE_START set histogram operation */
+	/* *  mode */
 	#define VL_REG_SYSRANGE_MODE_HISTOGRAM     0x08
 
 

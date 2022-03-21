@@ -289,7 +289,6 @@ static struct platform_driver jazz_sonic_driver = {
 	.remove	= jazz_sonic_device_remove,
 	.driver	= {
 		.name	= jazz_sonic_string,
-		.owner	= THIS_MODULE,
 	},
 };
 

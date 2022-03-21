@@ -1,6 +1,6 @@
 /*
  *  vl53l0x_i2c_platform.c - Linux kernel modules for
- *	STM VL53L0 FlightSense TOF sensor
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -16,10 +16,9 @@
  *  GNU General Public License for more details.
  */
 
-
 /*!
  * \file   VL_platform.c
- * \brief  Code function defintions for EWOK Platform Layer
+ * \brief  Code function definitions for EWOK Platform Layer
  *
  */
 
@@ -80,16 +79,16 @@
 	uint8_t LocBuffer[VL_MAX_I2C_XFER_SIZE];
     #define VL_GetLocalBuffer(Dev, n_byte)  LocBuffer
 #elif I2C_BUFFER_CONFIG == 2
-    /* user define buffer type declare DECL_I2C_BUFFER  as access  via
-	VL_GetLocalBuffer */
+    /* user define buffer type declare DECL_I2C_BUFFER  as access  via */
+    /* VL_GetLocalBuffer */
     #define DECL_I2C_BUFFER
 #else
 #error "invalid I2C_BUFFER_CONFIG "
 #endif
 
 
-#define VL_I2C_USER_VAR         /* none but could be for a flag var to
-		get/pass to mutex interruptible  return flags and try again */
+#define VL_I2C_USER_VAR         /* none but could be for a flag var to */
+	/* get/pass to mutex interruptible  return flags and try again */
 #define VL_GetI2CAccess(Dev)    /* todo mutex acquire */
 #define VL_DoneI2CAcces(Dev)    /* todo mutex release */
 
@@ -148,7 +147,7 @@ int32_t VL_write_multi(struct vl_data *dev, uint8_t index, uint8_t *pdata,
 			int32_t count)
 {
 	int32_t status = STATUS_OK;
-	uint8_t *buffer;
+	uint8_t buffer[64];
 
 #ifdef VL_LOG_ENABLE
 	int32_t i = 0;
@@ -167,7 +166,6 @@ int32_t VL_write_multi(struct vl_data *dev, uint8_t index, uint8_t *pdata,
 #endif
 	if ((count + 1) > VL_MAX_I2C_XFER_SIZE)
 		return STATUS_FAIL;
-	buffer =  VL_GetLocalBuffer(dev, (count+1));
 	buffer[0] = index;
 	memcpy(&buffer[1], pdata, count);
 	status = VL_I2CWrite(dev, buffer, (count+1));
@@ -179,7 +177,7 @@ int32_t VL_read_multi(struct vl_data *dev, uint8_t index, uint8_t *pdata,
 			int32_t count)
 {
 	int32_t status = STATUS_OK;
-	uint8_t *buffer;
+	uint8_t buffer[64];
 
 #ifdef VL_LOG_ENABLE
 	int32_t      i = 0;
@@ -190,7 +188,6 @@ int32_t VL_read_multi(struct vl_data *dev, uint8_t index, uint8_t *pdata,
 	if ((count + 1) > VL_MAX_I2C_XFER_SIZE)
 		return STATUS_FAIL;
 
-	buffer =  VL_GetLocalBuffer(dev, 1);
 	buffer[0] = index;
 	status = VL_I2CWrite(dev, (uint8_t *)buffer, (uint8_t)1);
 	if (!status) {

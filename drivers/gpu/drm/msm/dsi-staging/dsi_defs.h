@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,13 +9,14 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
  */
 
 #ifndef _DSI_DEFS_H_
 #define _DSI_DEFS_H_
 
 #include <linux/types.h>
+#include <drm/drm_mipi_dsi.h>
+#include "msm_drv.h"
 
 #define DSI_H_TOTAL(t) (((t)->h_active) + ((t)->h_back_porch) + \
 			((t)->h_sync_width) + ((t)->h_front_porch))
@@ -23,6 +24,19 @@
 #define DSI_V_TOTAL(t) (((t)->v_active) + ((t)->v_back_porch) + \
 			((t)->v_sync_width) + ((t)->v_front_porch))
 
+#define DSI_H_TOTAL_DSC(t) \
+	({\
+		u64 value;\
+		if ((t)->dsc_enabled && (t)->dsc)\
+			value = (t)->dsc->pclk_per_line;\
+		else\
+			value = (t)->h_active;\
+		value = value + (t)->h_back_porch + (t)->h_sync_width +\
+			(t)->h_front_porch;\
+		value;\
+	})
+
+#define DSI_DEBUG_NAME_LEN		32
 /**
  * enum dsi_pixel_format - DSI pixel formats
  * @DSI_PIXEL_FORMAT_RGB565:
@@ -62,27 +76,18 @@ enum dsi_op_mode {
  * @DSI_MODE_FLAG_SEAMLESS:	Seamless transition requested by user
  * @DSI_MODE_FLAG_DFPS:		Seamless transition is DynamicFPS
  * @DSI_MODE_FLAG_VBLANK_PRE_MODESET:	Transition needs VBLANK before Modeset
+ * @DSI_MODE_FLAG_DMS: Seamless transition is dynamic mode switch
+ * @DSI_MODE_FLAG_VRR: Seamless transition is DynamicFPS.
+ *                     New timing values are sent from DAL.
+ * @DSI_MODE_FLAG_DYN_CLK: Seamless transition is dynamic clock change
  */
 enum dsi_mode_flags {
 	DSI_MODE_FLAG_SEAMLESS			= BIT(0),
 	DSI_MODE_FLAG_DFPS			= BIT(1),
-	DSI_MODE_FLAG_VBLANK_PRE_MODESET	= BIT(2)
-};
-
-/**
- * enum dsi_data_lanes - dsi physical lanes
- * @DSI_DATA_LANE_0: Physical lane 0
- * @DSI_DATA_LANE_1: Physical lane 1
- * @DSI_DATA_LANE_2: Physical lane 2
- * @DSI_DATA_LANE_3: Physical lane 3
- * @DSI_CLOCK_LANE:  Physical clock lane
- */
-enum dsi_data_lanes {
-	DSI_DATA_LANE_0 = BIT(0),
-	DSI_DATA_LANE_1 = BIT(1),
-	DSI_DATA_LANE_2 = BIT(2),
-	DSI_DATA_LANE_3 = BIT(3),
-	DSI_CLOCK_LANE  = BIT(4)
+	DSI_MODE_FLAG_VBLANK_PRE_MODESET	= BIT(2),
+	DSI_MODE_FLAG_DMS			= BIT(3),
+	DSI_MODE_FLAG_VRR			= BIT(4),
+	DSI_MODE_FLAG_DYN_CLK			= BIT(5),
 };
 
 /**
@@ -101,6 +106,63 @@ enum dsi_logical_lane {
 	DSI_LOGICAL_LANE_3,
 	DSI_LOGICAL_CLOCK_LANE,
 	DSI_LANE_MAX
+};
+
+/**
+ * enum dsi_data_lanes - BIT map for DSI data lanes
+ * This is used to identify the active DSI data lanes for
+ * various operations like DSI data lane enable/ULPS/clamp
+ * configurations.
+ * @DSI_DATA_LANE_0: BIT(DSI_LOGICAL_LANE_0)
+ * @DSI_DATA_LANE_1: BIT(DSI_LOGICAL_LANE_1)
+ * @DSI_DATA_LANE_2: BIT(DSI_LOGICAL_LANE_2)
+ * @DSI_DATA_LANE_3: BIT(DSI_LOGICAL_LANE_3)
+ * @DSI_CLOCK_LANE:  BIT(DSI_LOGICAL_CLOCK_LANE)
+ */
+enum dsi_data_lanes {
+	DSI_DATA_LANE_0 = BIT(DSI_LOGICAL_LANE_0),
+	DSI_DATA_LANE_1 = BIT(DSI_LOGICAL_LANE_1),
+	DSI_DATA_LANE_2 = BIT(DSI_LOGICAL_LANE_2),
+	DSI_DATA_LANE_3 = BIT(DSI_LOGICAL_LANE_3),
+	DSI_CLOCK_LANE  = BIT(DSI_LOGICAL_CLOCK_LANE)
+};
+
+/**
+ * enum dsi_phy_data_lanes - dsi physical lanes
+ * used for DSI logical to physical lane mapping
+ * @DSI_PHYSICAL_LANE_INVALID: Physical lane valid/invalid
+ * @DSI_PHYSICAL_LANE_0: Physical lane 0
+ * @DSI_PHYSICAL_LANE_1: Physical lane 1
+ * @DSI_PHYSICAL_LANE_2: Physical lane 2
+ * @DSI_PHYSICAL_LANE_3: Physical lane 3
+ */
+enum dsi_phy_data_lanes {
+	DSI_PHYSICAL_LANE_INVALID = 0,
+	DSI_PHYSICAL_LANE_0 = BIT(0),
+	DSI_PHYSICAL_LANE_1 = BIT(1),
+	DSI_PHYSICAL_LANE_2 = BIT(2),
+	DSI_PHYSICAL_LANE_3  = BIT(3)
+};
+
+enum dsi_lane_map_type_v1 {
+	DSI_LANE_MAP_0123,
+	DSI_LANE_MAP_3012,
+	DSI_LANE_MAP_2301,
+	DSI_LANE_MAP_1230,
+	DSI_LANE_MAP_0321,
+	DSI_LANE_MAP_1032,
+	DSI_LANE_MAP_2103,
+	DSI_LANE_MAP_3210,
+};
+
+/**
+ * lane_map: DSI logical <-> physical lane mapping
+ * lane_map_v1: Lane mapping for DSI controllers < v2.0
+ * lane_map_v2: Lane mapping for DSI controllers >= 2.0
+ */
+struct dsi_lane_map {
+	enum dsi_lane_map_type_v1 lane_map_v1;
+	u8 lane_map_v2[DSI_LANE_MAX - 1];
 };
 
 /**
@@ -160,6 +222,68 @@ enum dsi_dfps_type {
 };
 
 /**
+ * enum dsi_cmd_set_type  - DSI command set type
+ * @DSI_CMD_SET_PRE_ON:	                   Panel pre on
+ * @DSI_CMD_SET_ON:                        Panel on
+ * @DSI_CMD_SET_POST_ON:                   Panel post on
+ * @DSI_CMD_SET_PRE_OFF:                   Panel pre off
+ * @DSI_CMD_SET_OFF:                       Panel off
+ * @DSI_CMD_SET_POST_OFF:                  Panel post off
+ * @DSI_CMD_SET_PRE_RES_SWITCH:            Pre resolution switch
+ * @DSI_CMD_SET_RES_SWITCH:                Resolution switch
+ * @DSI_CMD_SET_POST_RES_SWITCH:           Post resolution switch
+ * @DSI_CMD_SET_CMD_TO_VID_SWITCH:         Cmd to video mode switch
+ * @DSI_CMD_SET_POST_CMD_TO_VID_SWITCH:    Post cmd to vid switch
+ * @DSI_CMD_SET_VID_TO_CMD_SWITCH:         Video to cmd mode switch
+ * @DSI_CMD_SET_POST_VID_TO_CMD_SWITCH:    Post vid to cmd switch
+ * @DSI_CMD_SET_PANEL_STATUS:              Panel status
+ * @DSI_CMD_SET_LP1:                       Low power mode 1
+ * @DSI_CMD_SET_LP2:                       Low power mode 2
+ * @DSI_CMD_SET_NOLP:                      Low power mode disable
+ * @DSI_CMD_SET_PPS:                       DSC PPS command
+ * @DSI_CMD_SET_ROI:			   Panel ROI update
+ * @DSI_CMD_SET_TIMING_SWITCH:             Timing switch
+ * @DSI_CMD_SET_POST_TIMING_SWITCH:        Post timing switch
+ * @DSI_CMD_SET_MAX
+ */
+enum dsi_cmd_set_type {
+	DSI_CMD_SET_PRE_ON = 0,
+	DSI_CMD_SET_ON,
+	DSI_CMD_SET_POST_ON,
+	DSI_CMD_SET_PRE_OFF,
+	DSI_CMD_SET_OFF,
+	DSI_CMD_SET_POST_OFF,
+	DSI_CMD_SET_PRE_RES_SWITCH,
+	DSI_CMD_SET_RES_SWITCH,
+	DSI_CMD_SET_POST_RES_SWITCH,
+	DSI_CMD_SET_CMD_TO_VID_SWITCH,
+	DSI_CMD_SET_POST_CMD_TO_VID_SWITCH,
+	DSI_CMD_SET_VID_TO_CMD_SWITCH,
+	DSI_CMD_SET_POST_VID_TO_CMD_SWITCH,
+	DSI_CMD_SET_PANEL_STATUS,
+	DSI_CMD_SET_LP1,
+	DSI_CMD_SET_LP2,
+	DSI_CMD_SET_NOLP,
+	DSI_CMD_SET_PPS,
+	DSI_CMD_SET_ROI,
+	DSI_CMD_SET_TIMING_SWITCH,
+	DSI_CMD_SET_POST_TIMING_SWITCH,
+	DSI_CMD_SET_MAX
+};
+
+/**
+ * enum dsi_cmd_set_state - command set state
+ * @DSI_CMD_SET_STATE_LP:   dsi low power mode
+ * @DSI_CMD_SET_STATE_HS:   dsi high speed mode
+ * @DSI_CMD_SET_STATE_MAX
+ */
+enum dsi_cmd_set_state {
+	DSI_CMD_SET_STATE_LP = 0,
+	DSI_CMD_SET_STATE_HS,
+	DSI_CMD_SET_STATE_MAX
+};
+
+/**
  * enum dsi_phy_type - DSI phy types
  * @DSI_PHY_TYPE_DPHY:
  * @DSI_PHY_TYPE_CPHY:
@@ -192,19 +316,51 @@ enum dsi_video_traffic_mode {
 };
 
 /**
+ * struct dsi_cmd_desc - description of a dsi command
+ * @msg:		dsi mipi msg packet
+ * @last_command:   indicates whether the cmd is the last one to send
+ * @post_wait_ms:   post wait duration
+ */
+struct dsi_cmd_desc {
+	struct mipi_dsi_msg msg;
+	bool last_command;
+	u32  post_wait_ms;
+};
+
+/**
+ * struct dsi_panel_cmd_set - command set of the panel
+ * @type:      type of the command
+ * @state:     state of the command
+ * @count:     number of cmds
+ * @ctrl_idx:  index of the dsi control
+ * @cmds:      arry of cmds
+ */
+struct dsi_panel_cmd_set {
+	enum dsi_cmd_set_type type;
+	enum dsi_cmd_set_state state;
+	u32 count;
+	u32 ctrl_idx;
+	struct dsi_cmd_desc *cmds;
+};
+
+/**
  * struct dsi_mode_info - video mode information dsi frame
  * @h_active:         Active width of one frame in pixels.
  * @h_back_porch:     Horizontal back porch in pixels.
  * @h_sync_width:     HSYNC width in pixels.
  * @h_front_porch:    Horizontal fron porch in pixels.
  * @h_skew:
- * @h_sync_polarity:  Polarity of HSYNC (false is active high).
+ * @h_sync_polarity:  Polarity of HSYNC (false is active low).
  * @v_active:         Active height of one frame in lines.
  * @v_back_porch:     Vertical back porch in lines.
  * @v_sync_width:     VSYNC width in lines.
  * @v_front_porch:    Vertical front porch in lines.
- * @v_sync_polarity:  Polarity of VSYNC (false is active high).
+ * @v_sync_polarity:  Polarity of VSYNC (false is active low).
  * @refresh_rate:     Refresh rate in Hz.
+ * @clk_rate_hz:      DSI bit clock rate per lane in Hz.
+ * @dsc_enabled:      DSC compression enabled.
+ * @dsc:              DSC compression configuration.
+ * @roi_caps:         Panel ROI capabilities.
  */
 struct dsi_mode_info {
 	u32 h_active;
@@ -221,20 +377,10 @@ struct dsi_mode_info {
 	bool v_sync_polarity;
 
 	u32 refresh_rate;
-};
-
-/**
- * struct dsi_lane_mapping - Mapping between DSI logical and physical lanes
- * @physical_lane0:   Logical lane to which physical lane 0 is mapped.
- * @physical_lane1:   Logical lane to which physical lane 1 is mapped.
- * @physical_lane2:   Logical lane to which physical lane 2 is mapped.
- * @physical_lane3:   Logical lane to which physical lane 3 is mapped.
- */
-struct dsi_lane_mapping {
-	enum dsi_logical_lane physical_lane0;
-	enum dsi_logical_lane physical_lane1;
-	enum dsi_logical_lane physical_lane2;
-	enum dsi_logical_lane physical_lane3;
+	u64 clk_rate_hz;
+	bool dsc_enabled;
+	struct msm_display_dsc_info *dsc;
+	struct msm_roi_caps roi_caps;
 };
 
 /**
@@ -247,6 +393,7 @@ struct dsi_lane_mapping {
  * @mdp_cmd_trigger:     MDP frame update trigger for command mode.
  * @dma_cmd_trigger:     Command DMA trigger.
  * @cmd_trigger_stream:  Command mode stream to trigger.
+ * @swap_mode:           DSI color swap mode.
  * @bit_swap_read:       Is red color bit swapped.
  * @bit_swap_green:      Is green color bit swapped.
  * @bit_swap_blue:       Is blue color bit swapped.
@@ -259,7 +406,7 @@ struct dsi_lane_mapping {
  * @ignore_rx_eot:       Ignore Rx EOT packets if set to true.
  * @append_tx_eot:       Append EOT packets for forward transmissions if set to
  *                       true.
- * @force_clk_lane_hs:   Force clock lane in high speed mode.
+ * @force_hs_clk_lane:   Send continuous clock to the panel.
  */
 struct dsi_host_common_cfg {
 	enum dsi_pixel_format dst_format;
@@ -278,12 +425,11 @@ struct dsi_host_common_cfg {
 	u32 t_clk_pre;
 	bool ignore_rx_eot;
 	bool append_tx_eot;
-	bool force_clk_lane_hs;
+	bool force_hs_clk_lane;
 };
 
 /**
  * struct dsi_video_engine_cfg - DSI video engine configuration
- * @host_cfg:                  Pointer to host common configuration.
  * @last_line_interleave_en:   Allow command mode op interleaved on last line of
  *                             video stream.
  * @pulse_mode_hsa_he:         Send HSA and HE following VS/VE packet if set to
@@ -296,6 +442,8 @@ struct dsi_host_common_cfg {
  * @bllp_lp11_en:              Enter low power stop mode (LP-11) during BLLP.
  * @traffic_mode:              Traffic mode for video stream.
  * @vc_id:                     Virtual channel identifier.
+ * @dma_sched_line:         Line number, after vactive end, at which command dma
+ *			       needs to be triggered.
  */
 struct dsi_video_engine_cfg {
 	bool last_line_interleave_en;
@@ -307,12 +455,11 @@ struct dsi_video_engine_cfg {
 	bool bllp_lp11_en;
 	enum dsi_video_traffic_mode traffic_mode;
 	u32 vc_id;
+	u32 dma_sched_line;
 };
 
 /**
  * struct dsi_cmd_engine_cfg - DSI command engine configuration
- * @host_cfg:                  Pointer to host common configuration.
- * @host_cfg:                      Common host configuration
  * @max_cmd_packets_interleave     Maximum number of command mode RGB packets to
  *                                 send with in one horizontal blanking period
  *                                 of the video mode frame.
@@ -320,12 +467,15 @@ struct dsi_video_engine_cfg {
  * @wr_mem_continue:               DCS command for write_memory_continue.
  * @insert_dcs_command:            Insert DCS command as first byte of payload
  *                                 of the pixel data.
+ * @mdp_transfer_time_us   Specifies the mdp transfer time for command mode
+ *                         panels in microseconds
  */
 struct dsi_cmd_engine_cfg {
 	u32 max_cmd_packets_interleave;
 	u32 wr_mem_start;
 	u32 wr_mem_continue;
 	bool insert_dcs_command;
+	u32 mdp_transfer_time_us;
 };
 
 /**
@@ -338,7 +488,6 @@ struct dsi_cmd_engine_cfg {
  * @bit_clk_rate_hz:       Bit clock frequency in Hz.
  * @video_timing:          Video timing information of a frame.
  * @lane_map:              Mapping between logical and physical lanes.
- * @phy_type:              PHY type to be used.
  */
 struct dsi_host_config {
 	enum dsi_op_mode panel_mode;
@@ -350,22 +499,148 @@ struct dsi_host_config {
 	u64 esc_clk_rate_hz;
 	u64 bit_clk_rate_hz;
 	struct dsi_mode_info video_timing;
-	struct dsi_lane_mapping lane_map;
+	struct dsi_lane_map lane_map;
+};
+
+/**
+ * struct dsi_display_mode_priv_info - private mode info that will be attached
+ *                             with each drm mode
+ * @cmd_sets:		  Command sets of the mode
+ * @phy_timing_val:       Phy timing values
+ * @phy_timing_len:       Phy timing array length
+ * @panel_jitter:         Panel jitter for RSC backoff
+ * @panel_prefill_lines:  Panel prefill lines for RSC
+ * @clk_rate_hz:          DSI bit clock per lane in hz.
+ * @topology:             Topology selected for the panel
+ * @dsc:                  DSC compression info
+ * @dsc_enabled:          DSC compression enabled
+ * @roi_caps:		  Panel ROI capabilities
+ */
+struct dsi_display_mode_priv_info {
+	struct dsi_panel_cmd_set cmd_sets[DSI_CMD_SET_MAX];
+
+	u32 *phy_timing_val;
+	u32 phy_timing_len;
+
+	u32 panel_jitter_numer;
+	u32 panel_jitter_denom;
+	u32 panel_prefill_lines;
+	u64 clk_rate_hz;
+
+	struct msm_display_topology topology;
+	struct msm_display_dsc_info dsc;
+	bool dsc_enabled;
+	struct msm_roi_caps roi_caps;
 };
 
 /**
  * struct dsi_display_mode - specifies mode for dsi display
  * @timing:         Timing parameters for the panel.
  * @pixel_clk_khz:  Pixel clock in Khz.
- * @panel_mode:     Panel operation mode.
- * @flags:          Additional flags.
+ * @dsi_mode_flags: Flags to signal other drm components via private flags
+ * @priv_info:      Mode private info
  */
 struct dsi_display_mode {
 	struct dsi_mode_info timing;
 	u32 pixel_clk_khz;
-	enum dsi_op_mode panel_mode;
-
-	u32 flags;
+	u32 dsi_mode_flags;
+	struct dsi_display_mode_priv_info *priv_info;
 };
 
+/**
+ * struct dsi_rect - dsi rectangle representation
+ * Note: sde_rect is also using u16, this must be maintained for memcpy
+ */
+struct dsi_rect {
+	u16 x;
+	u16 y;
+	u16 w;
+	u16 h;
+};
+
+/**
+ * dsi_rect_intersect - intersect two rectangles
+ * @r1: first rectangle
+ * @r2: scissor rectangle
+ * @result: result rectangle, all 0's on no intersection found
+ */
+void dsi_rect_intersect(const struct dsi_rect *r1,
+		const struct dsi_rect *r2,
+		struct dsi_rect *result);
+
+/**
+ * dsi_rect_is_equal - compares two rects
+ * @r1: rect value to compare
+ * @r2: rect value to compare
+ *
+ * Returns true if the rects are same
+ */
+static inline bool dsi_rect_is_equal(struct dsi_rect *r1,
+		struct dsi_rect *r2)
+{
+	return r1->x == r2->x && r1->y == r2->y && r1->w == r2->w &&
+			r1->h == r2->h;
+}
+
+struct dsi_event_cb_info {
+	uint32_t event_idx;
+	void *event_usr_ptr;
+
+	int (*event_cb)(void *event_usr_ptr,
+		uint32_t event_idx, uint32_t instance_idx,
+		uint32_t data0, uint32_t data1,
+		uint32_t data2, uint32_t data3);
+};
+
+/**
+ * enum dsi_error_status - various dsi errors
+ * @DSI_FIFO_OVERFLOW:     DSI FIFO Overflow error
+ * @DSI_FIFO_UNDERFLOW:    DSI FIFO Underflow error
+ * @DSI_LP_Rx_TIMEOUT:     DSI LP/RX Timeout error
+ * @DSI_PLL_UNLOCK_ERR:	   DSI PLL unlock error
+ */
+enum dsi_error_status {
+	DSI_FIFO_OVERFLOW = 1,
+	DSI_FIFO_UNDERFLOW,
+	DSI_LP_Rx_TIMEOUT,
+	DSI_PLL_UNLOCK_ERR,
+	DSI_ERR_INTR_ALL,
+};
+
+/* structure containing the delays required for dynamic clk */
+struct dsi_dyn_clk_delay {
+	u32 pipe_delay;
+	u32 pipe_delay2;
+	u32 pll_delay;
+};
+
+/* dynamic refresh control bits */
+enum dsi_dyn_clk_control_bits {
+	DYN_REFRESH_INTF_SEL = 1,
+	DYN_REFRESH_SYNC_MODE,
+	DYN_REFRESH_SW_TRIGGER,
+	DYN_REFRESH_SWI_CTRL,
+};
+
+/* convert dsi pixel format into bits per pixel */
+static inline int dsi_pixel_format_to_bpp(enum dsi_pixel_format fmt)
+{
+	switch (fmt) {
+	case DSI_PIXEL_FORMAT_RGB888:
+	case DSI_PIXEL_FORMAT_MAX:
+		return 24;
+	case DSI_PIXEL_FORMAT_RGB666:
+	case DSI_PIXEL_FORMAT_RGB666_LOOSE:
+		return 18;
+	case DSI_PIXEL_FORMAT_RGB565:
+		return 16;
+	case DSI_PIXEL_FORMAT_RGB111:
+		return 3;
+	case DSI_PIXEL_FORMAT_RGB332:
+		return 8;
+	case DSI_PIXEL_FORMAT_RGB444:
+		return 12;
+	}
+	return 24;
+}
 #endif /* _DSI_DEFS_H_ */

@@ -21,10 +21,31 @@
 #include <linux/cdev.h>
 #include <linux/regulator/consumer.h>
 #include <linux/msm-bus.h>
-#include <linux/pfk.h>
 #include <crypto/ice.h>
 #include <soc/qcom/scm.h>
+#include <soc/qcom/qseecomi.h>
 #include "iceregs.h"
+
+#ifdef CONFIG_PFK
+#include <linux/pfk.h>
+#else
+#include <linux/bio.h>
+static inline int pfk_load_key_start(const struct bio *bio,
+	struct ice_crypto_setting *ice_setting, bool *is_pfe,
+	bool async, int ice_ver)
+{
+	return 0;
+}
+
+static inline int pfk_load_key_end(const struct bio *bio, bool *is_pfe)
+{
+	return 0;
+}
+
+static inline void pfk_clear_on_reset(void)
+{
+}
+#endif
 
 #define TZ_SYSCALL_CREATE_SMC_ID(o, s, f) \
 	((uint32_t)((((o & 0x3f) << 24) | (s & 0xff) << 8) | (f & 0xff)))
@@ -40,11 +61,25 @@
 #define TZ_OS_KS_RESTORE_KEY_ID_PARAM_ID \
 	TZ_SYSCALL_CREATE_PARAM_ID_0
 
+#define TZ_OS_KS_RESTORE_KEY_CONFIG_ID \
+	TZ_SYSCALL_CREATE_SMC_ID(TZ_OWNER_QSEE_OS, TZ_SVC_KEYSTORE, 0x06)
+
+#define TZ_OS_KS_RESTORE_KEY_CONFIG_ID_PARAM_ID \
+	TZ_SYSCALL_CREATE_PARAM_ID_1(TZ_SYSCALL_PARAM_TYPE_VAL)
+
+
 #define ICE_REV(x, y) (((x) & ICE_CORE_##y##_REV_MASK) >> ICE_CORE_##y##_REV)
 #define QCOM_UFS_ICE_DEV	"iceufs"
 #define QCOM_SDCC_ICE_DEV	"icesdcc"
 #define QCOM_ICE_TYPE_NAME_LEN 8
 #define QCOM_ICE_MAX_BIST_CHECK_COUNT 100
+#define QCOM_ICE_UFS		10
+#define QCOM_ICE_SDCC		20
+#define QCOM_ICE_ENCRYPT	0x1
+#define QCOM_ICE_DECRYPT	0x2
+#define QCOM_SECT_LEN_IN_BYTE	512
+#define QCOM_UD_FOOTER_SIZE	0x4000
+#define QCOM_UD_FOOTER_SECS	(QCOM_UD_FOOTER_SIZE / QCOM_SECT_LEN_IN_BYTE)
 
 struct ice_clk_info {
 	struct list_head list;
@@ -94,15 +129,14 @@ struct ice_device {
 	ktime_t			ice_reset_complete_time;
 };
 
+static int ice_fde_flag;
+static struct ice_crypto_setting ice_data;
+
 static int qti_ice_setting_config(struct request *req,
-		struct platform_device *pdev,
+		struct ice_device *ice_dev,
 		struct ice_crypto_setting *crypto_data,
 		struct ice_data_setting *setting)
 {
-	struct ice_device *ice_dev = NULL;
-
-	ice_dev = platform_get_drvdata(pdev);
-
 	if (!ice_dev) {
 		pr_debug("%s no ICE device\n", __func__);
 
@@ -115,24 +149,41 @@ static int qti_ice_setting_config(struct request *req,
 		return -EPERM;
 	}
 
+	if (!setting)
+		return -EINVAL;
+
 	if ((short)(crypto_data->key_index) >= 0) {
 
 		memcpy(&setting->crypto_data, crypto_data,
 				sizeof(setting->crypto_data));
 
-		if (rq_data_dir(req) == WRITE)
-			setting->encr_bypass = false;
-		else if (rq_data_dir(req) == READ)
-			setting->decr_bypass = false;
-		else {
+		switch (rq_data_dir(req)) {
+		case WRITE:
+			if (!ice_fde_flag || (ice_fde_flag & QCOM_ICE_ENCRYPT))
+				setting->encr_bypass = false;
+			break;
+		case READ:
+			if (!ice_fde_flag || (ice_fde_flag & QCOM_ICE_DECRYPT))
+				setting->decr_bypass = false;
+			break;
+		default:
 			/* Should I say BUG_ON */
 			setting->encr_bypass = true;
 			setting->decr_bypass = true;
+			pr_debug("%s(): direction unknown\n", __func__);
+			break;
 		}
 	}
 
 	return 0;
 }
+
+void qcom_ice_set_fde_flag(int flag)
+{
+	ice_fde_flag = flag;
+	pr_debug("%s read_write setting %d\n", __func__, ice_fde_flag);
+}
+EXPORT_SYMBOL(qcom_ice_set_fde_flag);
 
 static int qcom_ice_enable_clocks(struct ice_device *, bool);
 
@@ -262,6 +313,7 @@ static int qcom_ice_get_vreg(struct ice_device *ice_dev)
 static void qcom_ice_config_proc_ignore(struct ice_device *ice_dev)
 {
 	u32 regval;
+
 	if (ICE_REV(ice_dev->ice_hw_version, MAJOR) == 2 &&
 	    ICE_REV(ice_dev->ice_hw_version, MINOR) == 0 &&
 	    ICE_REV(ice_dev->ice_hw_version, STEP) == 0) {
@@ -278,6 +330,7 @@ static void qcom_ice_config_proc_ignore(struct ice_device *ice_dev)
 static void qcom_ice_low_power_mode_enable(struct ice_device *ice_dev)
 {
 	u32 regval;
+
 	regval = qcom_ice_readl(ice_dev, QCOM_ICE_REGS_ADVANCED_CONTROL);
 	/*
 	 * Enable low power mode sequence
@@ -430,7 +483,7 @@ static int qcom_ice_enable(struct ice_device *ice_dev)
 		if ((reg & 0x80000000) != 0x0) {
 			pr_err("%s: Bypass failed for ice = %pK",
 				__func__, (void *)ice_dev);
-			BUG();
+			WARN_ON(1);
 		}
 	}
 	return 0;
@@ -447,7 +500,7 @@ static int qcom_ice_verify_ice(struct ice_device *ice_dev)
 	step_rev = (rev & ICE_CORE_STEP_REV_MASK) >> ICE_CORE_STEP_REV;
 
 	if (maj_rev > ICE_CORE_CURRENT_MAJOR_VERSION) {
-		pr_err("%s: Unknown QC ICE device at 0x%lu, rev %d.%d.%d\n",
+		pr_err("%s: Unknown QC ICE device at %lu, rev %d.%d.%d\n",
 			__func__, (unsigned long)ice_dev->mmio,
 			maj_rev, min_rev, step_rev);
 		return -ENODEV;
@@ -463,8 +516,9 @@ static int qcom_ice_verify_ice(struct ice_device *ice_dev)
 
 static void qcom_ice_enable_intr(struct ice_device *ice_dev)
 {
-	unsigned reg = qcom_ice_readl(ice_dev, QCOM_ICE_REGS_NON_SEC_IRQ_MASK);
+	unsigned int reg;
 
+	reg = qcom_ice_readl(ice_dev, QCOM_ICE_REGS_NON_SEC_IRQ_MASK);
 	reg &= ~QCOM_ICE_NON_SEC_IRQ_MASK;
 	qcom_ice_writel(ice_dev, reg, QCOM_ICE_REGS_NON_SEC_IRQ_MASK);
 	/*
@@ -476,8 +530,9 @@ static void qcom_ice_enable_intr(struct ice_device *ice_dev)
 
 static void qcom_ice_disable_intr(struct ice_device *ice_dev)
 {
-	unsigned reg = qcom_ice_readl(ice_dev, QCOM_ICE_REGS_NON_SEC_IRQ_MASK);
+	unsigned int reg;
 
+	reg = qcom_ice_readl(ice_dev, QCOM_ICE_REGS_NON_SEC_IRQ_MASK);
 	reg |= QCOM_ICE_NON_SEC_IRQ_MASK;
 	qcom_ice_writel(ice_dev, reg, QCOM_ICE_REGS_NON_SEC_IRQ_MASK);
 	/*
@@ -556,7 +611,6 @@ static int qcom_ice_parse_clock_info(struct platform_device *pdev,
 
 	clkfreq = devm_kzalloc(dev, len * sizeof(*clkfreq), GFP_KERNEL);
 	if (!clkfreq) {
-		dev_err(dev, "%s: no memory\n", "qcom,op-freq-hz");
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -638,7 +692,7 @@ static int qcom_ice_get_device_tree_data(struct platform_device *pdev,
 		ice_dev->irq = irq;
 		pr_info("ICE IRQ = %d\n", ice_dev->irq);
 	} else {
-		dev_info(dev, "IRQ resource not available\n");
+		dev_dbg(dev, "IRQ resource not available\n");
 	}
 
 	qcom_ice_parse_ice_instance_type(pdev, ice_dev);
@@ -666,8 +720,8 @@ static const struct file_operations qcom_ice_fops = {
 static int register_ice_device(struct ice_device *ice_dev)
 {
 	int rc = 0;
-	unsigned baseminor = 0;
-	unsigned count = 1;
+	unsigned int baseminor = 0;
+	unsigned int count = 1;
 	struct device *class_dev;
 	int is_sdcc_ice = !strcmp(ice_dev->ice_instance_type, "sdcc");
 
@@ -830,6 +884,29 @@ static int qcom_ice_restore_config(void)
 	return ret;
 }
 
+static int qcom_ice_restore_key_config(struct ice_device *ice_dev)
+{
+	struct scm_desc desc = {0};
+	int ret = -1;
+
+	/* For ice 3, key configuration needs to be restored in case of reset */
+
+	desc.arginfo = TZ_OS_KS_RESTORE_KEY_CONFIG_ID_PARAM_ID;
+
+	if (!strcmp(ice_dev->ice_instance_type, "sdcc"))
+		desc.args[0] = QCOM_ICE_SDCC;
+
+	if (!strcmp(ice_dev->ice_instance_type, "ufs"))
+		desc.args[0] = QCOM_ICE_UFS;
+
+	ret = scm_call2(TZ_OS_KS_RESTORE_KEY_CONFIG_ID, &desc);
+
+	if (ret)
+		pr_err("%s: Error:  0x%x\n", __func__, ret);
+
+	return ret;
+}
+
 static int qcom_ice_init_clocks(struct ice_device *ice)
 {
 	int ret = -EINVAL;
@@ -977,7 +1054,7 @@ out:
 
 static int qcom_ice_finish_init(struct ice_device *ice_dev)
 {
-	unsigned reg;
+	unsigned int reg;
 	int err = 0;
 
 	if (!ice_dev) {
@@ -1103,6 +1180,22 @@ static int qcom_ice_finish_power_collapse(struct ice_device *ice_dev)
 				err = -EFAULT;
 				goto out;
 			}
+
+		/*
+		 * ICE looses its key configuration when UFS is reset,
+		 * restore it
+		 */
+		} else if (ICE_REV(ice_dev->ice_hw_version, MAJOR) > 2) {
+			err = qcom_ice_restore_key_config(ice_dev);
+			if (err)
+				goto out;
+
+			/*
+			 * for PFE case, clear the cached ICE key table,
+			 * this will force keys to be reconfigured
+			 * per each next transaction
+			 */
+			pfk_clear_on_reset();
 		}
 	}
 
@@ -1237,6 +1330,13 @@ static void qcom_ice_debug(struct platform_device *pdev)
 		qcom_ice_readl(ice_dev, QCOM_ICE_REGS_NON_SEC_IRQ_MASK),
 		qcom_ice_readl(ice_dev, QCOM_ICE_REGS_NON_SEC_IRQ_CLR));
 
+	if (ICE_REV(ice_dev->ice_hw_version, MAJOR) > 2) {
+		pr_err("%s: ICE INVALID CCFG ERR STTS: 0x%08x\n",
+			ice_dev->ice_instance_type,
+			qcom_ice_readl(ice_dev,
+				QCOM_ICE_INVALID_CCFG_ERR_STTS));
+	}
+
 	if ((ICE_REV(ice_dev->ice_hw_version, MAJOR) > 2) ||
 		((ICE_REV(ice_dev->ice_hw_version, MAJOR) == 2) &&
 		 (ICE_REV(ice_dev->ice_hw_version, MINOR) >= 1))) {
@@ -1369,15 +1469,24 @@ static int qcom_ice_config_start(struct platform_device *pdev,
 {
 	struct ice_crypto_setting *crypto_data;
 	struct ice_crypto_setting pfk_crypto_data = {0};
-	union map_info *info;
 	int ret = 0;
 	bool is_pfe = false;
+	sector_t data_size;
+	union map_info *info;
+	unsigned long sec_end = 0;
+	struct ice_device *ice_dev = NULL;
+	int ice_rev = 0;
 
-	if (!pdev || !req || !setting) {
+	if (!pdev || !req) {
 		pr_err("%s: Invalid params passed\n", __func__);
 		return -EINVAL;
 	}
 
+	ice_dev = platform_get_drvdata(pdev);
+	if (!ice_dev) {
+		pr_err("%s: no ICE device\n", __func__);
+		return 0;
+	}
 	/*
 	 * It is not an error to have a request with no  bio
 	 * Such requests must bypass ICE. So first set bypass and then
@@ -1393,7 +1502,10 @@ static int qcom_ice_config_start(struct platform_device *pdev,
 		return 0;
 	}
 
-	ret = pfk_load_key_start(req->bio, &pfk_crypto_data, &is_pfe, async);
+	ice_rev = ICE_REV(ice_dev->ice_hw_version, MAJOR);
+
+	ret = pfk_load_key_start(req->bio, &pfk_crypto_data,
+				&is_pfe, async, ice_rev);
 	if (is_pfe) {
 		if (ret) {
 			if (ret != -EBUSY && ret != -EAGAIN)
@@ -1402,32 +1514,50 @@ static int qcom_ice_config_start(struct platform_device *pdev,
 			return ret;
 		}
 
-		return qti_ice_setting_config(req, pdev,
+		return qti_ice_setting_config(req, ice_dev,
 				&pfk_crypto_data, setting);
 	}
 
-	/*
-	 * info field in req->end_io_data could be used by mulitple dm or
-	 * non-dm entities. To ensure that we are running operation on dm
-	 * based request, check BIO_DONT_FREE flag
-	 */
-	if (bio_flagged(req->bio, BIO_INLINECRYPT)) {
-		info = dm_get_rq_mapinfo(req);
-		if (!info) {
-			pr_debug("%s info not available in request\n",
-				 __func__);
-			return 0;
+	if (!ice_fde_flag) {
+		if (bio_flagged(req->bio, BIO_INLINECRYPT)) {
+			info = dm_get_rq_mapinfo(req);
+			if (!info) {
+				pr_debug("%s info not available in request\n",
+							__func__);
+				return 0;
+			}
+			crypto_data = (struct ice_crypto_setting *)info->ptr;
+			if (!crypto_data) {
+				pr_err("%s crypto_data not available in req\n",
+							__func__);
+				return -EINVAL;
+			}
+			return qti_ice_setting_config(req, ice_dev,
+						crypto_data, setting);
 		}
+		return 0;
+	}
 
-		crypto_data = (struct ice_crypto_setting *)info->ptr;
-		if (!crypto_data) {
-			pr_err("%s crypto_data not available in request\n",
-				 __func__);
-			return -EINVAL;
+	if (req->part && req->part->info && req->part->info->volname[0]) {
+		if (!strcmp(req->part->info->volname, "userdata")) {
+			sec_end = req->part->start_sect + req->part->nr_sects -
+					QCOM_UD_FOOTER_SECS;
+			if ((req->__sector >= req->part->start_sect) &&
+				(req->__sector < sec_end)) {
+				/*
+				 * Ugly hack to address non-block-size aligned
+				 * userdata end address in eMMC based devices.
+				 */
+				data_size = req->__data_len /
+						QCOM_SECT_LEN_IN_BYTE;
+
+				if ((req->__sector + data_size) > sec_end)
+					return 0;
+				else
+					return qti_ice_setting_config(req,
+						ice_dev, &ice_data, setting);
+			}
 		}
-
-		return qti_ice_setting_config(req, pdev,
-				crypto_data, setting);
 	}
 
 	/*
@@ -1535,8 +1665,9 @@ struct platform_device *qcom_ice_get_pdevice(struct device_node *node)
 		}
 	}
 
-	if(ice_pdev)
-		pr_info("%s: matching platform device %pK\n", __func__, ice_pdev);
+	if (ice_pdev)
+		pr_info("%s: matching platform device %pK\n", __func__,
+			ice_pdev);
 out:
 	return ice_pdev;
 }
@@ -1554,7 +1685,7 @@ static struct ice_device *get_ice_device_from_storage_type
 
 	list_for_each_entry(ice_dev, &ice_devices, list) {
 		if (!strcmp(ice_dev->ice_instance_type, storage_type)) {
-			pr_info("%s: found ice device %p\n", __func__, ice_dev);
+			pr_debug("%s: ice device %pK\n", __func__, ice_dev);
 			return ice_dev;
 		}
 	}
@@ -1683,7 +1814,7 @@ struct qcom_ice_variant_ops *qcom_ice_get_variant_ops(struct device_node *node)
 EXPORT_SYMBOL(qcom_ice_get_variant_ops);
 
 /* Following struct is required to match device with driver from dts file */
-static struct of_device_id qcom_ice_match[] = {
+static const struct of_device_id qcom_ice_match[] = {
 	{ .compatible = "qcom,ice" },
 	{},
 };

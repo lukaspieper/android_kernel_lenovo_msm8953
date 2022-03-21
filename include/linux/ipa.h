@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -101,6 +101,8 @@ enum ipa_aggr_mode {
 enum ipa_dp_evt_type {
 	IPA_RECEIVE,
 	IPA_WRITE_DONE,
+	IPA_CLIENT_START_POLL,
+	IPA_CLIENT_COMP_NAPI,
 };
 
 /**
@@ -610,6 +612,7 @@ struct ipa_ext_intf {
  * @skip_ep_cfg: boolean field that determines if EP should be configured
  *  by IPA driver
  * @keep_ipa_awake: when true, IPA will not be clock gated
+ * @napi_enabled: when true, IPA call client callback to start polling
  */
 struct ipa_sys_connect_params {
 	struct ipa_ep_cfg ipa_ep_cfg;
@@ -619,6 +622,8 @@ struct ipa_sys_connect_params {
 	ipa_notify_cb notify;
 	bool skip_ep_cfg;
 	bool keep_ipa_awake;
+	bool napi_enabled;
+	bool recycle_enabled;
 };
 
 /**
@@ -666,7 +671,8 @@ typedef int (*ipa_msg_pull_fn)(void *buff, u32 len, u32 type);
  */
 enum ipa_voltage_level {
 	IPA_VOLTAGE_UNSPECIFIED,
-	IPA_VOLTAGE_SVS = IPA_VOLTAGE_UNSPECIFIED,
+	IPA_VOLTAGE_SVS2 = IPA_VOLTAGE_UNSPECIFIED,
+	IPA_VOLTAGE_SVS,
 	IPA_VOLTAGE_NOMINAL,
 	IPA_VOLTAGE_TURBO,
 	IPA_VOLTAGE_MAX,
@@ -748,6 +754,7 @@ struct ipa_rm_perf_profile {
 enum teth_tethering_mode {
 	TETH_TETHERING_MODE_RMNET,
 	TETH_TETHERING_MODE_MBIM,
+	TETH_TETHERING_MODE_RMNET_2,
 	TETH_TETHERING_MODE_MAX,
 };
 
@@ -832,7 +839,7 @@ enum ipa_irq_type {
 	IPA_TX_SUSPEND_IRQ,
 	IPA_TX_HOLB_DROP_IRQ,
 	IPA_BAM_IDLE_IRQ,
-	IPA_BAM_GSI_IDLE_IRQ = IPA_BAM_IDLE_IRQ,
+	IPA_GSI_IDLE_IRQ = IPA_BAM_IDLE_IRQ,
 	IPA_IRQ_MAX
 };
 
@@ -963,7 +970,7 @@ struct IpaHwStatsWDITxInfoData_t {
 	u32 num_db;
 	u32 num_unexpected_db;
 	u32 num_bam_int_handled;
-	u32 num_bam_int_in_non_runnning_state;
+	u32 num_bam_int_in_non_running_state;
 	u32 num_qmb_int_handled;
 	u32 num_bam_int_handled_while_wait_for_bam;
 } __packed;
@@ -1019,6 +1026,8 @@ struct ipa_wdi_ul_params_smmu {
 	struct sg_table rdy_comp_ring;
 	phys_addr_t rdy_comp_ring_wp_pa;
 	u32 rdy_comp_ring_size;
+	u32 *rdy_ring_rp_va;
+	u32 *rdy_comp_ring_wp_va;
 };
 
 /**
@@ -1084,6 +1093,12 @@ struct ipa_wdi_in_params {
 #endif
 };
 
+enum ipa_upstream_type {
+	IPA_UPSTEAM_MODEM = 1,
+	IPA_UPSTEAM_WLAN,
+	IPA_UPSTEAM_MAX
+};
+
 /**
  * struct  ipa_wdi_out_params - information provided to WDI client
  * @uc_door_bell_pa: physical address of IPA uc doorbell
@@ -1142,6 +1157,7 @@ struct ipa_wdi_buffer_info {
  * @ipa_if_tlv: number of IPA_IF TLV
  * @ipa_if_aos: number of IPA_IF AOS
  * @ee: Execution environment
+ * @prefetch_mode: Prefetch mode to be used
  */
 struct ipa_gsi_ep_config {
 	int ipa_ep_num;
@@ -1149,6 +1165,7 @@ struct ipa_gsi_ep_config {
 	int ipa_if_tlv;
 	int ipa_if_aos;
 	int ee;
+	enum gsi_prefetch_mode prefetch_mode;
 };
 
 /**
@@ -1159,6 +1176,28 @@ struct ipa_gsi_ep_config {
 struct ipa_tz_unlock_reg_info {
 	u64 reg_addr;
 	u64 size;
+};
+
+/**
+ * struct  ipa_smmu_in_params - information provided from client
+ * @ipa_smmu_client_type: clinet requesting for the smmu info.
+ */
+
+enum ipa_smmu_client_type {
+	IPA_SMMU_WLAN_CLIENT,
+	IPA_SMMU_CLIENT_MAX
+};
+
+struct ipa_smmu_in_params {
+	enum ipa_smmu_client_type smmu_client;
+};
+
+/**
+ * struct  ipa_smmu_out_params - information provided to IPA client
+ * @ipa_smmu_s1_enable: IPA S1 SMMU enable/disable status
+ */
+struct ipa_smmu_out_params {
+	bool smmu_enable;
 };
 
 #if defined CONFIG_IPA || defined CONFIG_IPA3
@@ -1191,6 +1230,9 @@ int ipa_disable_endpoint(u32 clnt_hdl);
 int ipa_cfg_ep(u32 clnt_hdl, const struct ipa_ep_cfg *ipa_ep_cfg);
 
 int ipa_cfg_ep_nat(u32 clnt_hdl, const struct ipa_ep_cfg_nat *ipa_ep_cfg);
+
+int ipa_cfg_ep_conn_track(u32 clnt_hdl,
+	const struct ipa_ep_cfg_conn_track *ep_conn_track);
 
 int ipa_cfg_ep_hdr(u32 clnt_hdl, const struct ipa_ep_cfg_hdr *ipa_ep_cfg);
 
@@ -1282,15 +1324,24 @@ int ipa_commit_flt(enum ipa_ip_type ip);
 int ipa_reset_flt(enum ipa_ip_type ip, bool user_only);
 
 /*
- * NAT
+ * NAT\IPv6CT
  */
-int allocate_nat_device(struct ipa_ioc_nat_alloc_mem *mem);
+int ipa_allocate_nat_device(struct ipa_ioc_nat_alloc_mem *mem);
+int ipa_allocate_nat_table(struct ipa_ioc_nat_ipv6ct_table_alloc *table_alloc);
+int ipa_allocate_ipv6ct_table(
+	struct ipa_ioc_nat_ipv6ct_table_alloc *table_alloc);
 
 int ipa_nat_init_cmd(struct ipa_ioc_v4_nat_init *init);
+int ipa_ipv6ct_init_cmd(struct ipa_ioc_ipv6ct_init *init);
 
 int ipa_nat_dma_cmd(struct ipa_ioc_nat_dma_cmd *dma);
+int ipa_table_dma_cmd(struct ipa_ioc_nat_dma_cmd *dma);
 
 int ipa_nat_del_cmd(struct ipa_ioc_v4_nat_del *del);
+int ipa_del_nat_table(struct ipa_ioc_nat_ipv6ct_table_del *del);
+int ipa_del_ipv6ct_table(struct ipa_ioc_nat_ipv6ct_table_del *del);
+
+int ipa_nat_mdfy_pdn(struct ipa_ioc_nat_pdn_entry *mdfy_pdn);
 
 /*
  * Messaging
@@ -1334,6 +1385,8 @@ int ipa_tx_dp_mul(enum ipa_client_type dst,
 			struct ipa_tx_data_desc *data_desc);
 
 void ipa_free_skb(struct ipa_rx_data *);
+int ipa_rx_poll(u32 clnt_hdl, int budget);
+void ipa_recycle_wan_skb(struct sk_buff *skb);
 
 /*
  * System pipes
@@ -1542,7 +1595,23 @@ int ipa_register_ipa_ready_cb(void (*ipa_ready_cb)(void *user_data),
  * Returns: 0 on success, negative on failure
  */
 int ipa_tz_unlock_reg(struct ipa_tz_unlock_reg_info *reg_info, u16 num_regs);
+int ipa_get_smmu_params(struct ipa_smmu_in_params *in,
+	struct ipa_smmu_out_params *out);
+/**
+ * ipa_is_vlan_mode - check if a LAN driver should load in VLAN mode
+ * @iface - type of vlan capable device
+ * @res - query result: true for vlan mode, false for non vlan mode
+ *
+ * API must be called after ipa_is_ready() returns true, otherwise it will fail
+ *
+ * Returns: 0 on success, negative on failure
+ */
+int ipa_is_vlan_mode(enum ipa_vlan_ifaces iface, bool *res);
 
+/**
+ * ipa_get_lan_rx_napi - returns true if NAPI is enabled in the LAN RX dp
+ */
+bool ipa_get_lan_rx_napi(void);
 #else /* (CONFIG_IPA || CONFIG_IPA3) */
 
 /*
@@ -1594,6 +1663,12 @@ static inline int ipa_cfg_ep(u32 clnt_hdl,
 
 static inline int ipa_cfg_ep_nat(u32 clnt_hdl,
 		const struct ipa_ep_cfg_nat *ipa_ep_cfg)
+{
+	return -EPERM;
+}
+
+static inline int ipa_cfg_ep_conn_track(u32 clnt_hdl,
+	const struct ipa_ep_cfg_conn_track *ep_conn_track)
 {
 	return -EPERM;
 }
@@ -1802,25 +1877,60 @@ static inline int ipa_reset_flt(enum ipa_ip_type ip, bool user_only)
 /*
  * NAT
  */
-static inline int allocate_nat_device(struct ipa_ioc_nat_alloc_mem *mem)
+static inline int ipa_allocate_nat_device(struct ipa_ioc_nat_alloc_mem *mem)
 {
 	return -EPERM;
 }
 
+static inline int ipa_allocate_nat_table(
+	struct ipa_ioc_nat_ipv6ct_table_alloc *table_alloc)
+{
+	return -EPERM;
+}
+
+static inline int ipa_allocate_ipv6ct_table(
+	struct ipa_ioc_nat_ipv6ct_table_alloc *table_alloc)
+{
+	return -EPERM;
+}
 
 static inline int ipa_nat_init_cmd(struct ipa_ioc_v4_nat_init *init)
 {
 	return -EPERM;
 }
 
+static inline int ipa_ipv6ct_init_cmd(struct ipa_ioc_ipv6ct_init *init)
+{
+	return -EPERM;
+}
 
 static inline int ipa_nat_dma_cmd(struct ipa_ioc_nat_dma_cmd *dma)
 {
 	return -EPERM;
 }
 
+static inline int ipa_table_dma_cmd(struct ipa_ioc_nat_dma_cmd *dma)
+{
+	return -EPERM;
+}
 
 static inline int ipa_nat_del_cmd(struct ipa_ioc_v4_nat_del *del)
+{
+	return -EPERM;
+}
+
+static inline int ipa_del_nat_table(struct ipa_ioc_nat_ipv6ct_table_del *del)
+{
+	return -EPERM;
+}
+
+static inline int ipa_del_ipv6ct_table(
+	struct ipa_ioc_nat_ipv6ct_table_del *del)
+{
+	return -EPERM;
+}
+
+static inline int ipa_nat_mdfy_pdn(struct ipa_ioc_nat_pdn_entry *mdfy_pdn)
 {
 	return -EPERM;
 }
@@ -1907,7 +2017,15 @@ static inline int ipa_tx_dp_mul(
 
 static inline void ipa_free_skb(struct ipa_rx_data *rx_in)
 {
-	return;
+}
+
+static inline int ipa_rx_poll(u32 clnt_hdl, int budget)
+{
+	return -EPERM;
+}
+
+static inline void ipa_recycle_wan_skb(struct sk_buff *skb)
+{
 }
 
 /*
@@ -2107,7 +2225,6 @@ static inline int teth_bridge_connect(struct teth_bridge_connect_params
 static inline void ipa_set_client(int index, enum ipacm_client_enum client,
 	bool uplink)
 {
-	return;
 }
 
 static inline enum ipacm_client_enum ipa_get_client(int pipe_idx)
@@ -2158,7 +2275,6 @@ static inline int ipa_dma_uc_memcpy(phys_addr_t dest, phys_addr_t src, int len)
 
 static inline void ipa_dma_destroy(void)
 {
-	return;
 }
 
 /*
@@ -2195,7 +2311,6 @@ static inline int ipa_restore_suspend_handler(void)
  */
 static inline void ipa_bam_reg_dump(void)
 {
-	return;
 }
 
 static inline int ipa_get_wdi_stats(struct IpaHwStatsWDIInfoData_t *stats)
@@ -2280,7 +2395,7 @@ static inline int ipa_disable_apps_wan_cons_deaggr(void)
 }
 
 static inline const struct ipa_gsi_ep_config *ipa_get_gsi_ep_info
-	(int ipa_ep_idx)
+	(enum ipa_client_type client)
 {
 	return NULL;
 }
@@ -2303,6 +2418,22 @@ static inline int ipa_tz_unlock_reg(struct ipa_tz_unlock_reg_info *reg_info,
 	return -EPERM;
 }
 
+
+static inline int ipa_get_smmu_params(struct ipa_smmu_in_params *in,
+	struct ipa_smmu_out_params *out)
+{
+	return -EPERM;
+}
+
+static inline int ipa_is_vlan_mode(enum ipa_vlan_ifaces iface, bool *res)
+{
+	return -EPERM;
+}
+
+static inline bool ipa_get_lan_rx_napi(void)
+{
+	return false;
+}
 #endif /* (CONFIG_IPA || CONFIG_IPA3) */
 
 #endif /* _IPA_H_ */

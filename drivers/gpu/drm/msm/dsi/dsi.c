@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015, 2018 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,7 +29,7 @@ static int dsi_get_phy(struct msm_dsi *msm_dsi)
 	struct platform_device *phy_pdev;
 	struct device_node *phy_node;
 
-	phy_node = of_parse_phandle(pdev->dev.of_node, "qcom,dsi-phy", 0);
+	phy_node = of_parse_phandle(pdev->dev.of_node, "phys", 0);
 	if (!phy_node) {
 		dev_err(&pdev->dev, "cannot find phy device\n");
 		return -ENXIO;
@@ -169,6 +169,7 @@ static struct platform_driver dsi_driver = {
 	.driver = {
 		.name = "msm_dsi",
 		.of_match_table = dt_match,
+		.suppress_bind_attrs = true,
 	},
 };
 

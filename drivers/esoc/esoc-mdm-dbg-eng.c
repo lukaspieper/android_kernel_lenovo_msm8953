@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -152,7 +152,7 @@ static ssize_t cmd_mask_store(struct device_driver *drv, const char *buf,
 		pr_err("invalid command specified\n");
 	return count;
 }
-static DRIVER_ATTR(command_mask, S_IWUSR, NULL, cmd_mask_store);
+static DRIVER_ATTR(command_mask, 00200, NULL, cmd_mask_store);
 
 static ssize_t notifier_mask_store(struct device_driver *drv, const char *buf,
 							size_t count)
@@ -177,7 +177,7 @@ static ssize_t notifier_mask_store(struct device_driver *drv, const char *buf,
 		pr_err("invalid notifier specified\n");
 	return count;
 }
-static DRIVER_ATTR(notifier_mask, S_IWUSR, NULL, notifier_mask_store);
+static DRIVER_ATTR(notifier_mask, 00200, NULL, notifier_mask_store);
 
 #ifdef CONFIG_MDM_DBG_REQ_ENG
 static struct esoc_clink *dbg_clink;
@@ -246,7 +246,7 @@ static ssize_t req_eng_resp_store(struct device_driver *drv, const char *buf,
 							size_t count)
 {
 	unsigned int i;
-	const struct esoc_clink_ops const *clink_ops = dbg_clink->clink_ops;
+	const struct esoc_clink_ops *const clink_ops = dbg_clink->clink_ops;
 
 	dev_dbg(&dbg_clink->dev, "user input req eng response %s\n", buf);
 	for (i = 0; i < ARRAY_SIZE(in_to_resp); i++) {
@@ -263,13 +263,13 @@ static ssize_t req_eng_resp_store(struct device_driver *drv, const char *buf,
 	return count;
 }
 
-static DRIVER_ATTR(req_eng_resp, S_IWUSR, NULL, req_eng_resp_store);
+static DRIVER_ATTR(req_eng_resp, 0200, NULL, req_eng_resp_store);
 
 static ssize_t last_esoc_req_show(struct device_driver *drv, char *buf)
 {
 	unsigned int i;
 	unsigned long flags;
-	size_t count;
+	size_t count = 0;
 
 	spin_lock_irqsave(&req_lock, flags);
 	for (i = 0; i < ARRAY_SIZE(req_to_str); i++) {
@@ -282,7 +282,7 @@ static ssize_t last_esoc_req_show(struct device_driver *drv, char *buf)
 	spin_unlock_irqrestore(&req_lock, flags);
 	return count;
 }
-static DRIVER_ATTR(last_esoc_req, S_IRUSR, last_esoc_req_show, NULL);
+static DRIVER_ATTR(last_esoc_req, 0400, last_esoc_req_show, NULL);
 
 static void esoc_handle_req(enum esoc_req req, struct esoc_eng *eng)
 {
@@ -366,4 +366,4 @@ cmd_mask_err:
 	return ret;
 }
 EXPORT_SYMBOL(mdm_dbg_eng_init);
-MODULE_LICENSE("GPL V2");
+MODULE_LICENSE("GPL v2");

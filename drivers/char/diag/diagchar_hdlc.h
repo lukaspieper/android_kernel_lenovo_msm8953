@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2009, 2012-2014, The Linux Foundation.
+/* Copyright (c) 2008-2009, 2012-2014, 2016 The Linux Foundation.
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -27,8 +27,8 @@ struct diag_send_desc_type {
 	const void *pkt;
 	const void *last;	/* Address of last byte to send. */
 	enum diag_send_state_enum_type state;
-	unsigned char terminate;	/* True if this fragment
-					   terminates the packet */
+	/* True if this fragment terminates the packet */
+	unsigned char terminate;
 };
 
 struct diag_hdlc_dest_type {

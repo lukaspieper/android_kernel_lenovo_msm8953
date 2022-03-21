@@ -61,32 +61,6 @@
 			};
 		};
 
-		blsp1_uart5_active: blsp1_uart5_active {
-			mux {
-				pins = "gpio8", "gpio9", "gpio10", "gpio11";
-				function = "blsp_uart5";
-			};
-
-			config {
-				pins = "gpio8", "gpio9", "gpio10", "gpio11";
-				drive-strength = <2>;
-				bias-disable;
-			};
-		};
-
-		blsp1_uart5_sleep: blsp1_uart5_sleep {
-			mux {
-				pins = "gpio8", "gpio9", "gpio10", "gpio11";
-				function = "gpio";
-			};
-
-			config {
-				pins = "gpio8", "gpio9", "gpio10", "gpio11";
-				drive-strength = <2>;
-				bias-disable;
-			};
-		};
-
 		spi1 {
 
 			spi1_default: spi1_default {
@@ -261,7 +235,7 @@
 			};
 		};
 
-		sensor_int1_default: sensor_int1_default {
+		bmi160_int1_default: bmi160_int1_default {
 			mux {
 				pins = "gpio78";
 				function = "gpio";
@@ -273,7 +247,7 @@
 			};
 		};
 
-		sensor_int2_default: sensor_int2_default {
+		bmi160_int2_default: bmi160_int2_default {
 			mux {
 				pins = "gpio79";
 				function = "gpio";
@@ -1126,6 +1100,7 @@
 				output-low;
 			};
 		};
+
 		pinctrl_pps: ppsgrp {
 			mux {
 				pins = "gpio53";

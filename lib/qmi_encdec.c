@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, 2019 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, 2019 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -42,13 +42,11 @@
 	} \
 } while (0)
 
-#define QMI_ENCODE_LOG_MSG(buf, buf_len) do { \
-	qmi_encdec_dump("QMI_ENCODE_MSG", buf, buf_len); \
-} while (0)
+#define QMI_ENCODE_LOG_MSG(buf, buf_len) \
+	qmi_encdec_dump("QMI_ENCODE_MSG", buf, buf_len)
 
-#define QMI_DECODE_LOG_MSG(buf, buf_len) do { \
-	qmi_encdec_dump("QMI_DECODE_MSG", buf, buf_len); \
-} while (0)
+#define QMI_DECODE_LOG_MSG(buf, buf_len) \
+	qmi_encdec_dump("QMI_DECODE_MSG", buf, buf_len)
 
 #define QMI_ENCODE_LOG_ELEM(level, elem_len, elem_size, buf) do { \
 	pr_debug("QMI_ENCODE_ELEM lvl: %d, len: %d, size: %d\n", \
@@ -62,13 +60,11 @@
 	qmi_encdec_dump("QMI_DECODE_ELEM", buf, (elem_len * elem_size)); \
 } while (0)
 
-#define QMI_ENCODE_LOG_TLV(tlv_type, tlv_len) do { \
-	pr_debug("QMI_ENCODE_TLV type: %d, len: %d\n", tlv_type, tlv_len); \
-} while (0)
+#define QMI_ENCODE_LOG_TLV(tlv_type, tlv_len) \
+	pr_debug("QMI_ENCODE_TLV type: %d, len: %d\n", tlv_type, tlv_len)
 
-#define QMI_DECODE_LOG_TLV(tlv_type, tlv_len) do { \
-	pr_debug("QMI_DECODE_TLV type: %d, len: %d\n", tlv_type, tlv_len); \
-} while (0)
+#define QMI_DECODE_LOG_TLV(tlv_type, tlv_len) \
+	pr_debug("QMI_DECODE_TLV type: %d, len: %d\n", tlv_type, tlv_len)
 
 #else
 
@@ -305,7 +301,7 @@ static int qmi_encode_basic_elem(void *buf_dst, void *buf_src,
  * @out_buf_len: Available space in the encode buffer.
  * @enc_level: Depth of the nested structure from the main structure.
  *
- * @return: Mumber of bytes of encoded information, on success.
+ * @return: Number of bytes of encoded information, on success.
  *          < 0 on error.
  *
  * This function encodes the "elem_len" number of struct elements, each of
@@ -346,7 +342,7 @@ static int qmi_encode_struct_elem(struct elem_info *ei_array,
  * @out_buf_len: Available space in the encode buffer.
  * @enc_level: Depth of the string element from the main structure.
  *
- * @return: Mumber of bytes of encoded information, on success.
+ * @return: Number of bytes of encoded information, on success.
  *          < 0 on error.
  *
  * This function encodes a string element of maximum length "ei_array->elem_len"
@@ -744,6 +740,7 @@ static struct elem_info *find_ei(struct elem_info *ei_array,
 				   uint32_t type)
 {
 	struct elem_info *temp_ei = ei_array;
+
 	while (temp_ei->data_type != QMI_EOTI) {
 		if (temp_ei->tlv_type == (uint8_t)type)
 			return temp_ei;

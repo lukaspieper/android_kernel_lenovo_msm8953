@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,6 +13,11 @@
 
 #define pr_fmt(fmt) "seemp: %s: " fmt, __func__
 
+#include <linux/delay.h>
+#include <linux/kthread.h>
+#include <linux/seemp_instrumentation.h>
+#include <soc/qcom/scm.h>
+
 #include "seemp_logk.h"
 #include "seemp_ringbuf.h"
 
@@ -23,6 +28,10 @@
 #define MASK_BUFFER_SIZE 256
 #define FOUR_MB 4
 #define YEAR_BASE 1900
+
+#define EL2_SCM_ID 0x02001902
+#define KP_EL2_REPORT_REVISION 0x01000101
+#define INVALID_PID -1
 
 static struct seemp_logk_dev *slogk_dev;
 
@@ -49,11 +58,16 @@ static rwlock_t filter_lock;
 static struct seemp_source_mask *pmask;
 static unsigned int num_sources;
 
+static void *el2_shared_mem;
+static struct task_struct *rtic_thread;
+
 static long seemp_logk_reserve_rdblks(
 		struct seemp_logk_dev *sdev, unsigned long arg);
 static long seemp_logk_set_mask(unsigned long arg);
 static long seemp_logk_set_mapping(unsigned long arg);
 static long seemp_logk_check_filter(unsigned long arg);
+static pid_t seemp_logk_get_pid(struct task_struct *t);
+static int seemp_logk_rtic_thread(void *data);
 
 void* (*seemp_logk_kernel_begin)(char **buf);
 
@@ -76,6 +90,7 @@ void *seemp_logk_kernel_start_record(char **buf)
 	int ret;
 
 	DEFINE_WAIT(write_wait);
+
 	ret = 0;
 	idx = 0;
 	now = current_kernel_time();
@@ -167,6 +182,7 @@ static int seemp_logk_usr_record(const char __user *buf, size_t count)
 	int idx, ret;
 
 	DEFINE_WAIT(write_wait);
+
 	if (buf) {
 		local_blk = (struct seemp_logk_blk *)buf;
 		if (copy_from_user(&usr_blk.pid, &local_blk->pid,
@@ -184,6 +200,8 @@ static int seemp_logk_usr_record(const char __user *buf, size_t count)
 		if (copy_from_user(&usr_blk.payload, &local_blk->payload,
 					sizeof(struct blk_payload)) != 0)
 			return -EFAULT;
+	} else {
+		return -EFAULT;
 	}
 	idx = ret = 0;
 	now = current_kernel_time();
@@ -283,7 +301,12 @@ static bool seemp_logk_get_bit_from_vector(__u8 *pVec, __u32 index)
 {
 	unsigned int byte_num = index/8;
 	unsigned int bit_num = index%8;
-	unsigned char byte = pVec[byte_num];
+	unsigned char byte;
+
+	if (byte_num >= MASK_BUFFER_SIZE)
+		return false;
+
+	byte = pVec[byte_num];
 
 	return !(byte & (1 << bit_num));
 }
@@ -317,11 +340,11 @@ static long seemp_logk_ioctl(struct file *filp, unsigned int cmd,
 		if (copy_to_user((unsigned int *)arg, &sdev->blk_sz,
 				sizeof(unsigned int)))
 			return -EFAULT;
-	} else if (SEEMP_CMD_SET_MASK == cmd) {
+	} else if (cmd == SEEMP_CMD_SET_MASK) {
 		return seemp_logk_set_mask(arg);
-	} else if (SEEMP_CMD_SET_MAPPING == cmd) {
+	} else if (cmd == SEEMP_CMD_SET_MAPPING) {
 		return seemp_logk_set_mapping(arg);
-	} else if (SEEMP_CMD_CHECK_FILTER == cmd) {
+	} else if (cmd == SEEMP_CMD_CHECK_FILTER) {
 		return seemp_logk_check_filter(arg);
 	} else {
 		pr_err("Invalid Request %X\n", cmd);
@@ -337,6 +360,7 @@ static long seemp_logk_reserve_rdblks(
 	struct read_range rrange;
 
 	DEFINE_WAIT(read_wait);
+
 	mutex_lock(&sdev->lock);
 	if (sdev->num_writers > 0 || sdev->num_read_avail_blks <= 0) {
 		ret = -EPERM;
@@ -398,13 +422,13 @@ static long seemp_logk_set_mask(unsigned long arg)
 		return -EFAULT;
 
 	read_lock(&filter_lock);
-	if (0 == num_sources) {
+	if (num_sources == 0) {
 		read_unlock(&filter_lock);
 		return -EINVAL;
 	}
 
 	if (num_elements == 0 ||
-		MASK_BUFFER_SIZE < DIV_ROUND_UP(num_sources, 8)) {
+		DIV_ROUND_UP(num_sources, 8) > MASK_BUFFER_SIZE) {
 		read_unlock(&filter_lock);
 		return -EINVAL;
 	}
@@ -442,12 +466,12 @@ static long seemp_logk_set_mapping(unsigned long arg)
 					(__u32 __user *)arg, sizeof(__u32)))
 		return -EFAULT;
 
-	if ((0 == num_elements) || (num_elements >
+	if ((num_elements == 0) || (num_elements >
 		(UINT_MAX / sizeof(struct seemp_source_mask))))
 		return -EFAULT;
 
 	write_lock(&filter_lock);
-	if (NULL != pmask) {
+	if (pmask != NULL) {
 		/*
 		 * Mask is getting set again.
 		 * seemp_core was probably restarted.
@@ -462,7 +486,7 @@ static long seemp_logk_set_mapping(unsigned long arg)
 	write_unlock(&filter_lock);
 	pbuffer = kmalloc(sizeof(struct seemp_source_mask)
 				* num_elements, GFP_KERNEL);
-	if (NULL == pbuffer)
+	if (pbuffer == NULL)
 		return -ENOMEM;
 
 	/*
@@ -561,6 +585,15 @@ static int seemp_logk_mmap(struct file *filp,
 		}
 	}
 
+	if (!rtic_thread && el2_shared_mem) {
+		rtic_thread = kthread_run(seemp_logk_rtic_thread,
+				NULL, "seemp_logk_rtic_thread");
+		if (IS_ERR(rtic_thread)) {
+			pr_err("rtic_thread creation failed");
+			rtic_thread = NULL;
+		}
+	}
+
 	return 0;
 }
 
@@ -572,10 +605,85 @@ static const struct file_operations seemp_logk_fops = {
 	.mmap = seemp_logk_mmap,
 };
 
+static pid_t seemp_logk_get_pid(struct task_struct *t)
+{
+	struct task_struct *task;
+	pid_t pid;
+
+	if (t == NULL)
+		return INVALID_PID;
+
+	rcu_read_lock();
+	for_each_process(task) {
+		if (task == t) {
+			pid = task->pid;
+			rcu_read_unlock();
+			return pid;
+		}
+	}
+	rcu_read_unlock();
+	return INVALID_PID;
+}
+
+static int seemp_logk_rtic_thread(void *data)
+{
+	struct el2_report_header_t *header;
+	__u64 last_sequence_number = 0;
+	int last_pos = -1;
+	int i;
+	int num_entries = (PAGE_SIZE - sizeof(struct el2_report_header_t))
+		/ sizeof(struct el2_report_data_t);
+	header = (struct el2_report_header_t *) el2_shared_mem;
+
+	if (header->report_version < KP_EL2_REPORT_REVISION)
+		return -EINVAL;
+
+	while (!kthread_should_stop()) {
+		for (i = 1; i < num_entries + 1; i++) {
+			struct el2_report_data_t *report;
+			int cur_pos = last_pos + i;
+
+			if (cur_pos >= num_entries)
+				cur_pos -= num_entries;
+
+			report = el2_shared_mem +
+				sizeof(struct el2_report_header_t) +
+				cur_pos * sizeof(struct el2_report_data_t);
+
+			/* determine legitimacy of report */
+			if (report->report_valid &&
+				(last_sequence_number == 0
+					|| report->sequence_number >
+						last_sequence_number)) {
+				seemp_logk_rtic(report->report_type,
+					seemp_logk_get_pid(
+						(struct task_struct *)
+						report->actor),
+					/* leave this empty until
+					 * asset id is provided
+					 */
+					"",
+					report->asset_category,
+					report->response);
+				last_sequence_number = report->sequence_number;
+			} else {
+				last_pos = cur_pos - 1;
+				break;
+			}
+		}
+
+		/* periodically check el2 report every second */
+		ssleep(1);
+	}
+
+	return 0;
+}
+
 __init int seemp_logk_init(void)
 {
 	int ret;
 	int devno = 0;
+	struct scm_desc desc = {0};
 
 	num_sources = 0;
 	kmalloc_flag = 0;
@@ -642,6 +750,21 @@ __init int seemp_logk_init(void)
 	init_waitqueue_head(&slogk_dev->readers_wq);
 	init_waitqueue_head(&slogk_dev->writers_wq);
 	rwlock_init(&filter_lock);
+
+	el2_shared_mem = (void *) __get_free_page(GFP_KERNEL);
+	if (el2_shared_mem) {
+		desc.arginfo = SCM_ARGS(2, SCM_RW, SCM_VAL);
+		desc.args[0] = (uint64_t) virt_to_phys(el2_shared_mem);
+		desc.args[1] = PAGE_SIZE;
+		ret = scm_call2(EL2_SCM_ID, &desc);
+		if (ret || desc.ret[0] || desc.ret[1]) {
+			pr_err("SCM call failed with ret val = %d %d %d\n",
+				ret, (int)desc.ret[0], (int)desc.ret[1]);
+			free_page((unsigned long) el2_shared_mem);
+			el2_shared_mem = NULL;
+		}
+	}
+
 	return 0;
 class_destroy_fail:
 	class_destroy(cl);
@@ -658,6 +781,11 @@ __exit void seemp_logk_cleanup(void)
 {
 	dev_t devno = MKDEV(slogk_dev->major, slogk_dev->minor);
 
+	if (rtic_thread) {
+		kthread_stop(rtic_thread);
+		rtic_thread = NULL;
+	}
+
 	seemp_logk_detach();
 
 	cdev_del(&slogk_dev->cdev);
@@ -666,7 +794,7 @@ __exit void seemp_logk_cleanup(void)
 	ringbuf_cleanup(slogk_dev);
 	kfree(slogk_dev);
 
-	if (NULL != pmask) {
+	if (pmask != NULL) {
 		kfree(pmask);
 		pmask = NULL;
 	}

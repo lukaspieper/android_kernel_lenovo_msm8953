@@ -13,7 +13,6 @@
 #include <linux/delay.h>
 
 #include "do_mounts.h"
-#include "../drivers/md/dm.h"
 
 #define DM_MAX_DEVICES 256
 #define DM_MAX_TARGETS 256
@@ -350,7 +349,7 @@ static void __init dm_setup_drives(void)
 	struct dm_table *table = NULL;
 	struct dm_setup_target *target;
 	struct dm_device *dev;
-	char *uuid;
+	char *uuid = NULL;
 	fmode_t fmode = FMODE_READ;
 	struct dm_device *devices;
 
@@ -407,7 +406,7 @@ static void __init dm_setup_drives(void)
 		dm_set_md_type(md, dm_table_get_type(table));
 
 		/* Setup md->queue to reflect md's type. */
-		if (dm_setup_md_queue(md)) {
+		if (dm_setup_md_queue(md, table)) {
 			DMWARN("unable to set up device queue for new table.");
 			goto setup_md_queue_fail;
 		}
@@ -429,11 +428,8 @@ static void __init dm_setup_drives(void)
 		}
 
 		/* Export the dm device via the ioctl interface */
-		if (!strcmp(DM_NO_UUID, dev->uuid)){
+		if (!strcmp(DM_NO_UUID, dev->uuid))
 			uuid = NULL;
-                } else {
-                        uuid = dev->uuid;
-                }
 		if (dm_ioctl_export(md, dev->name, uuid)) {
 			DMDEBUG("failed to export device with given"
 				" name and uuid");

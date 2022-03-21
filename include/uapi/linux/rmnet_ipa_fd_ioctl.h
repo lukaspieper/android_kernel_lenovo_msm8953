@@ -32,13 +32,14 @@
 #define WAN_IOCTL_RESET_TETHER_STATS     7
 #define WAN_IOCTL_QUERY_DL_FILTER_STATS  8
 #define WAN_IOCTL_ADD_FLT_RULE_EX        9
-#define WAN_IOCTL_ADD_UL_FLT_RULE          10
-#define WAN_IOCTL_ENABLE_PER_CLIENT_STATS    11
-#define WAN_IOCTL_QUERY_PER_CLIENT_STATS     12
-#define WAN_IOCTL_SET_LAN_CLIENT_INFO        13
-#define WAN_IOCTL_CLEAR_LAN_CLIENT_INFO      14
-#define WAN_IOCTL_SEND_LAN_CLIENT_MSG        15
-#define WAN_IOCTL_QUERY_TETHER_STATS_ALL  16
+#define WAN_IOCTL_QUERY_TETHER_STATS_ALL  10
+#define WAN_IOCTL_NOTIFY_WAN_STATE  11
+#define WAN_IOCTL_ADD_UL_FLT_RULE          12
+#define WAN_IOCTL_ENABLE_PER_CLIENT_STATS    13
+#define WAN_IOCTL_QUERY_PER_CLIENT_STATS     14
+#define WAN_IOCTL_SET_LAN_CLIENT_INFO        15
+#define WAN_IOCTL_CLEAR_LAN_CLIENT_INFO      16
+#define WAN_IOCTL_SEND_LAN_CLIENT_MSG        17
 
 /* User space may not have this defined. */
 #ifndef IFNAMSIZ
@@ -89,16 +90,6 @@ struct wan_ioctl_set_tether_client_pipe {
 	uint32_t dl_dst_pipe_list[QMI_IPA_MAX_PIPES_V01];
 };
 
-struct wan_ioctl_query_tether_stats_all {
-	/* Name of the upstream interface */
-	char upstreamIface[IFNAMSIZ];
-	/* enum of tether interface */
-	enum ipacm_client_enum ipa_client;
-	uint8_t reset_stats;
-	uint64_t tx_bytes;
-	uint64_t rx_bytes;
-};
-
 struct wan_ioctl_query_tether_stats {
 	/* Name of the upstream interface */
 	char upstreamIface[IFNAMSIZ];
@@ -114,6 +105,16 @@ struct wan_ioctl_query_tether_stats {
 	uint64_t ipv6_tx_bytes;
 	uint64_t ipv6_rx_packets;
 	uint64_t ipv6_rx_bytes;
+};
+
+struct wan_ioctl_query_tether_stats_all {
+	/* Name of the upstream interface */
+	char upstreamIface[IFNAMSIZ];
+	/* enum of tether interface */
+	enum ipacm_client_enum ipa_client;
+	uint8_t reset_stats;
+	uint64_t tx_bytes;
+	uint64_t rx_bytes;
 };
 
 struct wan_ioctl_reset_tether_stats {
@@ -132,6 +133,9 @@ struct wan_ioctl_query_dl_filter_stats {
 	uint32_t index;
 };
 
+struct wan_ioctl_notify_wan_state {
+	uint8_t up;
+};
 struct wan_ioctl_send_lan_client_msg {
 	/* Lan client info. */
 	struct ipa_lan_client_msg lan_client;
@@ -223,6 +227,14 @@ struct wan_ioctl_query_per_client_stats {
 		WAN_IOCTL_ADD_FLT_RULE_EX, \
 		struct ipa_install_fltr_rule_req_ex_msg_v01 *)
 
+#define WAN_IOC_QUERY_TETHER_STATS_ALL _IOWR(WAN_IOC_MAGIC, \
+		WAN_IOCTL_QUERY_TETHER_STATS_ALL, \
+		struct wan_ioctl_query_tether_stats_all *)
+
+#define WAN_IOC_NOTIFY_WAN_STATE _IOWR(WAN_IOC_MAGIC, \
+		WAN_IOCTL_NOTIFY_WAN_STATE, \
+		struct wan_ioctl_notify_wan_state *)
+
 #define WAN_IOC_ADD_UL_FLT_RULE _IOWR(WAN_IOC_MAGIC, \
 		WAN_IOCTL_ADD_UL_FLT_RULE, \
 		struct ipa_configure_ul_firewall_rules_req_msg_v01 *)
@@ -246,8 +258,4 @@ struct wan_ioctl_query_per_client_stats {
 #define WAN_IOC_CLEAR_LAN_CLIENT_INFO _IOWR(WAN_IOC_MAGIC, \
 			WAN_IOCTL_CLEAR_LAN_CLIENT_INFO, \
 			struct wan_ioctl_lan_client_info *)
-
-#define WAN_IOC_QUERY_TETHER_STATS_ALL _IOWR(WAN_IOC_MAGIC, \
-		WAN_IOCTL_QUERY_TETHER_STATS_ALL, \
-		struct wan_ioctl_query_tether_stats_all *)
 #endif /* _RMNET_IPA_FD_IOCTL_H */

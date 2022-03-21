@@ -3,8 +3,8 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 
-#define MSM_HDMI_RGB_888_24BPP_FORMAT       BIT(0)
-#define MSM_HDMI_YUV_420_12BPP_FORMAT       BIT(1)
+#define MSM_HDMI_RGB_888_24BPP_FORMAT       (1 << 0)
+#define MSM_HDMI_YUV_420_12BPP_FORMAT       (1 << 1)
 
 enum aspect_ratio {
 	HDMI_RES_AR_INVALID,

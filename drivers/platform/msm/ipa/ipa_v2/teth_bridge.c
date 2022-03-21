@@ -169,7 +169,7 @@ static long teth_bridge_ioctl(struct file *filp,
 			      unsigned int cmd,
 			      unsigned long arg)
 {
-	IPAERR("No ioctls are supported for krypton !\n");
+	IPAERR("No ioctls are supported !\n");
 	return -ENOIOCTLCMD;
 }
 

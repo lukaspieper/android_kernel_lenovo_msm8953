@@ -583,7 +583,7 @@ static int snd_msnd_attach(struct snd_card *card)
 	if (err < 0)
 		goto err_release_region;
 
-	err = snd_msnd_pcm(card, 0, NULL);
+	err = snd_msnd_pcm(card, 0);
 	if (err < 0) {
 		printk(KERN_ERR LOGNAME ": error creating new PCM device\n");
 		goto err_release_region;
@@ -628,8 +628,7 @@ static int snd_msnd_attach(struct snd_card *card)
 	return 0;
 
 err_release_region:
-	if (chip->mappedbase)
-		iounmap(chip->mappedbase);
+	iounmap(chip->mappedbase);
 	release_mem_region(chip->base, BUFFSIZE);
 	release_region(chip->io, DSP_NUMIO);
 	free_irq(chip->irq, chip);

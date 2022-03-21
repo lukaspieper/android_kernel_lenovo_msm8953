@@ -13,6 +13,7 @@
 #ifndef __LINUX_POWER_SUPPLY_H__
 #define __LINUX_POWER_SUPPLY_H__
 
+#include <linux/device.h>
 #include <linux/workqueue.h>
 #include <linux/leds.h>
 #include <linux/spinlock.h>
@@ -102,12 +103,9 @@ enum {
 	POWER_SUPPLY_DP_DM_HVDCP3_SUPPORTED = 10,
 	POWER_SUPPLY_DP_DM_ICL_DOWN = 11,
 	POWER_SUPPLY_DP_DM_ICL_UP = 12,
-};
-
-enum {
-	POWER_SUPPLY_PARALLEL_NONE,
-	POWER_SUPPLY_PARALLEL_USBIN_USBIN,
-	POWER_SUPPLY_PARALLEL_MID_MID,
+	POWER_SUPPLY_DP_DM_FORCE_5V = 13,
+	POWER_SUPPLY_DP_DM_FORCE_9V = 14,
+	POWER_SUPPLY_DP_DM_FORCE_12V = 15,
 };
 
 enum {
@@ -115,6 +113,28 @@ enum {
 	POWER_SUPPLY_PL_USBIN_USBIN,
 	POWER_SUPPLY_PL_USBIN_USBIN_EXT,
 	POWER_SUPPLY_PL_USBMID_USBMID,
+};
+
+enum {
+	POWER_SUPPLY_CONNECTOR_TYPEC,
+	POWER_SUPPLY_CONNECTOR_MICRO_USB,
+};
+
+enum {
+	POWER_SUPPLY_PL_STACKED_BATFET,
+	POWER_SUPPLY_PL_NON_STACKED_BATFET,
+};
+
+enum {
+	POWER_SUPPLY_PD_INACTIVE = 0,
+	POWER_SUPPLY_PD_ACTIVE,
+	POWER_SUPPLY_PD_PPS_ACTIVE,
+};
+
+enum {
+	POWER_SUPPLY_QC_CTM_DISABLE = BIT(0),
+	POWER_SUPPLY_QC_THERMAL_BALANCE_DISABLE = BIT(1),
+	POWER_SUPPLY_QC_INOV_THERMAL_DISABLE = BIT(2),
 };
 
 enum power_supply_property {
@@ -187,7 +207,6 @@ enum power_supply_property {
 	/* Local extensions */
 	POWER_SUPPLY_PROP_USB_HC,
 	POWER_SUPPLY_PROP_USB_OTG,
-	POWER_SUPPLY_PROP_CHARGE_ENABLED,
 	POWER_SUPPLY_PROP_BATTERY_CHARGING_ENABLED,
 	POWER_SUPPLY_PROP_CHARGING_ENABLED,
 	POWER_SUPPLY_PROP_STEP_CHARGING_ENABLED,
@@ -205,6 +224,8 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_LOW_POWER,
 	POWER_SUPPLY_PROP_COOL_TEMP,
 	POWER_SUPPLY_PROP_WARM_TEMP,
+	POWER_SUPPLY_PROP_COLD_TEMP,
+	POWER_SUPPLY_PROP_HOT_TEMP,
 	POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL,
 	POWER_SUPPLY_PROP_RESISTANCE,
 	POWER_SUPPLY_PROP_RESISTANCE_CAPACITIVE,
@@ -231,18 +252,7 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_SAFETY_TIMER_EXPIRED,
 	POWER_SUPPLY_PROP_RESTRICTED_CHARGING,
 	POWER_SUPPLY_PROP_CURRENT_CAPABILITY,
-#ifdef CONFIG_MACH_LENOVO_TBX704
-	POWER_SUPPLY_PROP_TYPEC_ORIENTATION,
-#endif
 	POWER_SUPPLY_PROP_TYPEC_MODE,
-	POWER_SUPPLY_PROP_ALLOW_HVDCP3,
-	POWER_SUPPLY_PROP_MAX_PULSE_ALLOWED,
-	POWER_SUPPLY_PROP_ENABLE_AICL,
-	POWER_SUPPLY_PROP_SOC_REPORTING_READY,
-	POWER_SUPPLY_PROP_IGNORE_FALSE_NEGATIVE_ISENSE,
-	POWER_SUPPLY_PROP_ENABLE_JEITA_DETECTION,
-	POWER_SUPPLY_PROP_BATTERY_INFO,
-	POWER_SUPPLY_PROP_BATTERY_INFO_ID,
 	POWER_SUPPLY_PROP_TYPEC_CC_ORIENTATION, /* 0: N/C, 1: CC1, 2: CC2 */
 	POWER_SUPPLY_PROP_TYPEC_POWER_ROLE,
 	POWER_SUPPLY_PROP_PD_ALLOWED,
@@ -255,15 +265,47 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_PARALLEL_DISABLE,
 	POWER_SUPPLY_PROP_PE_START,
 	POWER_SUPPLY_PROP_SET_SHIP_MODE,
+	POWER_SUPPLY_PROP_SOC_REPORTING_READY,
 	POWER_SUPPLY_PROP_DEBUG_BATTERY,
 	POWER_SUPPLY_PROP_FCC_DELTA,
 	POWER_SUPPLY_PROP_ICL_REDUCTION,
 	POWER_SUPPLY_PROP_PARALLEL_MODE,
-	POWER_SUPPLY_PROP_CTM_CURRENT_MAX,
 	POWER_SUPPLY_PROP_DIE_HEALTH,
 	POWER_SUPPLY_PROP_CONNECTOR_HEALTH,
+	POWER_SUPPLY_PROP_CTM_CURRENT_MAX,
 	POWER_SUPPLY_PROP_HW_CURRENT_MAX,
 	POWER_SUPPLY_PROP_REAL_TYPE,
+	POWER_SUPPLY_PROP_PR_SWAP,
+	POWER_SUPPLY_PROP_CC_STEP,
+	POWER_SUPPLY_PROP_CC_STEP_SEL,
+	POWER_SUPPLY_PROP_SW_JEITA_ENABLED,
+	POWER_SUPPLY_PROP_PD_VOLTAGE_MAX,
+	POWER_SUPPLY_PROP_PD_VOLTAGE_MIN,
+	POWER_SUPPLY_PROP_SDP_CURRENT_MAX,
+	POWER_SUPPLY_PROP_CONNECTOR_TYPE,
+	POWER_SUPPLY_PROP_PARALLEL_BATFET_MODE,
+	POWER_SUPPLY_PROP_PARALLEL_FCC_MAX,
+	POWER_SUPPLY_PROP_MIN_ICL,
+	POWER_SUPPLY_PROP_MOISTURE_DETECTED,
+	POWER_SUPPLY_PROP_BATT_PROFILE_VERSION,
+	POWER_SUPPLY_PROP_BATT_FULL_CURRENT,
+	POWER_SUPPLY_PROP_RECHARGE_SOC,
+	POWER_SUPPLY_PROP_TOGGLE_STAT,
+	POWER_SUPPLY_PROP_ALLOW_HVDCP3,
+	POWER_SUPPLY_PROP_HVDCP_OPTI_ALLOWED,
+	POWER_SUPPLY_PROP_MAX_PULSE_ALLOWED,
+	POWER_SUPPLY_PROP_IGNORE_FALSE_NEGATIVE_ISENSE,
+	POWER_SUPPLY_PROP_BATTERY_INFO,
+	POWER_SUPPLY_PROP_BATTERY_INFO_ID,
+	POWER_SUPPLY_PROP_ENABLE_JEITA_DETECTION,
+	POWER_SUPPLY_PROP_ESR_ACTUAL,
+	POWER_SUPPLY_PROP_ESR_NOMINAL,
+	POWER_SUPPLY_PROP_SOH,
+	POWER_SUPPLY_PROP_QC_OPTI_DISABLE,
+	POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE,
+	POWER_SUPPLY_PROP_CC_SOC,
+	POWER_SUPPLY_PROP_QG_VBMS_MODE,
+	POWER_SUPPLY_PROP_REAL_CAPACITY,
 	/* Local extensions of type int64_t */
 	POWER_SUPPLY_PROP_CHARGE_COUNTER_EXT,
 	/* Properties of type `const char *' */
@@ -271,6 +313,7 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_MANUFACTURER,
 	POWER_SUPPLY_PROP_SERIAL_NUMBER,
 	POWER_SUPPLY_PROP_BATTERY_TYPE,
+	POWER_SUPPLY_PROP_CYCLE_COUNTS,
 };
 
 enum power_supply_type {
@@ -284,7 +327,7 @@ enum power_supply_type {
 	POWER_SUPPLY_TYPE_USB_ACA,	/* Accessory Charger Adapters */
 	POWER_SUPPLY_TYPE_USB_HVDCP,	/* High Voltage DCP */
 	POWER_SUPPLY_TYPE_USB_HVDCP_3,	/* Efficient High Voltage DCP */
-	POWER_SUPPLY_TYPE_USB_PD,	/* Power Delivery */
+	POWER_SUPPLY_TYPE_USB_PD,       /* Power Delivery */
 	POWER_SUPPLY_TYPE_WIRELESS,	/* Accessory Charger Adapters */
 	POWER_SUPPLY_TYPE_USB_FLOAT,	/* Floating charger */
 	POWER_SUPPLY_TYPE_BMS,		/* Battery Monitor System */
@@ -294,9 +337,6 @@ enum power_supply_type {
 	POWER_SUPPLY_TYPE_TYPEC,	/* Type-C */
 	POWER_SUPPLY_TYPE_UFP,		/* Type-C UFP */
 	POWER_SUPPLY_TYPE_DFP,		/* TYpe-C DFP */
-#if defined(CONFIG_TUSB422) || defined(CONFIG_USB_FUSB302)
-	POWER_SUPPLY_TYPE_T_HUB,
-#endif
 };
 
 /* Indicates USB Type-C CC connection status */
@@ -334,21 +374,25 @@ union power_supply_propval {
 	int64_t int64val;
 };
 
-struct device;
 struct device_node;
+struct power_supply;
 
-struct power_supply {
+/* Run-time specific power supply configuration */
+struct power_supply_config {
+	struct device_node *of_node;
+	/* Driver private data */
+	void *drv_data;
+
+	char **supplied_to;
+	size_t num_supplicants;
+};
+
+/* Description of power supply */
+struct power_supply_desc {
 	const char *name;
 	enum power_supply_type type;
 	enum power_supply_property *properties;
 	size_t num_properties;
-
-	char **supplied_to;
-	size_t num_supplicants;
-
-	char **supplied_from;
-	size_t num_supplies;
-	struct device_node *of_node;
 
 	/*
 	 * Functions for drivers implementing power supply class.
@@ -362,6 +406,11 @@ struct power_supply {
 	int (*set_property)(struct power_supply *psy,
 			    enum power_supply_property psp,
 			    const union power_supply_propval *val);
+	/*
+	 * property_is_writeable() will be called during registration
+	 * of power supply. If this happens during device probe then it must
+	 * not access internal data of device (because probe did not end).
+	 */
 	int (*property_is_writeable)(struct power_supply *psy,
 				     enum power_supply_property psp);
 	void (*external_power_changed)(struct power_supply *psy);
@@ -375,15 +424,29 @@ struct power_supply {
 	bool no_thermal;
 	/* For APM emulation, think legacy userspace. */
 	int use_for_apm;
+};
+
+struct power_supply {
+	const struct power_supply_desc *desc;
+
+	char **supplied_to;
+	size_t num_supplicants;
+
+	char **supplied_from;
+	size_t num_supplies;
+	struct device_node *of_node;
 
 	/* Driver private data */
 	void *drv_data;
 
 	/* private */
-	struct device *dev;
+	struct device dev;
 	struct work_struct changed_work;
+	struct delayed_work deferred_register_work;
 	spinlock_t changed_lock;
 	bool changed;
+	bool initialized;
+	bool removing;
 	atomic_t use_cnt;
 #ifdef CONFIG_THERMAL
 	struct thermal_zone_device *tzd;
@@ -427,12 +490,18 @@ extern struct atomic_notifier_head power_supply_notifier;
 extern int power_supply_reg_notifier(struct notifier_block *nb);
 extern void power_supply_unreg_notifier(struct notifier_block *nb);
 extern struct power_supply *power_supply_get_by_name(const char *name);
+extern void power_supply_put(struct power_supply *psy);
 #ifdef CONFIG_OF
 extern struct power_supply *power_supply_get_by_phandle(struct device_node *np,
 							const char *property);
+extern struct power_supply *devm_power_supply_get_by_phandle(
+				    struct device *dev, const char *property);
 #else /* !CONFIG_OF */
 static inline struct power_supply *
 power_supply_get_by_phandle(struct device_node *np, const char *property)
+{ return NULL; }
+static inline struct power_supply *
+devm_power_supply_get_by_phandle(struct device *dev, const char *property)
 { return NULL; }
 #endif /* CONFIG_OF */
 extern void power_supply_changed(struct power_supply *psy);
@@ -442,7 +511,7 @@ extern int power_supply_set_battery_charged(struct power_supply *psy);
 #ifdef CONFIG_POWER_SUPPLY
 extern int power_supply_is_system_supplied(void);
 #else
-static inline int power_supply_is_system_supplied(void) { return -ENOSYS; }
+static inline int power_supply_is_system_supplied(void) { return -EIO; }
 #endif
 
 extern int power_supply_get_property(struct power_supply *psy,
@@ -454,30 +523,26 @@ extern int power_supply_set_property(struct power_supply *psy,
 extern int power_supply_property_is_writeable(struct power_supply *psy,
 					enum power_supply_property psp);
 extern void power_supply_external_power_changed(struct power_supply *psy);
-extern int power_supply_register(struct device *parent,
-				 struct power_supply *psy);
-extern int power_supply_register_no_ws(struct device *parent,
-				 struct power_supply *psy);
+
+extern struct power_supply *__must_check
+power_supply_register(struct device *parent,
+				 const struct power_supply_desc *desc,
+				 const struct power_supply_config *cfg);
+extern struct power_supply *__must_check
+power_supply_register_no_ws(struct device *parent,
+				 const struct power_supply_desc *desc,
+				 const struct power_supply_config *cfg);
+extern struct power_supply *__must_check
+devm_power_supply_register(struct device *parent,
+				 const struct power_supply_desc *desc,
+				 const struct power_supply_config *cfg);
+extern struct power_supply *__must_check
+devm_power_supply_register_no_ws(struct device *parent,
+				 const struct power_supply_desc *desc,
+				 const struct power_supply_config *cfg);
 extern void power_supply_unregister(struct power_supply *psy);
 extern int power_supply_powers(struct power_supply *psy, struct device *dev);
-extern int power_supply_set_online(struct power_supply *psy, bool enable);
-extern int power_supply_set_current_limit(struct power_supply *psy, int limit);
-extern int power_supply_set_voltage_limit(struct power_supply *psy, int limit);
-extern int power_supply_set_online(struct power_supply *psy, bool enable);
-extern int power_supply_set_health_state(struct power_supply *psy, int health);
-extern int power_supply_set_present(struct power_supply *psy, bool enable);
-extern int power_supply_set_scope(struct power_supply *psy, int scope);
-extern int power_supply_set_usb_otg(struct power_supply *psy, int otg);
-extern int power_supply_set_charge_type(struct power_supply *psy, int type);
-extern int power_supply_set_supply_type(struct power_supply *psy,
-					enum power_supply_type supply_type);
-extern int power_supply_set_hi_power_state(struct power_supply *psy, int value);
-extern int power_supply_set_low_power_state(struct power_supply *psy,
-							int value);
-extern int power_supply_set_dp_dm(struct power_supply *psy,
-							int value);
-extern int power_supply_is_system_supplied(void);
-extern int power_supply_set_scope(struct power_supply *psy, int scope);
+
 extern void *power_supply_get_drvdata(struct power_supply *psy);
 /* For APM emulation, think legacy userspace. */
 extern struct class *power_supply_class;

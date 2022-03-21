@@ -1,5 +1,4 @@
-/*
- * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,7 +11,6 @@
  *
  *
  * RMNET Data virtual network driver
- *
  */
 
 #include <linux/types.h>
@@ -48,15 +46,15 @@ struct net_device *rmnet_devices[RMNET_DATA_MAX_VND];
 
 struct rmnet_map_flow_mapping_s {
 	struct list_head list;
-	uint32_t map_flow_id;
-	uint32_t tc_flow_valid[RMNET_MAP_FLOW_NUM_TC_HANDLE];
-	uint32_t tc_flow_id[RMNET_MAP_FLOW_NUM_TC_HANDLE];
+	u32 map_flow_id;
+	u32 tc_flow_valid[RMNET_MAP_FLOW_NUM_TC_HANDLE];
+	u32 tc_flow_id[RMNET_MAP_FLOW_NUM_TC_HANDLE];
 	atomic_t v4_seq;
 	atomic_t v6_seq;
 };
 
 struct rmnet_vnd_private_s {
-	uint32_t qos_version;
+	u32 qos_version;
 	struct rmnet_logical_ep_conf_s local_ep;
 
 	rwlock_t flow_map_lock;
@@ -68,10 +66,9 @@ struct rmnet_vnd_private_s {
 #define RMNET_VND_FC_NOT_ENABLED 1
 #define RMNET_VND_FC_KMALLOC_ERR 2
 
-/* ***************** Helper Functions *************************************** */
+/* Helper Functions */
 
-/**
- * rmnet_vnd_add_qos_header() - Adds QoS header to front of skb->data
+/* rmnet_vnd_add_qos_header() - Adds QoS header to front of skb->data
  * @skb:        Socket buffer ("packet") to modify
  * @dev:        Egress interface
  *
@@ -104,60 +101,9 @@ static void rmnet_vnd_add_qos_header(struct sk_buff *skb,
 	}
 }
 
-/* ***************** RX/TX Fixup ******************************************** */
+/* Network Device Operations */
 
-/**
- * rmnet_vnd_rx_fixup() - Virtual Network Device receive fixup hook
- * @skb:        Socket buffer ("packet") to modify
- * @dev:        Virtual network device
- *
- * Additional VND specific packet processing for ingress packets
- *
- * Return:
- *      - RX_HANDLER_PASS if packet should continue to process in stack
- *      - RX_HANDLER_CONSUMED if packet should not be processed in stack
- *
- */
-int rmnet_vnd_rx_fixup(struct sk_buff *skb, struct net_device *dev)
-{
-	if (unlikely(!dev || !skb))
-		BUG();
-
-	dev->stats.rx_packets++;
-	dev->stats.rx_bytes += skb->len;
-
-	return RX_HANDLER_PASS;
-}
-
-/**
- * rmnet_vnd_tx_fixup() - Virtual Network Device transmic fixup hook
- * @skb:      Socket buffer ("packet") to modify
- * @dev:      Virtual network device
- *
- * Additional VND specific packet processing for egress packets
- *
- * Return:
- *      - RX_HANDLER_PASS if packet should continue to be transmitted
- *      - RX_HANDLER_CONSUMED if packet should not be transmitted by stack
- */
-int rmnet_vnd_tx_fixup(struct sk_buff *skb, struct net_device *dev)
-{
-	struct rmnet_vnd_private_s *dev_conf;
-	dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
-
-	if (unlikely(!dev || !skb))
-		BUG();
-
-	dev->stats.tx_packets++;
-	dev->stats.tx_bytes += skb->len;
-
-	return RX_HANDLER_PASS;
-}
-
-/* ***************** Network Device Operations ****************************** */
-
-/**
- * rmnet_vnd_start_xmit() - Transmit NDO callback
+/* rmnet_vnd_start_xmit() - Transmit NDO callback
  * @skb:        Socket buffer ("packet") being sent from network stack
  * @dev:        Virtual Network Device
  *
@@ -172,14 +118,16 @@ static netdev_tx_t rmnet_vnd_start_xmit(struct sk_buff *skb,
 					struct net_device *dev)
 {
 	struct rmnet_vnd_private_s *dev_conf;
+
 	trace_rmnet_vnd_start_xmit(skb);
-	dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
+	dev_conf = (struct rmnet_vnd_private_s *)netdev_priv(dev);
 	if (dev_conf->local_ep.egress_dev) {
 		/* QoS header should come after MAP header */
 		if (dev_conf->qos_version)
 			rmnet_vnd_add_qos_header(skb,
 						 dev,
 						 dev_conf->qos_version);
+		skb_orphan(skb);
 		rmnet_egress_handler(skb, &dev_conf->local_ep);
 	} else {
 		dev->stats.tx_dropped++;
@@ -188,8 +136,7 @@ static netdev_tx_t rmnet_vnd_start_xmit(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 }
 
-/**
- * rmnet_vnd_change_mtu() - Change MTU NDO callback
+/* rmnet_vnd_change_mtu() - Change MTU NDO callback
  * @dev:         Virtual network device
  * @new_mtu:     New MTU value to set (in bytes)
  *
@@ -218,18 +165,22 @@ static int _rmnet_vnd_do_qos_ioctl(struct net_device *dev,
 	struct rmnet_vnd_private_s *dev_conf;
 	int rc, qdisc_len = 0;
 	struct rmnet_ioctl_data_s ioctl_data;
+
 	rc = 0;
-	dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
+	dev_conf = (struct rmnet_vnd_private_s *)netdev_priv(dev);
 
 	switch (cmd) {
-
 	case RMNET_IOCTL_SET_QOS_ENABLE:
+		if (!capable(CAP_NET_ADMIN))
+			return -EPERM;
 		LOGM("RMNET_IOCTL_SET_QOS_ENABLE on %s", dev->name);
 		if (!dev_conf->qos_version)
 			dev_conf->qos_version = RMNET_IOCTL_QOS_MODE_6;
 		break;
 
 	case RMNET_IOCTL_SET_QOS_DISABLE:
+		if (!capable(CAP_NET_ADMIN))
+			return -EPERM;
 		LOGM("RMNET_IOCTL_SET_QOS_DISABLE on %s", dev->name);
 		dev_conf->qos_version = 0;
 		break;
@@ -239,14 +190,16 @@ static int _rmnet_vnd_do_qos_ioctl(struct net_device *dev,
 		ioctl_data.u.operation_mode = (dev_conf->qos_version ==
 						RMNET_IOCTL_QOS_MODE_6);
 		if (copy_to_user(ifr->ifr_ifru.ifru_data, &ioctl_data,
-			sizeof(struct rmnet_ioctl_data_s)))
+				 sizeof(struct rmnet_ioctl_data_s)))
 			rc = -EFAULT;
 		break;
 
 	case RMNET_IOCTL_FLOW_ENABLE:
+		if (!capable(CAP_NET_ADMIN))
+			return -EPERM;
 		LOGL("RMNET_IOCTL_FLOW_ENABLE on %s", dev->name);
 		if (copy_from_user(&ioctl_data, ifr->ifr_ifru.ifru_data,
-			sizeof(struct rmnet_ioctl_data_s))) {
+				   sizeof(struct rmnet_ioctl_data_s))) {
 			rc = -EFAULT;
 			break;
 		}
@@ -256,9 +209,11 @@ static int _rmnet_vnd_do_qos_ioctl(struct net_device *dev,
 		break;
 
 	case RMNET_IOCTL_FLOW_DISABLE:
+		if (!capable(CAP_NET_ADMIN))
+			return -EPERM;
 		LOGL("RMNET_IOCTL_FLOW_DISABLE on %s", dev->name);
 		if (copy_from_user(&ioctl_data, ifr->ifr_ifru.ifru_data,
-			sizeof(struct rmnet_ioctl_data_s))) {
+				   sizeof(struct rmnet_ioctl_data_s))) {
 			rc = -EFAULT;
 		break;
 		}
@@ -277,7 +232,7 @@ static int _rmnet_vnd_do_qos_ioctl(struct net_device *dev,
 struct rmnet_vnd_fc_work {
 	struct work_struct work;
 	struct net_device *dev;
-	uint32_t tc_handle;
+	u32 tc_handle;
 	int enable;
 };
 
@@ -285,11 +240,12 @@ static void _rmnet_vnd_wq_flow_control(struct work_struct *work)
 {
 	struct rmnet_vnd_fc_work *fcwork;
 	int qdisc_len = 0;
+
 	fcwork = (struct rmnet_vnd_fc_work *)work;
 
 	rtnl_lock();
 	qdisc_len = tc_qdisc_flow_control(fcwork->dev, fcwork->tc_handle,
-				     fcwork->enable);
+					  fcwork->enable);
 	trace_rmnet_fc_map(fcwork->tc_handle, qdisc_len, fcwork->enable);
 	rtnl_unlock();
 
@@ -300,8 +256,8 @@ static void _rmnet_vnd_wq_flow_control(struct work_struct *work)
 }
 
 static int _rmnet_vnd_do_flow_control(struct net_device *dev,
-					     uint32_t tc_handle,
-					     int enable)
+				      u32 tc_handle,
+				      int enable)
 {
 	struct rmnet_vnd_fc_work *fcwork;
 
@@ -327,7 +283,7 @@ static int _rmnet_vnd_do_qos_ioctl(struct net_device *dev,
 }
 
 static inline int _rmnet_vnd_do_flow_control(struct net_device *dev,
-					     uint32_t tc_handle,
+					     u32 tc_handle,
 					     int enable)
 {
 	LOGD("[%s] called with no QoS support", dev->name);
@@ -340,7 +296,8 @@ static int rmnet_vnd_ioctl_extended(struct net_device *dev, struct ifreq *ifr)
 	struct rmnet_vnd_private_s *dev_conf;
 	struct rmnet_ioctl_extended_s ext_cmd;
 	int rc = 0;
-	dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
+
+	dev_conf = (struct rmnet_vnd_private_s *)netdev_priv(dev);
 
 	rc = copy_from_user(&ext_cmd, ifr->ifr_ifru.ifru_data,
 			    sizeof(struct rmnet_ioctl_extended_s));
@@ -369,9 +326,11 @@ static int rmnet_vnd_ioctl_extended(struct net_device *dev, struct ifreq *ifr)
 		break;
 
 	case RMNET_IOCTL_SET_QOS_VERSION:
-		if (ext_cmd.u.data == RMNET_IOCTL_QOS_MODE_6
-		    || ext_cmd.u.data == RMNET_IOCTL_QOS_MODE_8
-		    ||  ext_cmd.u.data == 0) {
+		if (!capable(CAP_NET_ADMIN))
+			return -EPERM;
+		if (ext_cmd.u.data == RMNET_IOCTL_QOS_MODE_6 ||
+		    ext_cmd.u.data == RMNET_IOCTL_QOS_MODE_8 ||
+		    ext_cmd.u.data == 0) {
 			dev_conf->qos_version = ext_cmd.u.data;
 		} else {
 			rc = -EINVAL;
@@ -382,7 +341,6 @@ static int rmnet_vnd_ioctl_extended(struct net_device *dev, struct ifreq *ifr)
 	default:
 		rc = -EINVAL;
 		goto done;
-		break;
 	}
 
 	rc = copy_to_user(ifr->ifr_ifru.ifru_data, &ext_cmd,
@@ -394,9 +352,7 @@ done:
 	return rc;
 }
 
-
-/**
- * rmnet_vnd_ioctl() - IOCTL NDO callback
+/* rmnet_vnd_ioctl() - IOCTL NDO callback
  * @dev:         Virtual network device
  * @ifreq:       User data
  * @cmd:         IOCTL command value
@@ -413,8 +369,9 @@ static int rmnet_vnd_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	struct rmnet_vnd_private_s *dev_conf;
 	int rc;
 	struct rmnet_ioctl_data_s ioctl_data;
+
 	rc = 0;
-	dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
+	dev_conf = (struct rmnet_vnd_private_s *)netdev_priv(dev);
 
 	rc = _rmnet_vnd_do_qos_ioctl(dev, ifr, cmd);
 	if (rc != -EINVAL)
@@ -422,7 +379,6 @@ static int rmnet_vnd_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	rc = 0; /* Reset rc as it may contain -EINVAL from above */
 
 	switch (cmd) {
-
 	case RMNET_IOCTL_OPEN: /* Do nothing. Support legacy behavior */
 		LOGM("RMNET_IOCTL_OPEN on %s (ignored)", dev->name);
 		break;
@@ -445,7 +401,7 @@ static int rmnet_vnd_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 		LOGM("RMNET_IOCTL_GET_LLP on %s", dev->name);
 		ioctl_data.u.operation_mode = RMNET_MODE_LLP_IP;
 		if (copy_to_user(ifr->ifr_ifru.ifru_data, &ioctl_data,
-			sizeof(struct rmnet_ioctl_data_s)))
+				 sizeof(struct rmnet_ioctl_data_s)))
 			rc = -EFAULT;
 		break;
 
@@ -470,8 +426,7 @@ static const struct net_device_ops rmnet_data_vnd_ops = {
 	.ndo_validate_addr = 0,
 };
 
-/**
- * rmnet_vnd_setup() - net_device initialization callback
+/* rmnet_vnd_setup() - net_device initialization callback
  * @dev:      Virtual network device
  *
  * Called by kernel whenever a new rmnet_data<n> device is created. Sets MTU,
@@ -480,10 +435,11 @@ static const struct net_device_ops rmnet_data_vnd_ops = {
 static void rmnet_vnd_setup(struct net_device *dev)
 {
 	struct rmnet_vnd_private_s *dev_conf;
+
 	LOGM("Setting up device %s", dev->name);
 
 	/* Clear out private data */
-	dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
+	dev_conf = (struct rmnet_vnd_private_s *)netdev_priv(dev);
 	memset(dev_conf, 0, sizeof(struct rmnet_vnd_private_s));
 
 	dev->netdev_ops = &rmnet_data_vnd_ops;
@@ -503,8 +459,7 @@ static void rmnet_vnd_setup(struct net_device *dev)
 	INIT_LIST_HEAD(&dev_conf->flow_head);
 }
 
-/**
- * rmnet_vnd_setup() - net_device initialization helper function
+/* rmnet_vnd_setup() - net_device initialization helper function
  * @dev:      Virtual network device
  *
  * Called during device initialization. Disables GRO.
@@ -515,10 +470,9 @@ static void rmnet_vnd_disable_offload(struct net_device *dev)
 	__netdev_update_features(dev);
 }
 
-/* ***************** Exposed API ******************************************** */
+/* Exposed API */
 
-/**
- * rmnet_vnd_exit() - Shutdown cleanup hook
+/* rmnet_vnd_exit() - Shutdown cleanup hook
  *
  * Called by RmNet main on module unload. Cleans up data structures and
  * unregisters/frees net_devices.
@@ -526,6 +480,7 @@ static void rmnet_vnd_disable_offload(struct net_device *dev)
 void rmnet_vnd_exit(void)
 {
 	int i;
+
 	for (i = 0; i < RMNET_DATA_MAX_VND; i++)
 		if (rmnet_devices[i]) {
 			unregister_netdev(rmnet_devices[i]);
@@ -533,8 +488,7 @@ void rmnet_vnd_exit(void)
 	}
 }
 
-/**
- * rmnet_vnd_init() - Init hook
+/* rmnet_vnd_init() - Init hook
  *
  * Called by RmNet main on module load. Initializes data structures
  */
@@ -545,8 +499,7 @@ int rmnet_vnd_init(void)
 	return 0;
 }
 
-/**
- * rmnet_vnd_create_dev() - Create a new virtual network device node.
+/* rmnet_vnd_create_dev() - Create a new virtual network device node.
  * @id:         Virtual device node id
  * @new_device: Pointer to newly created device node
  * @prefix:     Device name prefix
@@ -582,13 +535,15 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 
 	if (!prefix && !use_name)
 		p = scnprintf(dev_prefix, IFNAMSIZ, "%s%%d",
-			  RMNET_DATA_DEV_NAME_STR);
+			      RMNET_DATA_DEV_NAME_STR);
 	else if (prefix && use_name)
 		p = scnprintf(dev_prefix, IFNAMSIZ, "%s", prefix);
 	else if (prefix && !use_name)
-		p = scnprintf(dev_prefix, IFNAMSIZ, "%s%%d",
-			  prefix);
-	if (p >= (IFNAMSIZ-1)) {
+		p = scnprintf(dev_prefix, IFNAMSIZ, "%s%%d", prefix);
+	else
+		return RMNET_CONFIG_BAD_ARGUMENTS;
+
+	if (p >= (IFNAMSIZ - 1)) {
 		LOGE("Specified prefix longer than IFNAMSIZ");
 		return RMNET_CONFIG_BAD_ARGUMENTS;
 	}
@@ -607,8 +562,7 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 		/* Configuring DL checksum offload on rmnet_data interfaces */
 		dev->hw_features = NETIF_F_RXCSUM;
 		/* Configuring UL checksum offload on rmnet_data interfaces */
-		dev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
-			NETIF_F_IPV6_UDP_CSUM;
+		dev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
 		/* Configuring GRO on rmnet_data interfaces */
 		dev->hw_features |= NETIF_F_GRO;
 		/* Configuring Scatter-Gather on rmnet_data interfaces */
@@ -628,16 +582,15 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 	} else {
 		rmnet_devices[id] = dev;
 		*new_device = dev;
+		LOGM("Registered device %s", dev->name);
 	}
 
 	rmnet_vnd_disable_offload(dev);
 
-	LOGM("Registered device %s", dev->name);
 	return rc;
 }
 
-/**
- * rmnet_vnd_free_dev() - free a virtual network device node.
+/* rmnet_vnd_free_dev() - free a virtual network device node.
  * @id:         Virtual device node id
  *
  * Unregisters the virtual network device node and frees it.
@@ -683,8 +636,7 @@ int rmnet_vnd_free_dev(int id)
 	}
 }
 
-/**
- * rmnet_vnd_get_name() - Gets the string name of a VND based on ID
+/* rmnet_vnd_get_name() - Gets the string name of a VND based on ID
  * @id:         Virtual device node id
  * @name:       Buffer to store name of virtual device node
  * @name_len:   Length of name buffer
@@ -722,8 +674,7 @@ int rmnet_vnd_get_name(int id, char *name, int name_len)
 	return 0;
 }
 
-/**
- * rmnet_vnd_is_vnd() - Determine if net_device is RmNet owned virtual devices
+/* rmnet_vnd_is_vnd() - Determine if net_device is RmNet owned virtual devices
  * @dev:        Network device to test
  *
  * Searches through list of known RmNet virtual devices. This function is O(n)
@@ -735,24 +686,22 @@ int rmnet_vnd_get_name(int id, char *name, int name_len)
  */
 int rmnet_vnd_is_vnd(struct net_device *dev)
 {
-	/*
-	 * This is not an efficient search, but, this will only be called in
+	/* This is not an efficient search, but, this will only be called in
 	 * a configuration context, and the list is small.
 	 */
 	int i;
 
 	if (!dev)
-		BUG();
+		return 0;
 
 	for (i = 0; i < RMNET_DATA_MAX_VND; i++)
 		if (dev == rmnet_devices[i])
-			return i+1;
+			return i + 1;
 
 	return 0;
 }
 
-/**
- * rmnet_vnd_get_le_config() - Get the logical endpoint configuration
+/* rmnet_vnd_get_le_config() - Get the logical endpoint configuration
  * @dev:      Virtual device node
  *
  * Gets the logical endpoint configuration for a RmNet virtual network device
@@ -765,18 +714,18 @@ int rmnet_vnd_is_vnd(struct net_device *dev)
 struct rmnet_logical_ep_conf_s *rmnet_vnd_get_le_config(struct net_device *dev)
 {
 	struct rmnet_vnd_private_s *dev_conf;
+
 	if (!dev)
 		return 0;
 
-	dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
+	dev_conf = (struct rmnet_vnd_private_s *)netdev_priv(dev);
 	if (!dev_conf)
-		BUG();
+		return 0;
 
 	return &dev_conf->local_ep;
 }
 
-/**
- * _rmnet_vnd_get_flow_map() - Gets object representing a MAP flow handle
+/* _rmnet_vnd_get_flow_map() - Gets object representing a MAP flow handle
  * @dev_conf: Private configuration structure for virtual network device
  * @map_flow: MAP flow handle IF
  *
@@ -789,16 +738,16 @@ struct rmnet_logical_ep_conf_s *rmnet_vnd_get_le_config(struct net_device *dev)
  */
 static struct rmnet_map_flow_mapping_s *_rmnet_vnd_get_flow_map
 					(struct rmnet_vnd_private_s *dev_conf,
-					 uint32_t map_flow)
+					 u32 map_flow)
 {
 	struct list_head *p;
 	struct rmnet_map_flow_mapping_s *itm;
 
-	list_for_each(p, &(dev_conf->flow_head)) {
+	list_for_each(p, &dev_conf->flow_head) {
 		itm = list_entry(p, struct rmnet_map_flow_mapping_s, list);
 
 		if (unlikely(!itm))
-			BUG();
+			return 0;
 
 		if (itm->map_flow_id == map_flow)
 			return itm;
@@ -806,8 +755,7 @@ static struct rmnet_map_flow_mapping_s *_rmnet_vnd_get_flow_map
 	return 0;
 }
 
-/**
- * _rmnet_vnd_update_flow_map() - Add or remove individual TC flow handles
+/* _rmnet_vnd_update_flow_map() - Add or remove individual TC flow handles
  * @action: One of RMNET_VND_UF_ACTION_ADD / RMNET_VND_UF_ACTION_DEL
  * @itm: Flow mapping object
  * @map_flow: TC flow handle
@@ -826,11 +774,12 @@ static struct rmnet_map_flow_mapping_s *_rmnet_vnd_get_flow_map
  *      - RMNET_VND_UPDATE_FLOW_NO_VALID_LEFT if flow mapping is now empty
  *      - RMNET_VND_UPDATE_FLOW_NO_ACTION if no action was taken
  */
-static int _rmnet_vnd_update_flow_map(uint8_t action,
+static int _rmnet_vnd_update_flow_map(u8 action,
 				      struct rmnet_map_flow_mapping_s *itm,
-				      uint32_t tc_flow)
+				      u32 tc_flow)
 {
 	int rc, i, j;
+
 	rc = RMNET_VND_UPDATE_FLOW_OK;
 
 	switch (action) {
@@ -874,8 +823,7 @@ static int _rmnet_vnd_update_flow_map(uint8_t action,
 	return rc;
 }
 
-/**
- * rmnet_vnd_add_tc_flow() - Add a MAP/TC flow handle mapping
+/* rmnet_vnd_add_tc_flow() - Add a MAP/TC flow handle mapping
  * @id: Virtual network device ID
  * @map_flow: MAP flow handle
  * @tc_flow: TC flow handle
@@ -889,7 +837,7 @@ static int _rmnet_vnd_update_flow_map(uint8_t action,
  *      - RMNET_CONFIG_TC_HANDLE_FULL if there is no more room in the map object
  *      - RMNET_CONFIG_NOMEM failed to allocate a new map object
  */
-int rmnet_vnd_add_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
+int rmnet_vnd_add_tc_flow(u32 id, u32 map_flow, u32 tc_flow)
 {
 	struct rmnet_map_flow_mapping_s *itm;
 	struct net_device *dev;
@@ -903,10 +851,10 @@ int rmnet_vnd_add_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
 	}
 
 	dev = rmnet_devices[id];
-	dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
+	dev_conf = (struct rmnet_vnd_private_s *)netdev_priv(dev);
 
 	if (!dev_conf)
-		BUG();
+		return RMNET_CONFIG_NO_SUCH_DEVICE;
 
 	write_lock_irqsave(&dev_conf->flow_map_lock, flags);
 	itm = _rmnet_vnd_get_flow_map(dev_conf, map_flow);
@@ -942,7 +890,7 @@ int rmnet_vnd_add_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
 	itm->v6_seq.counter =  0; /* Init is broken: ATOMIC_INIT(0); */
 
 	write_lock_irqsave(&dev_conf->flow_map_lock, flags);
-	list_add(&(itm->list), &(dev_conf->flow_head));
+	list_add(&itm->list, &dev_conf->flow_head);
 	write_unlock_irqrestore(&dev_conf->flow_map_lock, flags);
 
 	LOGD("Created flow mapping [%s][0x%08X][0x%08X]@%pK",
@@ -951,8 +899,7 @@ int rmnet_vnd_add_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
 	return RMNET_CONFIG_OK;
 }
 
-/**
- * rmnet_vnd_del_tc_flow() - Delete a MAP/TC flow handle mapping
+/* rmnet_vnd_del_tc_flow() - Delete a MAP/TC flow handle mapping
  * @id: Virtual network device ID
  * @map_flow: MAP flow handle
  * @tc_flow: TC flow handle
@@ -966,7 +913,7 @@ int rmnet_vnd_add_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
  *      - RMNET_CONFIG_OK if successful or if there was no such tc_flow
  *      - RMNET_CONFIG_INVALID_REQUEST if there is no such map_flow
  */
-int rmnet_vnd_del_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
+int rmnet_vnd_del_tc_flow(u32 id, u32 map_flow, u32 tc_flow)
 {
 	struct rmnet_vnd_private_s *dev_conf;
 	struct net_device *dev;
@@ -981,10 +928,10 @@ int rmnet_vnd_del_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
 	}
 
 	dev = rmnet_devices[id];
-	dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
+	dev_conf = (struct rmnet_vnd_private_s *)netdev_priv(dev);
 
 	if (!dev_conf)
-		BUG();
+		return RMNET_CONFIG_NO_SUCH_DEVICE;
 
 	r = RMNET_VND_UPDATE_FLOW_NO_ACTION;
 	write_lock_irqsave(&dev_conf->flow_map_lock, flags);
@@ -995,7 +942,7 @@ int rmnet_vnd_del_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
 		r = _rmnet_vnd_update_flow_map(RMNET_VND_UF_ACTION_DEL,
 					       itm, tc_flow);
 		if (r ==  RMNET_VND_UPDATE_FLOW_NO_VALID_LEFT)
-			list_del(&(itm->list));
+			list_del(&itm->list);
 	}
 	write_unlock_irqrestore(&dev_conf->flow_map_lock, flags);
 
@@ -1009,8 +956,7 @@ int rmnet_vnd_del_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
 	return rc;
 }
 
-/**
- * rmnet_vnd_do_flow_control() - Process flow control request
+/* rmnet_vnd_do_flow_control() - Process flow control request
  * @dev: Virtual network device node to do lookup on
  * @map_flow_id: Flow ID from MAP message
  * @v4_seq: pointer to IPv4 indication sequence number
@@ -1023,32 +969,32 @@ int rmnet_vnd_del_tc_flow(uint32_t id, uint32_t map_flow, uint32_t tc_flow)
  *      - 2 if dev is not RmNet virtual network device node
  */
 int rmnet_vnd_do_flow_control(struct net_device *dev,
-			       uint32_t map_flow_id,
-			       uint16_t v4_seq,
-			       uint16_t v6_seq,
-			       int enable)
+			      u32 map_flow_id,
+			      u16 v4_seq,
+			      u16 v6_seq,
+			      int enable)
 {
 	struct rmnet_vnd_private_s *dev_conf;
 	struct rmnet_map_flow_mapping_s *itm;
 	int do_fc, error, i;
+
 	error = 0;
 	do_fc = 0;
 
 	if (unlikely(!dev))
-		BUG();
-
-	if (!rmnet_vnd_is_vnd(dev)) {
 		return 2;
-	} else {
-		dev_conf = (struct rmnet_vnd_private_s *) netdev_priv(dev);
-	}
+
+	if (!rmnet_vnd_is_vnd(dev))
+		return 2;
+
+	dev_conf = (struct rmnet_vnd_private_s *)netdev_priv(dev);
 
 	if (unlikely(!dev_conf))
-		BUG();
+		return 2;
 
 	read_lock(&dev_conf->flow_map_lock);
 	if (map_flow_id == 0xFFFFFFFF) {
-		itm = &(dev_conf->root_flow);
+		itm = &dev_conf->root_flow;
 		goto nolookup;
 	}
 
@@ -1061,8 +1007,8 @@ int rmnet_vnd_do_flow_control(struct net_device *dev,
 	}
 
 nolookup:
-	if (v4_seq == 0 || v4_seq >= atomic_read(&(itm->v4_seq))) {
-		atomic_set(&(itm->v4_seq), v4_seq);
+	if (v4_seq == 0 || v4_seq >= atomic_read(&itm->v4_seq)) {
+		atomic_set(&itm->v4_seq, v4_seq);
 		if (map_flow_id == 0xFFFFFFFF) {
 			LOGD("Setting VND TX queue state to %d", enable);
 			/* Although we expect similar number of enable/disable
@@ -1089,7 +1035,7 @@ nolookup:
 		}
 	} else {
 		LOGD("Internal seq(%hd) higher than called(%hd)",
-		     atomic_read(&(itm->v4_seq)), v4_seq);
+		     atomic_read(&itm->v4_seq), v4_seq);
 	}
 
 fcdone:
@@ -1098,8 +1044,7 @@ fcdone:
 	return error;
 }
 
-/**
- * rmnet_vnd_get_by_id() - Get VND by array index ID
+/* rmnet_vnd_get_by_id() - Get VND by array index ID
  * @id: Virtual network deice id [0:RMNET_DATA_MAX_VND]
  *
  * Return:
@@ -1109,8 +1054,7 @@ fcdone:
 struct net_device *rmnet_vnd_get_by_id(int id)
 {
 	if (id < 0 || id >= RMNET_DATA_MAX_VND) {
-		pr_err("Bug; VND ID out of bounds");
-		BUG();
+		LOGE("Bug; VND ID out of bounds");
 		return 0;
 	}
 	return rmnet_devices[id];

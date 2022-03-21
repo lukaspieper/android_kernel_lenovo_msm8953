@@ -1,4 +1,5 @@
 #include "sched.h"
+#include "walt.h"
 
 /*
  * stop-task scheduling class.
@@ -17,50 +18,6 @@ select_task_rq_stop(struct task_struct *p, int cpu, int sd_flag, int flags)
 }
 #endif /* CONFIG_SMP */
 
-#ifdef CONFIG_SCHED_HMP
-
-static void
-inc_hmp_sched_stats_stop(struct rq *rq, struct task_struct *p)
-{
-	inc_cumulative_runnable_avg(&rq->hmp_stats, p);
-}
-
-static void
-dec_hmp_sched_stats_stop(struct rq *rq, struct task_struct *p)
-{
-	dec_cumulative_runnable_avg(&rq->hmp_stats, p);
-}
-
-#ifdef CONFIG_SCHED_QHMP
-static void
-fixup_hmp_sched_stats_stop(struct rq *rq, struct task_struct *p,
-			   u32 new_task_load)
-{
-	fixup_cumulative_runnable_avg(&rq->hmp_stats, p, new_task_load);
-}
-#else
-static void
-fixup_hmp_sched_stats_stop(struct rq *rq, struct task_struct *p,
-			   u32 new_task_load, u32 new_pred_demand)
-{
-	s64 task_load_delta = (s64)new_task_load - task_load(p);
-	s64 pred_demand_delta = PRED_DEMAND_DELTA;
-
-	fixup_cumulative_runnable_avg(&rq->hmp_stats, p, task_load_delta,
-				      pred_demand_delta);
-}
-#endif
-
-#else	/* CONFIG_SCHED_HMP */
-
-static inline void
-inc_hmp_sched_stats_stop(struct rq *rq, struct task_struct *p) { }
-
-static inline void
-dec_hmp_sched_stats_stop(struct rq *rq, struct task_struct *p) { }
-
-#endif	/* CONFIG_SCHED_HMP */
-
 static void
 check_preempt_curr_stop(struct rq *rq, struct task_struct *p, int flags)
 {
@@ -68,7 +25,7 @@ check_preempt_curr_stop(struct rq *rq, struct task_struct *p, int flags)
 }
 
 static struct task_struct *
-pick_next_task_stop(struct rq *rq, struct task_struct *prev)
+pick_next_task_stop(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 {
 	struct task_struct *stop = rq->stop;
 
@@ -86,14 +43,14 @@ static void
 enqueue_task_stop(struct rq *rq, struct task_struct *p, int flags)
 {
 	add_nr_running(rq, 1);
-	inc_hmp_sched_stats_stop(rq, p);
+	walt_inc_cumulative_runnable_avg(rq, p);
 }
 
 static void
 dequeue_task_stop(struct rq *rq, struct task_struct *p, int flags)
 {
 	sub_nr_running(rq, 1);
-	dec_hmp_sched_stats_stop(rq, p);
+	walt_dec_cumulative_runnable_avg(rq, p);
 }
 
 static void yield_task_stop(struct rq *rq)
@@ -169,6 +126,7 @@ const struct sched_class stop_sched_class = {
 
 #ifdef CONFIG_SMP
 	.select_task_rq		= select_task_rq_stop,
+	.set_cpus_allowed	= set_cpus_allowed_common,
 #endif
 
 	.set_curr_task          = set_curr_task_stop,
@@ -179,9 +137,8 @@ const struct sched_class stop_sched_class = {
 	.prio_changed		= prio_changed_stop,
 	.switched_to		= switched_to_stop,
 	.update_curr		= update_curr_stop,
-#ifdef CONFIG_SCHED_HMP
-	.inc_hmp_sched_stats	= inc_hmp_sched_stats_stop,
-	.dec_hmp_sched_stats	= dec_hmp_sched_stats_stop,
-	.fixup_hmp_sched_stats	= fixup_hmp_sched_stats_stop,
+#ifdef CONFIG_SCHED_WALT
+	.fixup_walt_sched_stats	= fixup_walt_sched_stats_common,
+	.fixup_cumulative_runnable_avg = walt_fixup_cumulative_runnable_avg,
 #endif
 };

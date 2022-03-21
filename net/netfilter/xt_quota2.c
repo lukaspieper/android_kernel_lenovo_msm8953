@@ -23,9 +23,6 @@
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter/xt_quota2.h>
 
-#define QUOTA2_SYSFS_WORK_MAX_SIZE 64
-#define QUOTA2_SYSFS_NUM_ENVP 3
-
 #ifdef CONFIG_NETFILTER_XT_MATCH_QUOTA2_LOG
 /* For compatibility, these definitions are copied from the
  * deprecated header file <linux/netfilter_ipv4/ipt_ULOG.h> */
@@ -47,6 +44,8 @@ typedef struct ulog_packet_msg {
 	unsigned char payload[0];
 } ulog_packet_msg_t;
 #endif
+#define QUOTA2_SYSFS_WORK_MAX_SIZE 64
+#define QUOTA2_SYSFS_NUM_ENVP 3
 
 /**
  * @lock:	lock to protect quota writers from each other
@@ -97,7 +96,7 @@ static void quota2_log(const struct net_device *in,
 		       struct  xt_quota_counter *q,
 		       const char *prefix)
 {
-	if (prefix == NULL)
+	if (!prefix)
 		return;
 
 	strlcpy(q->last_prefix, prefix, QUOTA2_SYSFS_WORK_MAX_SIZE);
@@ -273,8 +272,8 @@ static void quota_mt2_destroy(const struct xt_mtdtor_param *par)
 	}
 
 	list_del(&e->list);
-	remove_proc_entry(e->name, proc_xt_quota);
 	spin_unlock_bh(&counter_list_lock);
+	remove_proc_entry(e->name, proc_xt_quota);
 	kfree(e);
 }
 
@@ -283,8 +282,6 @@ quota_mt2(const struct sk_buff *skb, struct xt_action_param *par)
 {
 	struct xt_quota_mtinfo2 *q = (void *)par->matchinfo;
 	struct xt_quota_counter *e = q->master;
-	int charge = (q->flags & XT_QUOTA_PACKET) ? 1 : skb->len;
-	bool no_change = q->flags & XT_QUOTA_NO_CHANGE;
 	bool ret = q->flags & XT_QUOTA_INVERT;
 
 	spin_lock_bh(&e->lock);
@@ -293,17 +290,20 @@ quota_mt2(const struct sk_buff *skb, struct xt_action_param *par)
 		 * While no_change is pointless in "grow" mode, we will
 		 * implement it here simply to have a consistent behavior.
 		 */
-		if (!no_change)
-			e->quota += charge;
-		ret = true; /* note: does not respect inversion (bug??) */
+		if (!(q->flags & XT_QUOTA_NO_CHANGE)) {
+			e->quota += (q->flags & XT_QUOTA_PACKET) ? 1 : skb->len;
+		}
+		ret = true;
 	} else {
-		if (e->quota > charge) {
-			if (!no_change)
-				e->quota -= charge;
+		if (e->quota >= skb->len) {
+			if (!(q->flags & XT_QUOTA_NO_CHANGE))
+				e->quota -= (q->flags & XT_QUOTA_PACKET) ? 1 : skb->len;
 			ret = !ret;
-		} else if (e->quota) {
+		} else {
 			/* We are transitioning, log that fact. */
-			quota2_log(par->in, par->out, e, q->name);
+			if (e->quota) {
+				quota2_log(par->in, par->out, e, q->name);
+			}
 			/* we do not allow even small packets from now on */
 			e->quota = 0;
 		}

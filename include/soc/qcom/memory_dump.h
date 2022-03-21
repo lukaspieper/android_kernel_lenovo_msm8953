@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,7 +38,7 @@ struct msm_client_dump {
 	unsigned long end_addr;
 };
 
-#ifdef CONFIG_MSM_MEMORY_DUMP
+#ifdef CONFIG_QCOM_MEMORY_DUMP
 extern int msm_dump_tbl_register(struct msm_client_dump *client_entry);
 #else
 static inline int msm_dump_tbl_register(struct msm_client_dump *entry)
@@ -48,7 +48,7 @@ static inline int msm_dump_tbl_register(struct msm_client_dump *entry)
 #endif
 
 
-#if defined(CONFIG_MSM_MEMORY_DUMP) || defined(CONFIG_MSM_MEMORY_DUMP_V2)
+#if defined(CONFIG_QCOM_MEMORY_DUMP) || defined(CONFIG_QCOM_MEMORY_DUMP_V2)
 extern uint32_t msm_dump_table_version(void);
 #else
 static inline uint32_t msm_dump_table_version(void)
@@ -62,12 +62,10 @@ static inline uint32_t msm_dump_table_version(void)
 #define MSM_DUMP_MINOR(val)		(val & 0xFFFFF)
 
 
-#define MAX_NUM_ENTRIES		0x130
+#define MAX_NUM_ENTRIES		0x150
 
 enum msm_dump_data_ids {
 	MSM_DUMP_DATA_CPU_CTX = 0x00,
-	MSM_DUMP_DATA_L1_INST_TLB = 0x20,
-	MSM_DUMP_DATA_L1_DATA_TLB = 0x40,
 	MSM_DUMP_DATA_L1_INST_CACHE = 0x60,
 	MSM_DUMP_DATA_L1_DATA_CACHE = 0x80,
 	MSM_DUMP_DATA_ETM_REG = 0xA0,
@@ -76,7 +74,6 @@ enum msm_dump_data_ids {
 	MSM_DUMP_DATA_OCMEM = 0xE0,
 	MSM_DUMP_DATA_CNSS_WLAN = 0xE1,
 	MSM_DUMP_DATA_WIGIG = 0xE2,
-	MSM_DUMP_DATA_CNSS_WLAN_V2 = 0xE3,
 	MSM_DUMP_DATA_PMIC = 0xE4,
 	MSM_DUMP_DATA_DBGUI_REG = 0xE5,
 	MSM_DUMP_DATA_DCC_REG = 0xE6,
@@ -84,11 +81,18 @@ enum msm_dump_data_ids {
 	MSM_DUMP_DATA_MISC = 0xE8,
 	MSM_DUMP_DATA_VSENSE = 0xE9,
 	MSM_DUMP_DATA_RPM = 0xEA,
+	MSM_DUMP_DATA_SCANDUMP = 0xEB,
+	MSM_DUMP_DATA_RPMH = 0xEC,
+	MSM_DUMP_DATA_FCM = 0xEE,
+	MSM_DUMP_DATA_POWER_REGS = 0xED,
 	MSM_DUMP_DATA_TMC_ETF = 0xF0,
-	MSM_DUMP_DATA_TMC_REG = 0x100,
+	MSM_DUMP_DATA_TPDM_SWAO_MCMB = 0xF2,
+	MSM_DUMP_DATA_TMC_ETR_REG = 0x100,
+	MSM_DUMP_DATA_TMC_ETF_REG = 0x101,
 	MSM_DUMP_DATA_LOG_BUF = 0x110,
 	MSM_DUMP_DATA_LOG_BUF_FIRST_IDX = 0x111,
-	MSM_DUMP_DATA_L2_TLB = 0x120,
+	MSM_DUMP_DATA_SCANDUMP_PER_CPU = 0x130,
+	MSM_DUMP_DATA_LLCC_PER_INSTANCE = 0x140,
 	MSM_DUMP_DATA_MAX = MAX_NUM_ENTRIES,
 };
 
@@ -118,14 +122,32 @@ struct msm_dump_entry {
 	uint64_t addr;
 };
 
-#ifdef CONFIG_MSM_MEMORY_DUMP_V2
+struct dump_vaddr_entry {
+	uint32_t id;
+	void *dump_vaddr;
+	struct msm_dump_data *dump_data_vaddr;
+};
+
+struct msm_mem_dump_vaddr_tbl {
+	uint8_t num_node;
+	struct dump_vaddr_entry *entries;
+};
+
+#ifdef CONFIG_QCOM_MEMORY_DUMP_V2
 extern int msm_dump_data_register(enum msm_dump_table_ids id,
 				  struct msm_dump_entry *entry);
+
+extern struct dump_vaddr_entry *get_msm_dump_ptr(enum msm_dump_data_ids id);
 #else
 static inline int msm_dump_data_register(enum msm_dump_table_ids id,
 					 struct msm_dump_entry *entry)
 {
-	return -ENOSYS;
+	return -EINVAL;
+}
+
+static inline void *get_msm_dump_ptr(enum msm_dump_data_ids id)
+{
+	return NULL;
 }
 #endif
 

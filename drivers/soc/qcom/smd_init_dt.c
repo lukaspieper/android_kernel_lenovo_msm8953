@@ -1,6 +1,6 @@
 /* drivers/soc/qcom/smd_init_dt.c
  *
- * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -114,6 +114,7 @@ static int msm_smsm_probe(struct platform_device *pdev)
 	private_intr_config = smd_get_intr_config(edge);
 	if (!private_intr_config) {
 		pr_err("%s: invalid edge\n", __func__);
+		iounmap(irq_out_base);
 		return -ENODEV;
 	}
 	private_irq = &private_intr_config->smsm;
@@ -131,17 +132,19 @@ static int msm_smsm_probe(struct platform_device *pdev)
 				NULL);
 	if (ret < 0) {
 		pr_err("%s: request_irq() failed on %d\n", __func__, irq_line);
+		iounmap(irq_out_base);
 		return ret;
-	} else {
-		ret = enable_irq_wake(irq_line);
-		if (ret < 0)
-			pr_err("%s: enable_irq_wake() failed on %d\n", __func__,
-					irq_line);
 	}
+	ret = enable_irq_wake(irq_line);
+	if (ret < 0)
+		pr_err("%s: enable_irq_wake() failed on %d\n", __func__,
+			irq_line);
 
 	ret = smsm_post_init();
 	if (ret) {
 		pr_err("smd_post_init() failed ret=%d\n", ret);
+		iounmap(irq_out_base);
+		free_irq(irq_line, NULL);
 		return ret;
 	}
 
@@ -267,12 +270,12 @@ static int msm_smd_probe(struct platform_device *pdev)
 	if (ret < 0) {
 		pr_err("%s: request_irq() failed on %d\n", __func__, irq_line);
 		return ret;
-	} else {
-		ret = enable_irq_wake(irq_line);
-		if (ret < 0)
-			pr_err("%s: enable_irq_wake() failed on %d\n", __func__,
-					irq_line);
 	}
+
+	ret = enable_irq_wake(irq_line);
+	if (ret < 0)
+		pr_err("%s: enable_irq_wake() failed on %d\n", __func__,
+				irq_line);
 
 	smd_set_edge_subsys_name(edge, subsys_name);
 	smd_proc_set_skip_pil(smd_edge_to_remote_pid(edge), skip_pil);
@@ -286,7 +289,7 @@ missing_key:
 	return -ENODEV;
 }
 
-static struct of_device_id msm_smd_match_table[] = {
+static const struct of_device_id msm_smd_match_table[] = {
 	{ .compatible = "qcom,smd" },
 	{},
 };
@@ -294,13 +297,13 @@ static struct of_device_id msm_smd_match_table[] = {
 static struct platform_driver msm_smd_driver = {
 	.probe = msm_smd_probe,
 	.driver = {
-		.name = MODULE_NAME ,
+		.name = MODULE_NAME,
 		.owner = THIS_MODULE,
 		.of_match_table = msm_smd_match_table,
 	},
 };
 
-static struct of_device_id msm_smsm_match_table[] = {
+static const struct of_device_id msm_smsm_match_table[] = {
 	{ .compatible = "qcom,smsm" },
 	{},
 };

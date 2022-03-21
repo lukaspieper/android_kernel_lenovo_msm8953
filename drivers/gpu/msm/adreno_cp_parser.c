@@ -80,6 +80,7 @@ static void adreno_ib_merge_range(struct adreno_ib_object *ib_obj,
 {
 	uint64_t addr_end1 = ib_obj->gpuaddr + ib_obj->size;
 	uint64_t addr_end2 = gpuaddr + size;
+
 	if (gpuaddr < ib_obj->gpuaddr)
 		ib_obj->gpuaddr = gpuaddr;
 	if (addr_end2 > addr_end1)
@@ -137,7 +138,7 @@ static int adreno_ib_add(struct kgsl_process_private *process,
 	struct adreno_ib_object *ib_obj;
 	struct kgsl_mem_entry *entry;
 
-	if (MAX_IB_OBJS <= ib_obj_list->num_objs)
+	if (ib_obj_list->num_objs >= MAX_IB_OBJS)
 		return -E2BIG;
 
 	entry = kgsl_sharedmem_find(process, gpuaddr);
@@ -637,12 +638,12 @@ static int ib_parse_type0(struct kgsl_device *device, unsigned int *ptr,
 					ADRENO_CP_UCHE_INVALIDATE0)) ||
 				(offset == adreno_cp_parser_getreg(adreno_dev,
 					ADRENO_CP_UCHE_INVALIDATE1))) {
-					ret = adreno_ib_add(process,
-						ptr[i + 1] & 0xFFFFFFC0,
-						SNAPSHOT_GPU_OBJECT_GENERIC,
-						ib_obj_list);
-					if (ret)
-						break;
+				ret = adreno_ib_add(process,
+					ptr[i + 1] & 0xFFFFFFC0,
+					SNAPSHOT_GPU_OBJECT_GENERIC,
+					ib_obj_list);
+				if (ret)
+					break;
 			}
 		}
 	}
@@ -695,6 +696,7 @@ static int ib_parse_type7_set_draw_state(struct kgsl_device *device,
 		/* load immediate */
 		if (flags & 0x8) {
 			uint64_t gpuaddr = ptr[i + 2];
+
 			gpuaddr = gpuaddr << 32 | ptr[i + 1];
 			ret = adreno_ib_find_objs(device, process,
 				gpuaddr, (ptr[i] & 0x0000FFFF),
@@ -733,6 +735,7 @@ static int ib_parse_set_draw_state(struct kgsl_device *device,
 		/* Disable all groups */
 		if (flags & 0x4) {
 			int j;
+
 			for (j = 0; j < NUM_SET_DRAW_GROUPS; j++)
 				ib_parse_vars->set_draw_groups[j].
 					cmd_stream_dwords = 0;
@@ -789,11 +792,12 @@ static int adreno_cp_parse_ib2(struct kgsl_device *device,
 			int ib_level)
 {
 	int i;
+
 	/*
 	 * We can only expect an IB2 in IB1, if we are
 	 * already processing an IB2 then return error
 	 */
-	if (2 == ib_level)
+	if (ib_level == 2)
 		return -EINVAL;
 
 	/* Save current IB2 statically */
@@ -805,7 +809,8 @@ static int adreno_cp_parse_ib2(struct kgsl_device *device,
 	 */
 	for (i = 0; i < ib_obj_list->num_objs; i++) {
 		struct adreno_ib_object *ib_obj = &(ib_obj_list->obj_list[i]);
-		if ((SNAPSHOT_GPU_OBJECT_IB == ib_obj->snapshot_obj_type) &&
+
+		if ((ib_obj->snapshot_obj_type == SNAPSHOT_GPU_OBJECT_IB) &&
 			(gpuaddr >= ib_obj->gpuaddr) &&
 			(gpuaddr + dwords * sizeof(unsigned int) <=
 			ib_obj->gpuaddr + ib_obj->size))
@@ -933,6 +938,7 @@ static int adreno_ib_find_objs(struct kgsl_device *device,
 			if (adreno_cmd_is_ib(adreno_dev, src[i])) {
 				uint64_t size = src[i + 3];
 				uint64_t gpuaddrib2 = src[i + 2];
+
 				gpuaddrib2 = gpuaddrib2 << 32 | src[i + 1];
 
 				ret = adreno_cp_parse_ib2(device, process,

@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,6 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/regulator/rpm-smd-regulator.h>
+#include <lpm-workarounds.h>
 
 static struct regulator *lpm_cx_reg;
 static struct work_struct dummy_vote_work;
@@ -111,13 +112,14 @@ static int lpm_wa_probe(struct platform_device *pdev)
 static int lpm_wa_remove(struct platform_device *pdev)
 {
 	int ret = 0;
+
 	if (lpm_wa_cx_turbo_unvote)
 		ret = lpm_wa_cx_unvote_exit();
 
 	return ret;
 }
 
-static struct of_device_id lpm_wa_mtch_tbl[] = {
+static const struct of_device_id lpm_wa_mtch_tbl[] = {
 	{.compatible = "qcom,lpm-workarounds"},
 	{},
 };
@@ -135,6 +137,7 @@ static struct platform_driver lpm_wa_driver = {
 static int __init lpm_wa_module_init(void)
 {
 	int ret;
+
 	ret = platform_driver_register(&lpm_wa_driver);
 	if (ret)
 		pr_info("Error registering %s\n", lpm_wa_driver.driver.name);

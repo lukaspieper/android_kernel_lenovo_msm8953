@@ -38,6 +38,8 @@ static int victim_child(union pipe read_pipe, union pipe write_pipe)
 	ebb_global_disable();
 	ebb_freeze_pmcs();
 
+	count_pmc(1, sample_period);
+
 	dump_ebb_state();
 
 	FAIL_IF(ebb_state.stats.ebb_count == 0);
@@ -51,6 +53,8 @@ int ebb_on_willing_child(void)
 	union pipe read_pipe, write_pipe;
 	struct event event;
 	pid_t pid;
+
+	SKIP_IF(!ebb_is_supported());
 
 	FAIL_IF(pipe(read_pipe.fds) == -1);
 	FAIL_IF(pipe(write_pipe.fds) == -1);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -67,10 +67,6 @@ static int calculate_write_pending(struct swap_info_struct *si,
 	si->write_pending = si->max_writes;
 	n->write_pending = n->max_writes;
 
-#if defined(CONFIG_TRACING) && defined(DEBUG)
-	trace_printk("%u, %u\n", si->max_writes, n->max_writes);
-#endif
-
 	return 0;
 }
 
@@ -120,7 +116,7 @@ static int swap_ratio_slow(struct swap_info_struct **si)
 				*si = n;
 				goto skip;
 			} else {
-				if (0 > calculate_write_pending(*si, n)) {
+				if (calculate_write_pending(*si, n) < 0) {
 					ret = -ENODEV;
 					goto exit;
 				}
@@ -148,7 +144,7 @@ static int swap_ratio_slow(struct swap_info_struct **si)
 			if ((*si)->write_pending) {
 				(*si)->write_pending--;
 			} else {
-				if (0 > calculate_write_pending(n, *si)) {
+				if (calculate_write_pending(n, *si) < 0) {
 					ret = -ENODEV;
 					goto exit;
 				}

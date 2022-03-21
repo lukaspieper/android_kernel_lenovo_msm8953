@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2016, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -51,52 +51,6 @@ int set_mdss_pixel_mux_sel_8996(struct mux_clk *clk, int sel)
 int get_mdss_pixel_mux_sel_8996(struct mux_clk *clk)
 {
 	return 0;
-}
-
-static int mdss_pll_read_stored_trim_codes(
-		struct mdss_pll_resources *dsi_pll_res, s64 vco_clk_rate,
-		int *pll_trim_codes)
-{
-	int i;
-	int rc = 0;
-	bool found = false;
-
-	if (!dsi_pll_res->dfps) {
-		rc = -EINVAL;
-		goto end_read;
-	}
-
-	for (i = 0; i < dsi_pll_res->dfps->panel_dfps.frame_rate_cnt; i++) {
-		struct dfps_codes_info *codes_info =
-			&dsi_pll_res->dfps->codes_dfps[i];
-
-		pr_debug("valid=%d frame_rate=%d, vco_rate=%d, code %d %d\n",
-			codes_info->is_valid, codes_info->frame_rate,
-			codes_info->clk_rate, codes_info->pll_codes.pll_codes_1,
-			codes_info->pll_codes.pll_codes_2);
-
-		if (vco_clk_rate != codes_info->clk_rate &&
-				codes_info->is_valid)
-			continue;
-
-		pll_trim_codes[0] =
-			codes_info->pll_codes.pll_codes_1;
-		pll_trim_codes[1] =
-			codes_info->pll_codes.pll_codes_2;
-		found = true;
-		break;
-	}
-
-	if (!found) {
-		rc = -EINVAL;
-		goto end_read;
-	}
-
-	pr_debug("core_kvco_code=0x%x core_vco_tune=0x%x\n",
-			pll_trim_codes[0], pll_trim_codes[1]);
-
-end_read:
-	return rc;
 }
 
 int post_n1_div_set_div(struct div_clk *clk, int div)
@@ -191,7 +145,7 @@ int n2_div_set_div(struct div_clk *clk, int div)
 	pdb = (struct dsi_pll_db *)pll->priv;
 	pout = &pdb->out;
 
-	/* this is for pixel clock */
+	/* this is for pixel_clock */
 	n2div = MDSS_PLL_REG_R(pll->pll_base, DSIPHY_CMN_CLK_CFG0);
 	n2div &= ~0xf0;	/* bits 4 to 7 */
 	n2div |= (div << 4);
@@ -272,8 +226,8 @@ static bool pll_is_pll_locked_8996(struct mdss_pll_resources *pll)
 			((status & BIT(5)) > 0),
 			DSI_PLL_POLL_MAX_READS,
 			DSI_PLL_POLL_TIMEOUT_US)) {
-			pr_err("DSI PLL ndx=%d status=%x failed to Lock\n",
-					pll->index, status);
+		pr_err("DSI PLL ndx=%d status=%x failed to Lock\n",
+			pll->index, status);
 		pll_locked = false;
 	} else if (readl_poll_timeout_atomic((pll->pll_base +
 				DSIPHY_PLL_RESET_SM_READY_STATUS),
@@ -281,8 +235,8 @@ static bool pll_is_pll_locked_8996(struct mdss_pll_resources *pll)
 				((status & BIT(0)) > 0),
 				DSI_PLL_POLL_MAX_READS,
 				DSI_PLL_POLL_TIMEOUT_US)) {
-			pr_err("DSI PLL ndx=%d status=%x PLl not ready\n",
-					pll->index, status);
+		pr_err("DSI PLL ndx=%d status=%x PLl not ready\n",
+			pll->index, status);
 		pll_locked = false;
 	} else {
 		pll_locked = true;
@@ -293,7 +247,7 @@ static bool pll_is_pll_locked_8996(struct mdss_pll_resources *pll)
 
 static void dsi_pll_start_8996(void __iomem *pll_base)
 {
-	pr_debug("start PLL at base=%p\n", pll_base);
+	pr_debug("start PLL at base=%pk\n", pll_base);
 
 	MDSS_PLL_REG_W(pll_base, DSIPHY_PLL_VREF_CFG1, 0x10);
 	MDSS_PLL_REG_W(pll_base, DSIPHY_CMN_PLL_CNTRL, 1);
@@ -302,7 +256,7 @@ static void dsi_pll_start_8996(void __iomem *pll_base)
 
 static void dsi_pll_stop_8996(void __iomem *pll_base)
 {
-	pr_debug("stop PLL at base=%p\n", pll_base);
+	pr_debug("stop PLL at base=%pk\n", pll_base);
 
 	MDSS_PLL_REG_W(pll_base, DSIPHY_CMN_PLL_CNTRL, 0);
 	wmb();	/* make sure register committed */
@@ -442,7 +396,6 @@ static void dsi_pll_disable(struct clk *c)
 	pll->pll_on = false;
 
 	pr_debug("DSI PLL ndx=%d Disabled\n", pll->index);
-	return;
 }
 
 static void mdss_dsi_pll_8996_input_init(struct mdss_pll_resources *pll,
@@ -471,8 +424,8 @@ static void mdss_dsi_pll_8996_input_init(struct mdss_pll_resources *pll,
 	pdb->in.pll_ip_trim = 4;	/* 4, reg: 0x0404 */
 	pdb->in.pll_cpcset_cur = 1;	/* 1, reg: 0x04f0, bit 0 - 2 */
 	pdb->in.pll_cpmset_cur = 1;	/* 1, reg: 0x04f0, bit 3 - 5 */
-	pdb->in.pll_icpmset = 4;	/* 4, reg: 0x04fc, bit 3 - 5 */
-	pdb->in.pll_icpcset = 4;	/* 4, reg: 0x04fc, bit 0 - 2 */
+	pdb->in.pll_icpmset = 7;	/* 7, reg: 0x04fc, bit 3 - 5 */
+	pdb->in.pll_icpcset = 7;	/* 7, reg: 0x04fc, bit 0 - 2 */
 	pdb->in.pll_icpmset_p = 0;	/* 0, reg: 0x04f4, bit 0 - 2 */
 	pdb->in.pll_icpmset_m = 0;	/* 0, reg: 0x04f4, bit 3 - 5 */
 	pdb->in.pll_icpcset_p = 0;	/* 0, reg: 0x04f8, bit 0 - 2 */
@@ -532,7 +485,8 @@ static void pll_8996_dec_frac_calc(struct mdss_pll_resources *pll,
 	struct dsi_pll_input *pin = &pdb->in;
 	struct dsi_pll_output *pout = &pdb->out;
 	s64 multiplier = BIT(20);
-	s64 dec_start_multiple, dec_start, pll_comp_val;
+	s64 dec_start_multiple, dec_start;
+	u64 pll_comp_val;
 	s32 duration, div_frac_start;
 	s64 vco_clk_rate = pll->vco_current_rate;
 	s64 fref = pll->vco_ref_clk_rate;
@@ -607,8 +561,8 @@ static void pll_8996_calc_vco_count(struct dsi_pll_db *pdb,
 {
 	struct dsi_pll_input *pin = &pdb->in;
 	struct dsi_pll_output *pout = &pdb->out;
-	s64 data;
-	u32 cnt;
+	u64 data;
+	u64 cnt;
 
 	data = fref * pin->vco_measure_time;
 	do_div(data, 1000000);
@@ -981,7 +935,7 @@ int pll_vco_set_rate_8996(struct clk *c, unsigned long rate)
 
 	pll_source_setup(pll);
 
-	pr_debug("%s: ndx=%d base=%p rate=%lu slave=%p\n", __func__,
+	pr_debug("%s: ndx=%d base=%pk rate=%lu slave=%pk\n", __func__,
 				pll->index, pll->pll_base, rate, pll->slave);
 
 	pll->vco_current_rate = rate;
@@ -1092,8 +1046,7 @@ int shadow_pll_vco_set_rate_8996(struct clk *c, unsigned long rate)
 	struct dsi_pll_vco_clk *vco = to_vco_clk(c);
 	struct mdss_pll_resources *pll = vco->priv;
 	struct dsi_pll_db *pdb;
-	s64 vco_clk_rate = (s64)rate;
-	int pll_trim_codes[2];
+	int pll_trim_codes[2] = {0, 0};
 
 	if (!pll) {
 		pr_err("PLL data not found\n");
@@ -1106,19 +1059,13 @@ int shadow_pll_vco_set_rate_8996(struct clk *c, unsigned long rate)
 		return -EINVAL;
 	}
 
-	rc = mdss_pll_read_stored_trim_codes(pll, vco_clk_rate, pll_trim_codes);
-	if (rc) {
-		pr_err("cannot find pll codes rate=%lld\n", vco_clk_rate);
-		return -EINVAL;
-	}
-
 	rc = mdss_pll_resource_enable(pll, true);
 	if (rc) {
 		pr_err("Failed to enable mdss dsi plla=%d\n", pll->index);
 		return rc;
 	}
 
-	pr_debug("%s: ndx=%d base=%p rate=%lu\n", __func__,
+	pr_debug("%s: ndx=%d base=%pk rate=%lu\n", __func__,
 			pll->index, pll->pll_base, rate);
 
 	pll->vco_current_rate = rate;
@@ -1142,7 +1089,7 @@ int shadow_pll_vco_set_rate_8996(struct clk *c, unsigned long rate)
 	return rc;
 }
 
-unsigned long pll_vco_get_rate_8996(struct clk *c)
+static unsigned long pll_vco_get_rate_8996(struct clk *c)
 {
 	u64 vco_rate, multiplier = BIT(20);
 	s32 div_frac_start;

@@ -62,8 +62,8 @@ struct sde_vreg {
 };
 
 struct sde_gpio {
-	unsigned gpio;
-	unsigned value;
+	unsigned int gpio;
+	unsigned int value;
 	char gpio_name[32];
 };
 
@@ -81,11 +81,11 @@ struct sde_clk {
 };
 
 struct sde_module_power {
-	unsigned num_vreg;
+	unsigned int num_vreg;
 	struct sde_vreg *vreg_config;
-	unsigned num_gpio;
+	unsigned int num_gpio;
 	struct sde_gpio *gpio_config;
-	unsigned num_clk;
+	unsigned int num_clk;
 	struct sde_clk *clk_config;
 };
 

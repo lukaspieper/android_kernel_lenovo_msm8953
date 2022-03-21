@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,6 +16,7 @@
 #include <linux/types.h>
 #include <linux/input.h>
 #include <linux/platform_device.h>
+#include <soc/qcom/tcs.h>
 
 /*
  * Macros for clients to convert their data to ib and ab
@@ -40,6 +41,7 @@
 #define AB_RECURRBLOCK(Ws, Per) ((Ws) == 0 ? 0 : ((Bs)/(Per)))
 #define IB_THROUGHPUTBW(Tb) (Tb)
 #define AB_THROUGHPUTBW(Tb, R) ((Tb) * (R))
+#define MSM_BUS_MAX_TCS_CMDS 16
 
 struct msm_bus_vectors {
 	int src; /* Master */
@@ -53,8 +55,14 @@ struct msm_bus_paths {
 	struct msm_bus_vectors *vectors;
 };
 
+struct msm_bus_lat_vectors {
+	uint64_t fal_ns; /* First Access Latency */
+	uint64_t idle_t_ns; /* Idle Time */
+};
+
 struct msm_bus_scale_pdata {
 	struct msm_bus_paths *usecase;
+	struct msm_bus_lat_vectors *usecase_lat;
 	int num_usecases;
 	const char *name;
 	/*
@@ -64,6 +72,11 @@ struct msm_bus_scale_pdata {
 	 * of the CPU state.
 	 */
 	unsigned int active_only;
+	/*
+	 * If the ALC(Active Latency Client) flag is set to 1,
+	 * use lat_usecases for latency voting.
+	 */
+	unsigned int alc;
 };
 
 struct msm_bus_client_handle {
@@ -74,9 +87,19 @@ struct msm_bus_client_handle {
 	struct device *mas_dev;
 	u64 cur_act_ib;
 	u64 cur_act_ab;
-	u64 cur_slp_ib;
-	u64 cur_slp_ab;
+	u64 cur_dual_ib;
+	u64 cur_dual_ab;
 	bool active_only;
+};
+
+struct msm_bus_tcs_usecase {
+	int num_cmds;
+	struct tcs_cmd cmds[MSM_BUS_MAX_TCS_CMDS];
+};
+
+struct msm_bus_tcs_handle {
+	int num_usecases;
+	struct msm_bus_tcs_usecase *usecases;
 };
 
 /* Scaling APIs */
@@ -87,7 +110,8 @@ struct msm_bus_client_handle {
  * The function returns 0 if bus driver is unable to register a client
  */
 
-#if (defined(CONFIG_MSM_BUS_SCALING) || defined(CONFIG_BUS_TOPOLOGY_ADHOC))
+#if (defined(CONFIG_QCOM_BUS_SCALING) ||\
+	defined(CONFIG_QCOM_BUS_TOPOLOGY_ADHOC))
 int __init msm_bus_fabric_init_driver(void);
 uint32_t msm_bus_scale_register_client(struct msm_bus_scale_pdata *pdata);
 int msm_bus_scale_client_update_request(uint32_t cl, unsigned int index);
@@ -101,7 +125,12 @@ msm_bus_scale_register(uint32_t mas, uint32_t slv, char *name,
 void msm_bus_scale_unregister(struct msm_bus_client_handle *cl);
 int msm_bus_scale_update_bw(struct msm_bus_client_handle *cl, u64 ab, u64 ib);
 int msm_bus_scale_update_bw_context(struct msm_bus_client_handle *cl,
-		u64 act_ab, u64 act_ib, u64 slp_ib, u64 slp_ab);
+		u64 act_ab, u64 act_ib, u64 dual_ib, u64 dual_ab);
+int msm_bus_scale_query_tcs_cmd(struct msm_bus_tcs_usecase *tcs_usecase,
+					uint32_t cl, unsigned int index);
+int msm_bus_scale_query_tcs_cmd_all(struct msm_bus_tcs_handle *tcs_handle,
+					uint32_t cl);
+
 /* AXI Port configuration APIs */
 int msm_bus_axi_porthalt(int master_port);
 int msm_bus_axi_portunhalt(int master_port);
@@ -163,15 +192,44 @@ msm_bus_scale_update_bw(struct msm_bus_client_handle *cl, u64 ab, u64 ib)
 
 static inline int
 msm_bus_scale_update_bw_context(struct msm_bus_client_handle *cl, u64 act_ab,
-				u64 act_ib, u64 slp_ib, u64 slp_ab)
+				u64 act_ib, u64 dual_ib, u64 dual_ab)
 
+{
+	return 0;
+}
+
+static inline int msm_bus_scale_query_tcs_cmd(struct msm_bus_tcs_usecase
+						*tcs_usecase, uint32_t cl,
+						unsigned int index)
+{
+	return 0;
+}
+
+static inline int msm_bus_scale_query_tcs_cmd_all(struct msm_bus_tcs_handle
+						*tcs_handle, uint32_t cl)
 {
 	return 0;
 }
 
 #endif
 
-#if defined(CONFIG_OF) && defined(CONFIG_MSM_BUS_SCALING)
+#if defined(CONFIG_QCOM_BUS_SCALING) && defined(CONFIG_QCOM_BUS_CONFIG_RPMH)
+int msm_bus_noc_throttle_wa(bool enable);
+int msm_bus_noc_priority_wa(bool enable);
+#else
+static inline int msm_bus_noc_throttle_wa(bool enable)
+{
+	return 0;
+}
+
+static inline int msm_bus_noc_priority_wa(bool enable)
+{
+	return 0;
+}
+
+#endif
+
+#if defined(CONFIG_OF) && defined(CONFIG_QCOM_BUS_SCALING)
 struct msm_bus_scale_pdata *msm_bus_pdata_from_node(
 		struct platform_device *pdev, struct device_node *of_node);
 struct msm_bus_scale_pdata *msm_bus_cl_get_pdata(struct platform_device *pdev);

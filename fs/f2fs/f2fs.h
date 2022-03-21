@@ -8,6 +8,7 @@
 #ifndef _LINUX_F2FS_H
 #define _LINUX_F2FS_H
 
+#include <linux/uio.h>
 #include <linux/types.h>
 #include <linux/page-flags.h>
 #include <linux/buffer_head.h>
@@ -16,22 +17,19 @@
 #include <linux/magic.h>
 #include <linux/kobject.h>
 #include <linux/sched.h>
+#include <linux/writeback.h>
 #include <linux/cred.h>
 #include <linux/vmalloc.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
 #include <linux/quotaops.h>
 #include <crypto/hash.h>
-#include <linux/writeback.h>
 #include <linux/overflow.h>
-#include <linux/fs.h>
 
-#define __FS_HAS_ENCRYPTION IS_ENABLED(CONFIG_F2FS_FS_ENCRYPTION)
 #include <linux/fscrypt.h>
 
 #ifdef CONFIG_F2FS_CHECK_FS
 #define f2fs_bug_on(sbi, condition)	BUG_ON(condition)
-#define f2fs_down_write(x, y)	down_write_nest_lock(x, y)
 #else
 #define f2fs_bug_on(sbi, condition)					\
 	do {								\
@@ -119,10 +117,6 @@ typedef u32 block_t;	/*
 			 */
 typedef u32 nid_t;
 
-#ifdef CONFIG_QUOTA
-#define F2FS_MAXQUOTAS 2
-#endif
-
 struct f2fs_mount_info {
 	unsigned int opt;
 	int write_io_size_bits;		/* Write IO size bits */
@@ -136,7 +130,7 @@ struct f2fs_mount_info {
 #endif
 #ifdef CONFIG_QUOTA
 	/* Names of quota files with journalled quota */
-	char *s_qf_names[F2FS_MAXQUOTAS];
+	char *s_qf_names[MAXQUOTAS];
 	int s_jquota_fmt;			/* Format of quota to use */
 #endif
 	/* For which write hints are passed down to block layer */
@@ -169,83 +163,6 @@ struct f2fs_mount_info {
 	(sbi->raw_super->feature |= cpu_to_le32(mask))
 #define F2FS_CLEAR_FEATURE(sbi, mask)					\
 	(sbi->raw_super->feature &= ~cpu_to_le32(mask))
-
-/* bio stuffs */
-#define REQ_OP_READ	READ
-#define REQ_OP_WRITE	WRITE
-#define bio_op(bio)	((bio)->bi_rw & 1)
-
-static inline void bio_set_op_attrs(struct bio *bio, unsigned op,
-		unsigned op_flags)
-{
-	bio->bi_rw = op | op_flags;
-}
-
-static inline int wbc_to_write_flags(struct writeback_control *wbc)
-{
-	if (wbc->sync_mode == WB_SYNC_ALL)
-		return REQ_SYNC;
-	return 0;
-}
-
-#define rb_entry_safe(ptr, type, member) \
-	({ typeof(ptr) ____ptr = (ptr); \
-	   ____ptr ? rb_entry(____ptr, type, member) : NULL; \
-	})
-
-#define list_last_entry(ptr, type, member) \
-	list_entry((ptr)->prev, type, member)
-
-#define list_first_entry(ptr, type, member) \
-	list_entry((ptr)->next, type, member)
-
-/**
- * wq_has_sleeper - check if there are any waiting processes
- * @wq: wait queue head
- *
- * Returns true if wq has waiting processes
- *
- * Please refer to the comment for waitqueue_active.
- */
-static inline bool wq_has_sleeper(wait_queue_head_t *wq)
-{
-	/*
-	 * We need to be sure we are in sync with the
-	 * add_wait_queue modifications to the wait queue.
-	 *
-	 * This memory barrier should be paired with one on the
-	 * waiting side.
-	 */
-	smp_mb();
-	return waitqueue_active(wq);
-}
-
-static inline struct dentry *file_dentry(const struct file *file)
-{
-	return file->f_path.dentry;
-}
-
-/**
- * current_time - Return FS time
- * @inode: inode.
- *
- * Return the current time truncated to the time granularity supported by
- * the fs.
- *
- * Note that inode and inode->sb cannot be NULL.
- * Otherwise, the function warns and returns time without truncation.
- */
-static inline struct timespec current_time(struct inode *inode)
-{
-	struct timespec now = current_kernel_time();
-
-	if (unlikely(!inode->i_sb)) {
-		WARN(1, "current_time() called with uninitialized super_block in the inode");
-		return now;
-	}
-
-	return timespec_trunc(now, inode->i_sb->s_time_gran);
-}
 
 /*
  * Default values for user and/or group using reserved blocks
@@ -689,6 +606,7 @@ struct f2fs_map_blocks {
 	pgoff_t *m_next_pgofs;		/* point next possible non-hole pgofs */
 	pgoff_t *m_next_extent;		/* point to next possible extent */
 	int m_seg_type;
+	bool m_may_create;		/* indicate it is from write path */
 };
 
 /* for flag in get_data_block */
@@ -763,6 +681,8 @@ struct f2fs_inode_info {
 	loff_t	last_disk_size;		/* lastly written file size */
 
 #ifdef CONFIG_QUOTA
+	struct dquot *i_dquot[MAXQUOTAS];
+
 	/* quota space reservation, managed internally by quota code */
 	qsize_t i_reserved_quota;
 #endif
@@ -1042,6 +962,8 @@ enum count_type {
 	F2FS_RD_DATA,
 	F2FS_RD_NODE,
 	F2FS_RD_META,
+	F2FS_DIO_WRITE,
+	F2FS_DIO_READ,
 	NR_COUNT_TYPE,
 };
 
@@ -1231,7 +1153,7 @@ enum fsync_mode {
 	FSYNC_MODE_NOBARRIER,	/* fsync behaves nobarrier based on posix */
 };
 
-#ifdef CONFIG_F2FS_FS_ENCRYPTION
+#ifdef CONFIG_FS_ENCRYPTION
 #define DUMMY_ENCRYPTION_ENABLED(sbi) \
 			(unlikely(F2FS_OPTION(sbi).test_dummy_encryption))
 #else
@@ -1421,6 +1343,13 @@ struct f2fs_sb_info {
 
 	/* Precomputed FS UUID checksum for seeding other checksums */
 	__u32 s_chksum_seed;
+};
+
+struct f2fs_private_dio {
+	struct inode *inode;
+	void *orig_private;
+	bio_end_io_t *orig_end_io;
+	bool write;
 };
 
 #ifdef CONFIG_F2FS_FAULT_INJECTION
@@ -2293,7 +2222,9 @@ static inline bool is_idle(struct f2fs_sb_info *sbi, int type)
 
 	if (get_pages(sbi, F2FS_RD_DATA) || get_pages(sbi, F2FS_RD_NODE) ||
 		get_pages(sbi, F2FS_RD_META) || get_pages(sbi, F2FS_WB_DATA) ||
-		get_pages(sbi, F2FS_WB_CP_DATA))
+		get_pages(sbi, F2FS_WB_CP_DATA) ||
+		get_pages(sbi, F2FS_DIO_READ) ||
+		get_pages(sbi, F2FS_DIO_WRITE))
 		return false;
 
 	if (type != DISCARD_TIME && SM_I(sbi) && SM_I(sbi)->dcc_info &&
@@ -2860,22 +2791,14 @@ static inline void *kvzalloc(size_t size, gfp_t flags)
 	return ret;
 }
 
-enum rw_hint {
-	WRITE_LIFE_NOT_SET	= 0,
-	WRITE_LIFE_NONE		= 1, /* RWH_WRITE_LIFE_NONE */
-	WRITE_LIFE_SHORT	= 2, /* RWH_WRITE_LIFE_SHORT */
-	WRITE_LIFE_MEDIUM	= 3, /* RWH_WRITE_LIFE_MEDIUM */
-	WRITE_LIFE_LONG		= 4, /* RWH_WRITE_LIFE_LONG */
-	WRITE_LIFE_EXTREME	= 5, /* RWH_WRITE_LIFE_EXTREME */
-};
-
-static inline void wbc_init_bio(struct writeback_control *wbc, struct bio *bio)
+static inline int wbc_to_write_flags(struct writeback_control *wbc)
 {
-}
+	if (wbc->sync_mode == WB_SYNC_ALL)
+		return REQ_SYNC;
+	else if (wbc->for_kupdate || wbc->for_background)
+		return 0;
 
-static inline void wbc_account_io(struct writeback_control *wbc,
-				  struct page *page, size_t bytes)
-{
+	return 0;
 }
 
 static inline void *f2fs_kzalloc(struct f2fs_sb_info *sbi,
@@ -3282,8 +3205,7 @@ void f2fs_update_data_blkaddr(struct dnode_of_data *dn, block_t blkaddr);
 int f2fs_reserve_new_blocks(struct dnode_of_data *dn, blkcnt_t count);
 int f2fs_reserve_new_block(struct dnode_of_data *dn);
 int f2fs_get_block(struct dnode_of_data *dn, pgoff_t index);
-int f2fs_preallocate_blocks(struct inode *inode, loff_t pos,
-					size_t count, bool dio);
+int f2fs_preallocate_blocks(struct kiocb *iocb, struct iov_iter *from);
 int f2fs_reserve_block(struct dnode_of_data *dn, pgoff_t index);
 struct page *f2fs_get_read_data_page(struct inode *inode, pgoff_t index,
 			int op_flags, bool for_write);
@@ -3307,6 +3229,7 @@ int f2fs_release_page(struct page *page, gfp_t wait);
 int f2fs_migrate_page(struct address_space *mapping, struct page *newpage,
 			struct page *page, enum migrate_mode mode);
 #endif
+bool f2fs_overwrite_io(struct inode *inode, loff_t pos, size_t len);
 void f2fs_clear_radix_tree_dirty_tag(struct page *page);
 
 /*
@@ -3347,6 +3270,7 @@ struct f2fs_stat_info {
 	int total_count, utilization;
 	int bg_gc, nr_wb_cp_data, nr_wb_data;
 	int nr_rd_data, nr_rd_node, nr_rd_meta;
+	int nr_dio_read, nr_dio_write;
 	unsigned int io_skip_bggc, other_skip_bggc;
 	int nr_flushing, nr_flushed, flush_list_empty;
 	int nr_discarding, nr_discarded;
@@ -3630,19 +3554,14 @@ void f2fs_unregister_sysfs(struct f2fs_sb_info *sbi);
 /*
  * crypto support
  */
-static inline bool f2fs_encrypted_inode(struct inode *inode)
-{
-	return file_is_encrypt(inode);
-}
-
 static inline bool f2fs_encrypted_file(struct inode *inode)
 {
-	return f2fs_encrypted_inode(inode) && S_ISREG(inode->i_mode);
+	return IS_ENCRYPTED(inode) && S_ISREG(inode->i_mode);
 }
 
 static inline void f2fs_set_encrypted_inode(struct inode *inode)
 {
-#ifdef CONFIG_F2FS_FS_ENCRYPTION
+#ifdef CONFIG_FS_ENCRYPTION
 	file_set_encrypt(inode);
 	f2fs_set_inode_flags(inode);
 #endif
@@ -3749,7 +3668,7 @@ static inline void set_opt_mode(struct f2fs_sb_info *sbi, unsigned int mt)
 
 static inline bool f2fs_may_encrypt(struct inode *inode)
 {
-#ifdef CONFIG_F2FS_FS_ENCRYPTION
+#ifdef CONFIG_FS_ENCRYPTION
 	umode_t mode = inode->i_mode;
 
 	return (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode));
@@ -3758,11 +3677,35 @@ static inline bool f2fs_may_encrypt(struct inode *inode)
 #endif
 }
 
-static inline bool f2fs_force_buffered_io(struct inode *inode, int rw)
+static inline int block_unaligned_IO(struct inode *inode,
+				struct kiocb *iocb, struct iov_iter *iter)
+{
+	unsigned int i_blkbits = READ_ONCE(inode->i_blkbits);
+	unsigned int blocksize_mask = (1 << i_blkbits) - 1;
+	loff_t offset = iocb->ki_pos;
+	unsigned long align = offset | iov_iter_alignment(iter);
+
+	return align & blocksize_mask;
+}
+
+static inline int allow_outplace_dio(struct inode *inode,
+				struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+	int rw = iov_iter_rw(iter);
 
-	if (f2fs_post_read_required(inode))
+	return (test_opt(sbi, LFS) && (rw == WRITE) &&
+				!block_unaligned_IO(inode, iocb, iter));
+}
+
+static inline bool f2fs_force_buffered_io(struct inode *inode,
+				struct kiocb *iocb, struct iov_iter *iter)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+	int rw = iov_iter_rw(iter);
+
+	if (f2fs_post_read_required(inode) &&
+		!fscrypt_using_hardware_encryption(inode))
 		return true;
 	if (f2fs_is_multi_device(sbi))
 		return true;
@@ -3772,13 +3715,24 @@ static inline bool f2fs_force_buffered_io(struct inode *inode, int rw)
 	 */
 	if (f2fs_sb_has_blkzoned(sbi))
 		return true;
-	if (test_opt(sbi, LFS) && (rw == WRITE))
+	if (test_opt(sbi, LFS) && (rw == WRITE) &&
+				block_unaligned_IO(inode, iocb, iter))
 		return true;
 	if (is_sbi_flag_set(F2FS_I_SB(inode), SBI_CP_DISABLED) &&
 					!(inode->i_flags & S_SWAPFILE))
 		return true;
 
 	return false;
+}
+
+static inline bool f2fs_may_encrypt_bio(struct inode *inode,
+		struct f2fs_io_info *fio)
+{
+	if (fio && (fio->type != DATA || fio->encrypted_page))
+		return false;
+
+	return (f2fs_encrypted_file(inode) &&
+			fscrypt_using_hardware_encryption(inode));
 }
 
 #ifdef CONFIG_F2FS_FAULT_INJECTION
@@ -3794,7 +3748,8 @@ static inline bool is_journalled_quota(struct f2fs_sb_info *sbi)
 	if (f2fs_sb_has_quota_ino(sbi))
 		return true;
 	if (F2FS_OPTION(sbi).s_qf_names[USRQUOTA] ||
-		F2FS_OPTION(sbi).s_qf_names[GRPQUOTA])
+		F2FS_OPTION(sbi).s_qf_names[GRPQUOTA] ||
+		F2FS_OPTION(sbi).s_qf_names[PRJQUOTA])
 		return true;
 #endif
 	return false;

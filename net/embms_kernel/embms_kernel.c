@@ -1,11 +1,6 @@
 /*************************************************************************
-				 * EMBMS.C
- *************************************************************************
- */
-
-/*************************************************************************
  * -----------------------------------------------------------------------
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, 2017, The Linux Foundation. All rights reserved.
 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,7 +14,7 @@
 
  * DESCRIPTION
  * Main file for eMBMs Tunneling Module in kernel.
-*************************************************************************
+ *************************************************************************
  */
 
 #include <linux/kernel.h>
@@ -42,9 +37,6 @@
 #include <net/netfilter/nf_conntrack.h>
 #include <linux/miscdevice.h>
 #include "embms_kernel.h"
-
-/* Embms device used for communication*/
-struct miscdevice embms_device;
 
 struct embms_info_internal embms_conf;
 
@@ -70,7 +62,6 @@ static int handle_multicast_stream(struct sk_buff *skb)
 {
 	struct iphdr *iph;
 	struct udphdr *udph;
-	struct in_device *in_dev;
 	unsigned char *tmp_ptr = NULL;
 	struct sk_buff *skb_new = NULL;
 	struct sk_buff *skb_cpy = NULL;
@@ -90,14 +81,9 @@ static int handle_multicast_stream(struct sk_buff *skb)
 		embms_debug("Tunneling Disabled. Can't process packets\n");
 		return 0;
 	}
-	if (unlikely(!skb->dev)) {
-		embms_error("Can't get skb dev name\n");
-		return 0;
-	}
 
 	if (unlikely(memcmp(skb->dev->name, embms_conf.embms_iface,
-		     MIN(strlen(embms_conf.embms_iface),
-			 sizeof(skb->dev->name))) != 0)) {
+			    strlen(embms_conf.embms_iface)) != 0)) {
 		embms_error("Packet received on %s iface. NOT an EMBMS Iface\n",
 			    skb->dev->name);
 		return 0;
@@ -141,7 +127,8 @@ static int handle_multicast_stream(struct sk_buff *skb)
 
 	/* push skb->data and copy IP and UDP headers*/
 
-	tmp_ptr = skb_push(skb_new, sizeof(struct udphdr)+sizeof(struct iphdr));
+	tmp_ptr = skb_push(skb_new,
+			   sizeof(struct udphdr) + sizeof(struct iphdr));
 
 	iph = (struct iphdr *)tmp_ptr;
 	udph = (struct udphdr *)(tmp_ptr + sizeof(struct iphdr));
@@ -193,7 +180,7 @@ static int handle_multicast_stream(struct sk_buff *skb)
 		if (udph->check == 0)
 			udph->check = CSUM_MANGLED_0;
 
-		if (unlikely(dev_global == NULL)) {
+		if (unlikely(!dev_global)) {
 			embms_error("Global device NULL\n");
 			kfree_skb(skb_cpy);
 			kfree_skb(skb_new);
@@ -250,8 +237,8 @@ static int embms_device_release(struct inode *inode, struct file *file)
 	return SUCCESS;
 }
 
-static struct tmgi_to_clnt_info *check_for_tmgi_entry(u_int32_t addr,
-						      u_int16_t port)
+static struct tmgi_to_clnt_info *check_for_tmgi_entry(u32 addr,
+						      u16 port)
 {
 	struct list_head *tmgi_ptr, *prev_tmgi_ptr;
 	struct tmgi_to_clnt_info *temp_tmgi = NULL;
@@ -308,7 +295,7 @@ static int add_new_tmgi_entry(struct tmgi_to_clnt_info_update *info_update,
 
 	new_tmgi = kzalloc(sizeof(*new_tmgi),
 			   GFP_ATOMIC);
-	if (new_tmgi == NULL) {
+	if (!new_tmgi) {
 		embms_error("add_new_tmgi_entry: mem alloc failed\n");
 		return -ENOMEM;
 	}
@@ -408,19 +395,16 @@ static void print_tmgi_to_client_table(void)
 
 int delete_tmgi_entry_from_table(char *buffer)
 {
-	int i;
 	struct tmgi_to_clnt_info_update *info_update;
-	char message_buffer[sizeof(struct tmgi_to_clnt_info_update)];
 	struct clnt_info *temp_client = NULL;
 	struct tmgi_to_clnt_info *temp_tmgi = NULL;
-	struct list_head *tmgi_entry_ptr, *prev_tmgi_entry_ptr;
 	struct list_head *clnt_ptr, *prev_clnt_ptr;
 
 	embms_debug("delete_tmgi_entry_from_table: Enter\n");
 
 	info_update = (struct tmgi_to_clnt_info_update *)buffer;
 
-	if (info_update == NULL) {
+	if (!info_update) {
 		embms_error("delete_tmgi_entry_from_table:");
 		embms_error("NULL arguments passed\n");
 		return -EBADPARAM;
@@ -438,7 +422,7 @@ int delete_tmgi_entry_from_table(char *buffer)
 	temp_tmgi = check_for_tmgi_entry(info_update->multicast_addr,
 					 info_update->multicast_port);
 
-	if (temp_tmgi == NULL) {
+	if (!temp_tmgi) {
 		/* TMGI entry was not found in our local table*/
 		embms_error("delete_client_entry_from_table :");
 		embms_error("Desired TMGI entry not found\n");
@@ -489,13 +473,10 @@ int delete_tmgi_entry_from_table(char *buffer)
  */
 int delete_client_entry_from_all_tmgi(char *buffer)
 {
-	int i;
 	struct tmgi_to_clnt_info_update *info_update;
-	char message_buffer[sizeof(struct tmgi_to_clnt_info_update)];
 	struct clnt_info *temp_client = NULL;
 	struct tmgi_to_clnt_info *tmgi = NULL;
 	struct list_head *tmgi_entry_ptr, *prev_tmgi_entry_ptr;
-	struct list_head *clnt_ptr, *prev_clnt_ptr;
 
 	/* We use this function when we want to delete any
 	 * client entry from all TMGI entries. This scenario
@@ -508,7 +489,7 @@ int delete_client_entry_from_all_tmgi(char *buffer)
 
 	info_update = (struct tmgi_to_clnt_info_update *)buffer;
 
-	if (info_update == NULL) {
+	if (!info_update) {
 		embms_error("del_clnt_from_all_tmgi:");
 		embms_error("NULL arguments passed\n");
 		return -EBADPARAM;
@@ -528,7 +509,7 @@ int delete_client_entry_from_all_tmgi(char *buffer)
 				  tmgi_list_ptr);
 
 		temp_client = chk_clnt_entry(tmgi, info_update);
-		if (temp_client == NULL)
+		if (!temp_client)
 			continue;
 
 		spin_lock_bh(&embms_conf.lock);
@@ -586,31 +567,24 @@ int delete_client_entry_from_all_tmgi(char *buffer)
  */
 int add_client_entry_to_table(char *buffer)
 {
-	int i, ret;
+	int ret;
 	struct tmgi_to_clnt_info_update *info_update;
-	char message_buffer[sizeof(struct tmgi_to_clnt_info_update)];
 	struct clnt_info *new_client = NULL;
-	struct clnt_info *temp_client = NULL;
-	struct tmgi_to_clnt_info *new_tmgi = NULL;
 	struct tmgi_to_clnt_info *tmgi = NULL;
-	struct list_head *tmgi_entry_ptr, *prev_tmgi_entry_ptr;
-	struct list_head *clnt_ptr, *prev_clnt_ptr;
 	struct neighbour *neigh_entry;
-	struct in_device *iface_dev;
-	struct in_ifaddr *iface_info;
 
 	embms_debug("add_client_entry_to_table: Enter\n");
 
 	info_update = (struct tmgi_to_clnt_info_update *)buffer;
 
-	if (info_update == NULL) {
+	if (!info_update) {
 		embms_error("add_client_entry_to_table:");
 		embms_error("NULL arguments passed\n");
 		return -EBADPARAM;
 	}
 
 	new_client = kzalloc(sizeof(*new_client), GFP_ATOMIC);
-	if (new_client == NULL) {
+	if (!new_client) {
 		embms_error("add_client_entry_to_table:");
 		embms_error("Cannot allocate memory\n");
 		return -ENOMEM;
@@ -620,8 +594,8 @@ int add_client_entry_to_table(char *buffer)
 	new_client->port = info_update->client_port;
 
 	neigh_entry = __ipv4_neigh_lookup(dev_global,
-					  (__force u32)(new_client->addr));
-	if (NULL == neigh_entry) {
+					  (u32)(new_client->addr));
+	if (!neigh_entry) {
 		embms_error("add_client_entry_to_table :");
 		embms_error("Can't find neighbour entry\n");
 		kfree(new_client);
@@ -660,8 +634,8 @@ int add_client_entry_to_table(char *buffer)
 
 	tmgi = check_for_tmgi_entry(info_update->multicast_addr,
 				    info_update->multicast_port);
-	if (tmgi != NULL) {
-		if (chk_clnt_entry(tmgi, info_update) != NULL) {
+	if (tmgi) {
+		if (chk_clnt_entry(tmgi, info_update)) {
 			kfree(new_client);
 			return -ENOEFFECT;
 		}
@@ -711,19 +685,15 @@ exit_add:
  */
 int delete_client_entry_from_table(char *buffer)
 {
-	int i;
 	struct tmgi_to_clnt_info_update *info_update;
-	char message_buffer[sizeof(struct tmgi_to_clnt_info_update)];
 	struct clnt_info *temp_client = NULL;
 	struct tmgi_to_clnt_info *temp_tmgi = NULL;
-	struct list_head *tmgi_entry_ptr, *prev_tmgi_entry_ptr;
-	struct list_head *clnt_ptr, *prev_clnt_ptr;
 
 	embms_debug("delete_client_entry_from_table: Enter\n");
 
 	info_update = (struct tmgi_to_clnt_info_update *)buffer;
 
-	if (info_update == NULL) {
+	if (!info_update) {
 		embms_error("delete_client_entry_from_table:");
 		embms_error("NULL arguments passed\n");
 		return -EBADPARAM;
@@ -736,7 +706,7 @@ int delete_client_entry_from_table(char *buffer)
 	temp_tmgi = check_for_tmgi_entry(info_update->multicast_addr,
 					 info_update->multicast_port);
 
-	if (temp_tmgi == NULL) {
+	if (!temp_tmgi) {
 		embms_error("delete_client_entry_from_table:TMGI not found\n");
 		return -EBADPARAM;
 	}
@@ -748,7 +718,7 @@ int delete_client_entry_from_table(char *buffer)
 
 	temp_client = chk_clnt_entry(temp_tmgi, info_update);
 
-	if (temp_client == NULL) {
+	if (!temp_client) {
 		/* Specified client entry was not found in client list
 		 * of specified TMGI
 		 */
@@ -808,11 +778,10 @@ int delete_client_entry_from_table(char *buffer)
  * Return: Success if functoin call returns SUCCESS, error otherwise.
  */
 
-int embms_device_ioctl(struct file *file, unsigned int ioctl_num,
-		       unsigned long ioctl_param)
+long embms_device_ioctl(struct file *file, unsigned int ioctl_num,
+			unsigned long ioctl_param)
 {
-	int i, ret, error;
-	char *temp;
+	int ret;
 	char buffer[BUF_LEN];
 	struct in_device *iface_dev;
 	struct in_ifaddr *iface_info;
@@ -896,7 +865,7 @@ int embms_device_ioctl(struct file *file, unsigned int ioctl_num,
 		} else {
 			iface_dev = (struct in_device *)dev_global->ip_ptr;
 			iface_info = iface_dev->ifa_list;
-			while (NULL != iface_info) {
+			while (iface_info) {
 				if (memcmp(iface_info->ifa_label,
 					   BRIDGE_IFACE,
 					   strlen(BRIDGE_IFACE)) == 0)
@@ -904,7 +873,7 @@ int embms_device_ioctl(struct file *file, unsigned int ioctl_num,
 
 				iface_info = iface_info->ifa_next;
 			}
-			if (iface_info != NULL) {
+			if (iface_info) {
 				embms_debug("IP address of %s iface is %pI4\n",
 					    BRIDGE_IFACE,
 					    &iface_info->ifa_address);
@@ -946,8 +915,59 @@ static const struct file_operations embms_device_fops = {
 	.unlocked_ioctl = embms_device_ioctl,
 };
 
-/*Initialize the module - Register the misc device*/
+static int embms_ioctl_init(void)
+{
+	int ret;
+	struct device *dev;
 
+	ret = alloc_chrdev_region(&device, 0, dev_num, EMBMS_DEVICE_NAME);
+	if (ret) {
+		embms_error("device_alloc err\n");
+		goto dev_alloc_err;
+	}
+
+	embms_class = class_create(THIS_MODULE, EMBMS_DEVICE_NAME);
+	if (IS_ERR(embms_class)) {
+		embms_error("class_create err\n");
+		goto class_err;
+	}
+
+	dev = device_create(embms_class, NULL, device,
+			    &embms_conf, EMBMS_DEVICE_NAME);
+	if (IS_ERR(dev)) {
+		embms_error("device_create err\n");
+		goto device_err;
+	}
+
+	cdev_init(&embms_device, &embms_device_fops);
+	ret = cdev_add(&embms_device, device, dev_num);
+	if (ret) {
+		embms_error("cdev_add err\n");
+		goto cdev_add_err;
+	}
+
+	embms_debug("ioctl init OK!!\n");
+	return 0;
+
+cdev_add_err:
+	device_destroy(embms_class, device);
+device_err:
+	class_destroy(embms_class);
+class_err:
+	unregister_chrdev_region(device, dev_num);
+dev_alloc_err:
+	return -ENODEV;
+}
+
+static void embms_ioctl_deinit(void)
+{
+	cdev_del(&embms_device);
+	device_destroy(embms_class, device);
+	class_destroy(embms_class);
+	unregister_chrdev_region(device, dev_num);
+}
+
+/*Initialize the module - Register the misc device*/
 static int __init start_embms(void)
 {
 	int ret = 0;
@@ -955,13 +975,6 @@ static int __init start_embms(void)
 	iph_global = (struct iphdr *)hdr_buff;
 	udph_global = (struct udphdr *)(hdr_buff + sizeof(struct iphdr));
 
-	embms_device.name = kzalloc(sizeof(EMBMS_DEVICE_NAME), GFP_KERNEL);
-	if (embms_device.name == NULL)
-		return 1;
-	strlcpy(embms_device.name, EMBMS_DEVICE_NAME,
-		sizeof(EMBMS_DEVICE_NAME));
-	embms_device.fops = &embms_device_fops;
-	embms_device.minor = MISC_DYNAMIC_MINOR;
 	embms_conf.embms_tunneling_status = TUNNELING_OFF;
 	embms_conf.no_of_tmgi_sessions = 0;
 	embms_conf.embms_data_port = 0;
@@ -971,7 +984,7 @@ static int __init start_embms(void)
 
 	embms_debug("Registering embms device\n");
 
-	ret = misc_register(&embms_device);
+	ret = embms_ioctl_init();
 	if (ret) {
 		embms_error("embms device failed to register");
 		goto fail_init;
@@ -979,7 +992,7 @@ static int __init start_embms(void)
 
 	INIT_LIST_HEAD(&tmgi_to_clnt_map_tbl.tmgi_list_ptr);
 
-	memset(hdr_buff, 0, sizeof(struct udphdr)+sizeof(struct iphdr));
+	memset(hdr_buff, 0, sizeof(struct udphdr) + sizeof(struct iphdr));
 	udph_global->check = UDP_CHECKSUM;
 	iph_global->version = IP_VERSION;
 	iph_global->ihl = IP_IHL;
@@ -990,14 +1003,14 @@ static int __init start_embms(void)
 
 	dev_global = NULL;
 
-	if (embms_tm_multicast_recv == NULL)
+	if (!embms_tm_multicast_recv)
 		RCU_INIT_POINTER(embms_tm_multicast_recv,
 				 handle_multicast_stream);
 
 	return ret;
 
 fail_init:
-	misc_deregister(&embms_device);
+	embms_ioctl_deinit();
 	return ret;
 }
 
@@ -1005,7 +1018,7 @@ fail_init:
 
 static void __exit stop_embms(void)
 {
-	misc_deregister(&embms_device);
+	embms_ioctl_deinit();
 
 	if (rcu_dereference(embms_tm_multicast_recv))
 		RCU_INIT_POINTER(embms_tm_multicast_recv, NULL);

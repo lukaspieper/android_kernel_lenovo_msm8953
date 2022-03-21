@@ -258,7 +258,6 @@ static void dm9601_get_drvinfo(struct net_device *net,
 {
 	/* Inherit standard device info */
 	usbnet_get_drvinfo(net, info);
-	info->eedump_len = DM_EEPROM_LEN;
 }
 
 static u32 dm9601_get_link(struct net_device *net)
@@ -327,7 +326,7 @@ static int dm9601_set_mac_address(struct net_device *net, void *p)
 	struct usbnet *dev = netdev_priv(net);
 
 	if (!is_valid_ether_addr(addr->sa_data)) {
-		dev_err(&net->dev, "not setting invalid mac address %pKM\n",
+		dev_err(&net->dev, "not setting invalid mac address %pM\n",
 								addr->sa_data);
 		return -EINVAL;
 	}
@@ -394,7 +393,7 @@ static int dm9601_bind(struct usbnet *dev, struct usb_interface *intf)
 		memcpy(dev->net->dev_addr, mac, ETH_ALEN);
 	else {
 		printk(KERN_WARNING
-			"dm9601: No valid MAC address in EEPROM, using %pKM\n",
+			"dm9601: No valid MAC address in EEPROM, using %pM\n",
 			dev->net->dev_addr);
 		__dm9601_set_mac_address(dev);
 	}
@@ -623,10 +622,6 @@ static const struct usb_device_id products[] = {
 	},
 	{
 	 USB_DEVICE(0x0a46, 0x1269),	/* DM9621A USB to Fast Ethernet Adapter */
-	 .driver_info = (unsigned long)&dm9601_info,
-	},
-	{
-	 USB_DEVICE(0x0586, 0x3427),	/* ZyXEL Keenetic Plus DSL xDSL modem */
 	 .driver_info = (unsigned long)&dm9601_info,
 	},
 	{},			// END

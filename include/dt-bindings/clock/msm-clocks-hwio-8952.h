@@ -1,4 +1,5 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/*
+ * Copyright (c) 2014-2016, 2018-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -242,6 +243,7 @@
 /* XO clock */
 #define BB_CLK1_ID		0x1
 #define BB_CLK2_ID		0x2
+#define BB_CLK3_ID		0x3
 #define RF_CLK2_ID		0x5
 #define LN_BB_CLK_ID		0x8
 #define DIV_CLK1_ID		0xb
@@ -293,7 +295,8 @@
 #define dsi0_1phypll_source_val         3   /* byte1_clk & pclk1_clk */
 #define dsi1_0phypll_source_val         3   /* byte0_clk & pclk0_clk */
 #define dsi1_1phypll_source_val         1   /* byte1_clk & pclk1_clk */
-
+#define gpll0_gfx_source_val		5   /* GPLL0 GFX on QM215    */
+#define gpll6_gfx_source_val		6   /* GPLL6 GFX on QM215    */
 
 #define F(f, s, div, m, n) \
 	{ \
@@ -431,7 +434,33 @@ enum vdd_hf_pll_levels_8917 {
 	VDD_HF_PLL_NUM_8917,
 };
 
-int vdd_corner[] = {
+enum vdd_sr2_pll_levels_439 {
+	VDD_SR2_PLL_OFF_439,
+	VDD_SR2_PLL_SVS_439,
+	VDD_SR2_PLL_NOM_439,
+	VDD_SR2_PLL_TUR_439,
+	VDD_SR2_PLL_NUM_439,
+};
+
+enum vdd_dig_levels_439 {
+	VDD_DIG_NONE_439,
+	VDD_DIG_LOWER_439,
+	VDD_DIG_LOW_439,
+	VDD_DIG_NOMINAL_439,
+	VDD_DIG_NOM_PLUS_439,
+	VDD_DIG_HIGH_439,
+	VDD_DIG_NUM_439
+};
+
+enum vdd_hf_pll_levels_439 {
+	VDD_HF_PLL_OFF_439,
+	VDD_HF_PLL_SVS_439,
+	VDD_HF_PLL_NOM_439,
+	VDD_HF_PLL_TUR_439,
+	VDD_HF_PLL_NUM_439,
+};
+
+static int vdd_corner[] = {
 	RPM_REGULATOR_LEVEL_NONE,		/* VDD_DIG_NONE */
 	RPM_REGULATOR_LEVEL_SVS,		/* VDD_DIG_SVS */
 	RPM_REGULATOR_LEVEL_SVS_PLUS,		/* VDD_DIG_SVS_PLUS */

@@ -1,5 +1,4 @@
-/*
- * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, 2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,33 +12,34 @@
 
 #include <linux/types.h>
 #include <linux/spinlock.h>
+#include <net/rmnet_config.h>
 
 #ifndef _RMNET_MAP_H_
 #define _RMNET_MAP_H_
 
 struct rmnet_map_control_command_s {
-	uint8_t command_name;
+	u8  command_name;
 #ifndef RMNET_USE_BIG_ENDIAN_STRUCTS
-	uint8_t  cmd_type:2;
-	uint8_t  reserved:6;
+	u8  cmd_type:2;
+	u8  reserved:6;
 #else
-	uint8_t  reserved:6;
-	uint8_t  cmd_type:2;
+	u8  reserved:6;
+	u8  cmd_type:2;
 #endif /* RMNET_USE_BIG_ENDIAN_STRUCTS */
-	uint16_t reserved2;
-	uint32_t   transaction_id;
+	u16 reserved2;
+	u32 transaction_id;
 	union {
-		uint8_t  data[65528];
+		u8  data[65528];
 		struct {
 #ifndef RMNET_USE_BIG_ENDIAN_STRUCTS
-			uint16_t  ip_family:2;
-			uint16_t  reserved:14;
+			u16  ip_family:2;
+			u16  reserved:14;
 #else
-			uint16_t  reserved:14;
-			uint16_t  ip_family:2;
+			u16  reserved:14;
+			u16  ip_family:2;
 #endif /* RMNET_USE_BIG_ENDIAN_STRUCTS */
-			uint16_t  flow_control_seq_num;
-			uint32_t  qos_id;
+			u16  flow_control_seq_num;
+			u32  qos_id;
 		} flow_control;
 	};
 }  __aligned(1);
@@ -64,11 +64,11 @@ struct rmnet_map_ul_checksum_header_s {
 	unsigned short checksum_start_offset;
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	unsigned short checksum_insert_offset:14;
-	unsigned short udp_ip4_ind:1;
+	unsigned short udp_ind:1;
 	unsigned short cks_en:1;
 #elif defined(__BIG_ENDIAN_BITFIELD)
 	unsigned short cks_en:1;
-	unsigned short udp_ip4_ind:1;
+	unsigned short udp_ind:1;
 	unsigned short checksum_insert_offset:14;
 #else
 #error "Please fix <asm/byteorder.h>"
@@ -97,7 +97,7 @@ enum rmnet_map_checksum_errors_e {
 	RMNET_MAP_CHECKSUM_OK,
 	RMNET_MAP_CHECKSUM_VALID_FLAG_NOT_SET,
 	RMNET_MAP_CHECKSUM_VALIDATION_FAILED,
-	RMNET_MAP_CHECKSUM_ERR_UNKOWN,
+	RMNET_MAP_CHECKSUM_ERR_UNKNOWN,
 	RMNET_MAP_CHECKSUM_ERR_NOT_DATA_PACKET,
 	RMNET_MAP_CHECKSUM_ERR_BAD_BUFFER,
 	RMNET_MAP_CHECKSUM_ERR_UNKNOWN_IP_VERSION,
@@ -133,17 +133,19 @@ enum rmnet_map_agg_state_e {
 
 uint8_t rmnet_map_demultiplex(struct sk_buff *skb);
 struct sk_buff *rmnet_map_deaggregate(struct sk_buff *skb,
-				      struct rmnet_phys_ep_conf_s *config);
+				      struct rmnet_phys_ep_config *config);
 
 struct rmnet_map_header_s *rmnet_map_add_map_header(struct sk_buff *skb,
 						    int hdrlen, int pad);
 rx_handler_result_t rmnet_map_command(struct sk_buff *skb,
-				      struct rmnet_phys_ep_conf_s *config);
+				      struct rmnet_phys_ep_config *config);
 void rmnet_map_aggregate(struct sk_buff *skb,
-			 struct rmnet_phys_ep_conf_s *config);
+			 struct rmnet_phys_ep_config *config);
 
 int rmnet_map_checksum_downlink_packet(struct sk_buff *skb);
 int rmnet_map_checksum_uplink_packet(struct sk_buff *skb,
-	struct net_device *orig_dev, uint32_t egress_data_format);
-
+				     struct net_device *orig_dev,
+				     u32 egress_data_format);
+int rmnet_ul_aggregation_skip(struct sk_buff *skb, int offset);
+enum hrtimer_restart rmnet_map_flush_packet_queue(struct hrtimer *t);
 #endif /* _RMNET_MAP_H_ */

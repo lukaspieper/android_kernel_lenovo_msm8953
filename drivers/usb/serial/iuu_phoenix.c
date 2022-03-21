@@ -370,7 +370,7 @@ static void iuu_led_activity_on(struct urb *urb)
 	int result;
 	char *buf_ptr = port->write_urb->transfer_buffer;
 	*buf_ptr++ = IUU_SET_LED;
-	if (xmas == 1) {
+	if (xmas) {
 		get_random_bytes(buf_ptr, 6);
 		*(buf_ptr+7) = 1;
 	} else {
@@ -390,7 +390,7 @@ static void iuu_led_activity_off(struct urb *urb)
 	struct usb_serial_port *port = urb->context;
 	int result;
 	char *buf_ptr = port->write_urb->transfer_buffer;
-	if (xmas == 1) {
+	if (xmas) {
 		iuu_rxcmd(urb);
 		return;
 	} else {
@@ -717,16 +717,14 @@ static int iuu_uart_write(struct tty_struct *tty, struct usb_serial_port *port,
 	struct iuu_private *priv = usb_get_serial_port_data(port);
 	unsigned long flags;
 
-	spin_lock_irqsave(&priv->lock, flags);
+	if (count > 256)
+		return -ENOMEM;
 
-	count = min(count, 256 - priv->writelen);
-	if (count == 0)
-		goto out;
+	spin_lock_irqsave(&priv->lock, flags);
 
 	/* fill the buffer */
 	memcpy(priv->writebuf + priv->writelen, buf, count);
 	priv->writelen += count;
-out:
 	spin_unlock_irqrestore(&priv->lock, flags);
 
 	return count;

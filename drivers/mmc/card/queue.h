@@ -1,7 +1,13 @@
 #ifndef MMC_QUEUE_H
 #define MMC_QUEUE_H
 
-#define MMC_REQ_SPECIAL_MASK	(REQ_DISCARD | REQ_FLUSH)
+static inline bool mmc_req_is_special(struct request *req)
+{
+	return req &&
+		(req_op(req) == REQ_OP_FLUSH ||
+		 req_op(req) == REQ_OP_DISCARD ||
+		 req_op(req) == REQ_OP_SECURE_ERASE);
+}
 
 struct request;
 struct task_struct;
@@ -12,6 +18,7 @@ struct mmc_blk_request {
 	struct mmc_command	cmd;
 	struct mmc_command	stop;
 	struct mmc_data		data;
+	int			retune_retry_done;
 };
 
 enum mmc_packed_type {
@@ -51,7 +58,6 @@ struct mmc_queue {
 	unsigned long		flags;
 #define MMC_QUEUE_SUSPENDED		0
 #define MMC_QUEUE_NEW_REQUEST		1
-
 	int (*issue_fn)(struct mmc_queue *, struct request *);
 	int (*cmdq_issue_fn)(struct mmc_queue *,
 			     struct request *);
@@ -73,9 +79,17 @@ struct mmc_queue {
 	struct completion	cmdq_pending_req_done;
 	struct completion	cmdq_shutdown_complete;
 	struct request		*cmdq_req_peeked;
-	int (*err_check_fn) (struct mmc_card *, struct mmc_async_req *);
-	void (*packed_test_fn) (struct request_queue *, struct mmc_queue_req *);
+	int (*err_check_fn)(struct mmc_card *, struct mmc_async_req *);
+	void (*packed_test_fn)(struct request_queue *, struct mmc_queue_req *);
 	void (*cmdq_shutdown)(struct mmc_queue *);
+#ifdef CONFIG_MMC_SIMULATE_MAX_SPEED
+	atomic_t max_write_speed;
+	atomic_t max_read_speed;
+	atomic_t cache_size;
+	/* i/o tracking */
+	atomic_long_t cache_used;
+	unsigned long cache_jiffies;
+#endif
 };
 
 extern int mmc_init_queue(struct mmc_queue *, struct mmc_card *, spinlock_t *,

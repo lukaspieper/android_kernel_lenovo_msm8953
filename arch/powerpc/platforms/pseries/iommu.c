@@ -36,6 +36,8 @@
 #include <linux/crash_dump.h>
 #include <linux/memory.h>
 #include <linux/of.h>
+#include <linux/iommu.h>
+#include <linux/rculist.h>
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/rtas.h>
@@ -49,40 +51,79 @@
 #include <asm/mmzone.h>
 #include <asm/plpar_wrappers.h>
 
+#include "pseries.h"
 
-static void tce_invalidate_pSeries_sw(struct iommu_table *tbl,
-				      __be64 *startp, __be64 *endp)
+static struct iommu_table_group *iommu_pseries_alloc_group(int node)
 {
-	u64 __iomem *invalidate = (u64 __iomem *)tbl->it_index;
-	unsigned long start, end, inc;
+	struct iommu_table_group *table_group = NULL;
+	struct iommu_table *tbl = NULL;
+	struct iommu_table_group_link *tgl = NULL;
 
-	start = __pa(startp);
-	end = __pa(endp);
-	inc = L1_CACHE_BYTES; /* invalidate a cacheline of TCEs at a time */
+	table_group = kzalloc_node(sizeof(struct iommu_table_group), GFP_KERNEL,
+			   node);
+	if (!table_group)
+		goto fail_exit;
 
-	/* If this is non-zero, change the format.  We shift the
-	 * address and or in the magic from the device tree. */
-	if (tbl->it_busno) {
-		start <<= 12;
-		end <<= 12;
-		inc <<= 12;
-		start |= tbl->it_busno;
-		end |= tbl->it_busno;
+	tbl = kzalloc_node(sizeof(struct iommu_table), GFP_KERNEL, node);
+	if (!tbl)
+		goto fail_exit;
+
+	tgl = kzalloc_node(sizeof(struct iommu_table_group_link), GFP_KERNEL,
+			node);
+	if (!tgl)
+		goto fail_exit;
+
+	INIT_LIST_HEAD_RCU(&tbl->it_group_list);
+	tgl->table_group = table_group;
+	list_add_rcu(&tgl->next, &tbl->it_group_list);
+
+	table_group->tables[0] = tbl;
+
+	return table_group;
+
+fail_exit:
+	kfree(tgl);
+	kfree(table_group);
+	kfree(tbl);
+
+	return NULL;
+}
+
+static void iommu_pseries_free_group(struct iommu_table_group *table_group,
+		const char *node_name)
+{
+	struct iommu_table *tbl;
+#ifdef CONFIG_IOMMU_API
+	struct iommu_table_group_link *tgl;
+#endif
+
+	if (!table_group)
+		return;
+
+	tbl = table_group->tables[0];
+#ifdef CONFIG_IOMMU_API
+	tgl = list_first_entry_or_null(&tbl->it_group_list,
+			struct iommu_table_group_link, next);
+
+	WARN_ON_ONCE(!tgl);
+	if (tgl) {
+		list_del_rcu(&tgl->next);
+		kfree(tgl);
 	}
-
-	end |= inc - 1; /* round up end to be different than start */
-
-	mb(); /* Make sure TCEs in memory are written */
-	while (start <= end) {
-		out_be64(invalidate, start);
-		start += inc;
+	if (table_group->group) {
+		iommu_group_put(table_group->group);
+		BUG_ON(table_group->group);
 	}
+#endif
+	iommu_free_table(tbl, node_name);
+
+	kfree(table_group);
 }
 
 static int tce_build_pSeries(struct iommu_table *tbl, long index,
 			      long npages, unsigned long uaddr,
 			      enum dma_data_direction direction,
-			      struct dma_attrs *attrs)
+			      unsigned long attrs)
 {
 	u64 proto_tce;
 	__be64 *tcep, *tces;
@@ -103,9 +144,6 @@ static int tce_build_pSeries(struct iommu_table *tbl, long index,
 		uaddr += TCE_PAGE_SIZE;
 		tcep++;
 	}
-
-	if (tbl->it_type & TCE_PCI_SWINV_CREATE)
-		tce_invalidate_pSeries_sw(tbl, tces, tcep - 1);
 	return 0;
 }
 
@@ -118,9 +156,6 @@ static void tce_free_pSeries(struct iommu_table *tbl, long index, long npages)
 
 	while (npages--)
 		*(tcep++) = 0;
-
-	if (tbl->it_type & TCE_PCI_SWINV_FREE)
-		tce_invalidate_pSeries_sw(tbl, tces, tcep - 1);
 }
 
 static unsigned long tce_get_pseries(struct iommu_table *tbl, long index)
@@ -132,13 +167,13 @@ static unsigned long tce_get_pseries(struct iommu_table *tbl, long index)
 	return be64_to_cpu(*tcep);
 }
 
-static void tce_free_pSeriesLP(struct iommu_table*, long, long);
+static void tce_free_pSeriesLP(unsigned long liobn, long, long);
 static void tce_freemulti_pSeriesLP(struct iommu_table*, long, long);
 
-static int tce_build_pSeriesLP(struct iommu_table *tbl, long tcenum,
+static int tce_build_pSeriesLP(unsigned long liobn, long tcenum, long tceshift,
 				long npages, unsigned long uaddr,
 				enum dma_data_direction direction,
-				struct dma_attrs *attrs)
+				unsigned long attrs)
 {
 	u64 rc = 0;
 	u64 proto_tce, tce;
@@ -146,25 +181,25 @@ static int tce_build_pSeriesLP(struct iommu_table *tbl, long tcenum,
 	int ret = 0;
 	long tcenum_start = tcenum, npages_start = npages;
 
-	rpn = __pa(uaddr) >> TCE_SHIFT;
+	rpn = __pa(uaddr) >> tceshift;
 	proto_tce = TCE_PCI_READ;
 	if (direction != DMA_TO_DEVICE)
 		proto_tce |= TCE_PCI_WRITE;
 
 	while (npages--) {
-		tce = proto_tce | (rpn & TCE_RPN_MASK) << TCE_RPN_SHIFT;
-		rc = plpar_tce_put((u64)tbl->it_index, (u64)tcenum << 12, tce);
+		tce = proto_tce | (rpn & TCE_RPN_MASK) << tceshift;
+		rc = plpar_tce_put((u64)liobn, (u64)tcenum << tceshift, tce);
 
 		if (unlikely(rc == H_NOT_ENOUGH_RESOURCES)) {
 			ret = (int)rc;
-			tce_free_pSeriesLP(tbl, tcenum_start,
+			tce_free_pSeriesLP(liobn, tcenum_start,
 			                   (npages_start - (npages + 1)));
 			break;
 		}
 
 		if (rc && printk_ratelimit()) {
 			printk("tce_build_pSeriesLP: plpar_tce_put failed. rc=%lld\n", rc);
-			printk("\tindex   = 0x%llx\n", (u64)tbl->it_index);
+			printk("\tindex   = 0x%llx\n", (u64)liobn);
 			printk("\ttcenum  = 0x%llx\n", (u64)tcenum);
 			printk("\ttce val = 0x%llx\n", tce );
 			dump_stack();
@@ -181,7 +216,7 @@ static DEFINE_PER_CPU(__be64 *, tce_page);
 static int tce_buildmulti_pSeriesLP(struct iommu_table *tbl, long tcenum,
 				     long npages, unsigned long uaddr,
 				     enum dma_data_direction direction,
-				     struct dma_attrs *attrs)
+				     unsigned long attrs)
 {
 	u64 rc = 0;
 	u64 proto_tce;
@@ -192,14 +227,15 @@ static int tce_buildmulti_pSeriesLP(struct iommu_table *tbl, long tcenum,
 	int ret = 0;
 	unsigned long flags;
 
-	if (npages == 1) {
-		return tce_build_pSeriesLP(tbl, tcenum, npages, uaddr,
+	if ((npages == 1) || !firmware_has_feature(FW_FEATURE_MULTITCE)) {
+		return tce_build_pSeriesLP(tbl->it_index, tcenum,
+					   tbl->it_page_shift, npages, uaddr,
 		                           direction, attrs);
 	}
 
 	local_irq_save(flags);	/* to protect tcep and the page behind it */
 
-	tcep = __get_cpu_var(tce_page);
+	tcep = __this_cpu_read(tce_page);
 
 	/* This is safe to do since interrupts are off when we're called
 	 * from iommu_alloc{,_sg}()
@@ -209,10 +245,11 @@ static int tce_buildmulti_pSeriesLP(struct iommu_table *tbl, long tcenum,
 		/* If allocation fails, fall back to the loop implementation */
 		if (!tcep) {
 			local_irq_restore(flags);
-			return tce_build_pSeriesLP(tbl, tcenum, npages, uaddr,
-					    direction, attrs);
+			return tce_build_pSeriesLP(tbl->it_index, tcenum,
+					tbl->it_page_shift,
+					npages, uaddr, direction, attrs);
 		}
-		__get_cpu_var(tce_page) = tcep;
+		__this_cpu_write(tce_page, tcep);
 	}
 
 	rpn = __pa(uaddr) >> TCE_SHIFT;
@@ -261,16 +298,16 @@ static int tce_buildmulti_pSeriesLP(struct iommu_table *tbl, long tcenum,
 	return ret;
 }
 
-static void tce_free_pSeriesLP(struct iommu_table *tbl, long tcenum, long npages)
+static void tce_free_pSeriesLP(unsigned long liobn, long tcenum, long npages)
 {
 	u64 rc;
 
 	while (npages--) {
-		rc = plpar_tce_put((u64)tbl->it_index, (u64)tcenum << 12, 0);
+		rc = plpar_tce_put((u64)liobn, (u64)tcenum << 12, 0);
 
 		if (rc && printk_ratelimit()) {
 			printk("tce_free_pSeriesLP: plpar_tce_put failed. rc=%lld\n", rc);
-			printk("\tindex   = 0x%llx\n", (u64)tbl->it_index);
+			printk("\tindex   = 0x%llx\n", (u64)liobn);
 			printk("\ttcenum  = 0x%llx\n", (u64)tcenum);
 			dump_stack();
 		}
@@ -283,6 +320,9 @@ static void tce_free_pSeriesLP(struct iommu_table *tbl, long tcenum, long npages
 static void tce_freemulti_pSeriesLP(struct iommu_table *tbl, long tcenum, long npages)
 {
 	u64 rc;
+
+	if (!firmware_has_feature(FW_FEATURE_MULTITCE))
+		return tce_free_pSeriesLP(tbl->it_index, tcenum, npages);
 
 	rc = plpar_tce_stuff((u64)tbl->it_index, (u64)tcenum << 12, 0, npages);
 
@@ -397,8 +437,21 @@ static int tce_setrange_multi_pSeriesLP(unsigned long start_pfn,
 	u64 rc = 0;
 	long l, limit;
 
+	if (!firmware_has_feature(FW_FEATURE_MULTITCE)) {
+		unsigned long tceshift = be32_to_cpu(maprange->tce_shift);
+		unsigned long dmastart = (start_pfn << PAGE_SHIFT) +
+				be64_to_cpu(maprange->dma_base);
+		unsigned long tcenum = dmastart >> tceshift;
+		unsigned long npages = num_pfn << PAGE_SHIFT >> tceshift;
+		void *uaddr = __va(start_pfn << PAGE_SHIFT);
+
+		return tce_build_pSeriesLP(be32_to_cpu(maprange->liobn),
+				tcenum, tceshift, npages, (unsigned long) uaddr,
+				DMA_BIDIRECTIONAL, 0);
+	}
+
 	local_irq_disable();	/* to protect tcep and the page behind it */
-	tcep = __get_cpu_var(tce_page);
+	tcep = __this_cpu_read(tce_page);
 
 	if (!tcep) {
 		tcep = (__be64 *)__get_free_page(GFP_ATOMIC);
@@ -406,7 +459,7 @@ static int tce_setrange_multi_pSeriesLP(unsigned long start_pfn,
 			local_irq_enable();
 			return -ENOMEM;
 		}
-		__get_cpu_var(tce_page) = tcep;
+		__this_cpu_write(tce_page, tcep);
 	}
 
 	proto_tce = TCE_PCI_READ | TCE_PCI_WRITE;
@@ -459,14 +512,12 @@ static int tce_setrange_multi_pSeriesLP_walk(unsigned long start_pfn,
 	return tce_setrange_multi_pSeriesLP(start_pfn, num_pfn, arg);
 }
 
-
-#ifdef CONFIG_PCI
 static void iommu_table_setparms(struct pci_controller *phb,
 				 struct device_node *dn,
 				 struct iommu_table *tbl)
 {
 	struct device_node *node;
-	const unsigned long *basep, *sw_inval;
+	const unsigned long *basep;
 	const u32 *sizep;
 
 	node = phb->dn;
@@ -504,22 +555,6 @@ static void iommu_table_setparms(struct pci_controller *phb,
 	tbl->it_index = 0;
 	tbl->it_blocksize = 16;
 	tbl->it_type = TCE_PCI;
-
-	sw_inval = of_get_property(node, "linux,tce-sw-invalidate-info", NULL);
-	if (sw_inval) {
-		/*
-		 * This property contains information on how to
-		 * invalidate the TCE entry.  The first property is
-		 * the base MMIO address used to invalidate entries.
-		 * The second property tells us the format of the TCE
-		 * invalidate (whether it needs to be shifted) and
-		 * some magic routing info to add to our invalidate
-		 * command.
-		 */
-		tbl->it_index = (unsigned long) ioremap(sw_inval[0], 8);
-		tbl->it_busno = sw_inval[1]; /* overload this with magic */
-		tbl->it_type = TCE_PCI_SWINV_CREATE | TCE_PCI_SWINV_FREE;
-	}
 }
 
 /*
@@ -544,6 +579,12 @@ static void iommu_table_setparms_lpar(struct pci_controller *phb,
 	tbl->it_offset = offset >> tbl->it_page_shift;
 	tbl->it_size = size >> tbl->it_page_shift;
 }
+
+struct iommu_table_ops iommu_table_pseries_ops = {
+	.set = tce_build_pSeries,
+	.clear = tce_free_pSeries,
+	.get = tce_get_pseries
+};
 
 static void pci_dma_bus_setup_pSeries(struct pci_bus *bus)
 {
@@ -574,8 +615,7 @@ static void pci_dma_bus_setup_pSeries(struct pci_bus *bus)
 	while (isa_dn && isa_dn != dn)
 		isa_dn = isa_dn->parent;
 
-	if (isa_dn_orig)
-		of_node_put(isa_dn_orig);
+	of_node_put(isa_dn_orig);
 
 	/* Count number of direct PCI children of the PHB. */
 	for (children = 0, tmp = dn->child; tmp; tmp = tmp->sibling)
@@ -610,12 +650,13 @@ static void pci_dma_bus_setup_pSeries(struct pci_bus *bus)
 	pci->phb->dma_window_size = 0x8000000ul;
 	pci->phb->dma_window_base_cur = 0x8000000ul;
 
-	tbl = kzalloc_node(sizeof(struct iommu_table), GFP_KERNEL,
-			   pci->phb->node);
+	pci->table_group = iommu_pseries_alloc_group(pci->phb->node);
+	tbl = pci->table_group->tables[0];
 
 	iommu_table_setparms(pci->phb, dn, tbl);
-	pci->iommu_table = iommu_init_table(tbl, pci->phb->node);
-	iommu_register_group(tbl, pci_domain_nr(bus), 0);
+	tbl->it_ops = &iommu_table_pseries_ops;
+	iommu_init_table(tbl, pci->phb->node);
+	iommu_register_group(pci->table_group, pci_domain_nr(bus), 0);
 
 	/* Divide the rest (1.75GB) among the children */
 	pci->phb->dma_window_size = 0x80000000ul;
@@ -625,6 +666,11 @@ static void pci_dma_bus_setup_pSeries(struct pci_bus *bus)
 	pr_debug("ISA/IDE, window size is 0x%llx\n", pci->phb->dma_window_size);
 }
 
+struct iommu_table_ops iommu_table_lpar_multi_ops = {
+	.set = tce_buildmulti_pSeriesLP,
+	.clear = tce_freemulti_pSeriesLP,
+	.get = tce_get_pSeriesLP
+};
 
 static void pci_dma_bus_setup_pSeriesLP(struct pci_bus *bus)
 {
@@ -653,15 +699,17 @@ static void pci_dma_bus_setup_pSeriesLP(struct pci_bus *bus)
 	ppci = PCI_DN(pdn);
 
 	pr_debug("  parent is %s, iommu_table: 0x%p\n",
-		 pdn->full_name, ppci->iommu_table);
+		 pdn->full_name, ppci->table_group);
 
-	if (!ppci->iommu_table) {
-		tbl = kzalloc_node(sizeof(struct iommu_table), GFP_KERNEL,
-				   ppci->phb->node);
+	if (!ppci->table_group) {
+		ppci->table_group = iommu_pseries_alloc_group(ppci->phb->node);
+		tbl = ppci->table_group->tables[0];
 		iommu_table_setparms_lpar(ppci->phb, pdn, tbl, dma_window);
-		ppci->iommu_table = iommu_init_table(tbl, ppci->phb->node);
-		iommu_register_group(tbl, pci_domain_nr(bus), 0);
-		pr_debug("  created table: %p\n", ppci->iommu_table);
+		tbl->it_ops = &iommu_table_lpar_multi_ops;
+		iommu_init_table(tbl, ppci->phb->node);
+		iommu_register_group(ppci->table_group,
+				pci_domain_nr(bus), 0);
+		pr_debug("  created table: %p\n", ppci->table_group);
 	}
 }
 
@@ -683,13 +731,15 @@ static void pci_dma_dev_setup_pSeries(struct pci_dev *dev)
 		struct pci_controller *phb = PCI_DN(dn)->phb;
 
 		pr_debug(" --> first child, no bridge. Allocating iommu table.\n");
-		tbl = kzalloc_node(sizeof(struct iommu_table), GFP_KERNEL,
-				   phb->node);
+		PCI_DN(dn)->table_group = iommu_pseries_alloc_group(phb->node);
+		tbl = PCI_DN(dn)->table_group->tables[0];
 		iommu_table_setparms(phb, dn, tbl);
-		PCI_DN(dn)->iommu_table = iommu_init_table(tbl, phb->node);
-		iommu_register_group(tbl, pci_domain_nr(phb->bus), 0);
-		set_iommu_table_base_and_group(&dev->dev,
-					       PCI_DN(dn)->iommu_table);
+		tbl->it_ops = &iommu_table_pseries_ops;
+		iommu_init_table(tbl, phb->node);
+		iommu_register_group(PCI_DN(dn)->table_group,
+				pci_domain_nr(phb->bus), 0);
+		set_iommu_table_base(&dev->dev, tbl);
+		iommu_add_device(&dev->dev);
 		return;
 	}
 
@@ -697,13 +747,14 @@ static void pci_dma_dev_setup_pSeries(struct pci_dev *dev)
 	 * an already allocated iommu table is found and use that.
 	 */
 
-	while (dn && PCI_DN(dn) && PCI_DN(dn)->iommu_table == NULL)
+	while (dn && PCI_DN(dn) && PCI_DN(dn)->table_group == NULL)
 		dn = dn->parent;
 
-	if (dn && PCI_DN(dn))
-		set_iommu_table_base_and_group(&dev->dev,
-					       PCI_DN(dn)->iommu_table);
-	else
+	if (dn && PCI_DN(dn)) {
+		set_iommu_table_base(&dev->dev,
+				PCI_DN(dn)->table_group->tables[0]);
+		iommu_add_device(&dev->dev);
+	} else
 		printk(KERN_WARNING "iommu: Device %s has no iommu table\n",
 		       pci_name(dev));
 }
@@ -1088,7 +1139,7 @@ static void pci_dma_dev_setup_pSeriesLP(struct pci_dev *dev)
 	dn = pci_device_to_OF_node(dev);
 	pr_debug("  node is %s\n", dn->full_name);
 
-	for (pdn = dn; pdn && PCI_DN(pdn) && !PCI_DN(pdn)->iommu_table;
+	for (pdn = dn; pdn && PCI_DN(pdn) && !PCI_DN(pdn)->table_group;
 	     pdn = pdn->parent) {
 		dma_window = of_get_property(pdn, "ibm,dma-window", NULL);
 		if (dma_window)
@@ -1104,18 +1155,21 @@ static void pci_dma_dev_setup_pSeriesLP(struct pci_dev *dev)
 	pr_debug("  parent is %s\n", pdn->full_name);
 
 	pci = PCI_DN(pdn);
-	if (!pci->iommu_table) {
-		tbl = kzalloc_node(sizeof(struct iommu_table), GFP_KERNEL,
-				   pci->phb->node);
+	if (!pci->table_group) {
+		pci->table_group = iommu_pseries_alloc_group(pci->phb->node);
+		tbl = pci->table_group->tables[0];
 		iommu_table_setparms_lpar(pci->phb, pdn, tbl, dma_window);
-		pci->iommu_table = iommu_init_table(tbl, pci->phb->node);
-		iommu_register_group(tbl, pci_domain_nr(pci->phb->bus), 0);
-		pr_debug("  created table: %p\n", pci->iommu_table);
+		tbl->it_ops = &iommu_table_lpar_multi_ops;
+		iommu_init_table(tbl, pci->phb->node);
+		iommu_register_group(pci->table_group,
+				pci_domain_nr(pci->phb->bus), 0);
+		pr_debug("  created table: %p\n", pci->table_group);
 	} else {
-		pr_debug("  found DMA window, table: %p\n", pci->iommu_table);
+		pr_debug("  found DMA window, table: %p\n", pci->table_group);
 	}
 
-	set_iommu_table_base_and_group(&dev->dev, pci->iommu_table);
+	set_iommu_table_base(&dev->dev, pci->table_group->tables[0]);
+	iommu_add_device(&dev->dev);
 }
 
 static int dma_set_mask_pSeriesLP(struct device *dev, u64 dma_mask)
@@ -1145,7 +1199,7 @@ static int dma_set_mask_pSeriesLP(struct device *dev, u64 dma_mask)
 		 * search upwards in the tree until we either hit a dma-window
 		 * property, OR find a parent with a table already allocated.
 		 */
-		for (pdn = dn; pdn && PCI_DN(pdn) && !PCI_DN(pdn)->iommu_table;
+		for (pdn = dn; pdn && PCI_DN(pdn) && !PCI_DN(pdn)->table_group;
 				pdn = pdn->parent) {
 			dma_window = of_get_property(pdn, "ibm,dma-window", NULL);
 			if (dma_window)
@@ -1162,11 +1216,10 @@ static int dma_set_mask_pSeriesLP(struct device *dev, u64 dma_mask)
 		}
 	}
 
-	/* fall back on iommu ops, restore table pointer with ops */
+	/* fall back on iommu ops */
 	if (!ddw_enabled && get_dma_ops(dev) != &dma_iommu_ops) {
 		dev_info(dev, "Restoring 32-bit DMA via iommu\n");
 		set_dma_ops(dev, &dma_iommu_ops);
-		pci_dma_dev_setup_pSeriesLP(pdev);
 	}
 
 check_mask:
@@ -1189,7 +1242,7 @@ static u64 dma_get_required_mask_pSeriesLP(struct device *dev)
 		dn = pci_device_to_OF_node(pdev);
 
 		/* search upwards for ibm,dma-window */
-		for (; dn && PCI_DN(dn) && !PCI_DN(dn)->iommu_table;
+		for (; dn && PCI_DN(dn) && !PCI_DN(dn)->table_group;
 				dn = dn->parent)
 			if (of_get_property(dn, "ibm,dma-window", NULL))
 				break;
@@ -1201,15 +1254,6 @@ static u64 dma_get_required_mask_pSeriesLP(struct device *dev)
 
 	return dma_iommu_ops.get_required_mask(dev);
 }
-
-#else  /* CONFIG_PCI */
-#define pci_dma_bus_setup_pSeries	NULL
-#define pci_dma_dev_setup_pSeries	NULL
-#define pci_dma_bus_setup_pSeriesLP	NULL
-#define pci_dma_dev_setup_pSeriesLP	NULL
-#define dma_set_mask_pSeriesLP		NULL
-#define dma_get_required_mask_pSeriesLP	NULL
-#endif /* !CONFIG_PCI */
 
 static int iommu_mem_notifier(struct notifier_block *nb, unsigned long action,
 		void *data)
@@ -1269,8 +1313,9 @@ static int iommu_reconfig_notifier(struct notifier_block *nb, unsigned long acti
 		 * the device node.
 		 */
 		remove_ddw(np, false);
-		if (pci && pci->iommu_table)
-			iommu_free_table(pci->iommu_table, np->full_name);
+		if (pci && pci->table_group)
+			iommu_pseries_free_group(pci->table_group,
+					np->full_name);
 
 		spin_lock(&direct_window_list_lock);
 		list_for_each_entry(window, &direct_window_list, list) {
@@ -1300,24 +1345,13 @@ void iommu_init_early_pSeries(void)
 		return;
 
 	if (firmware_has_feature(FW_FEATURE_LPAR)) {
-		if (firmware_has_feature(FW_FEATURE_MULTITCE)) {
-			ppc_md.tce_build = tce_buildmulti_pSeriesLP;
-			ppc_md.tce_free	 = tce_freemulti_pSeriesLP;
-		} else {
-			ppc_md.tce_build = tce_build_pSeriesLP;
-			ppc_md.tce_free	 = tce_free_pSeriesLP;
-		}
-		ppc_md.tce_get   = tce_get_pSeriesLP;
-		ppc_md.pci_dma_bus_setup = pci_dma_bus_setup_pSeriesLP;
-		ppc_md.pci_dma_dev_setup = pci_dma_dev_setup_pSeriesLP;
+		pseries_pci_controller_ops.dma_bus_setup = pci_dma_bus_setup_pSeriesLP;
+		pseries_pci_controller_ops.dma_dev_setup = pci_dma_dev_setup_pSeriesLP;
 		ppc_md.dma_set_mask = dma_set_mask_pSeriesLP;
 		ppc_md.dma_get_required_mask = dma_get_required_mask_pSeriesLP;
 	} else {
-		ppc_md.tce_build = tce_build_pSeries;
-		ppc_md.tce_free  = tce_free_pSeries;
-		ppc_md.tce_get   = tce_get_pseries;
-		ppc_md.pci_dma_bus_setup = pci_dma_bus_setup_pSeries;
-		ppc_md.pci_dma_dev_setup = pci_dma_dev_setup_pSeries;
+		pseries_pci_controller_ops.dma_bus_setup = pci_dma_bus_setup_pSeries;
+		pseries_pci_controller_ops.dma_dev_setup = pci_dma_dev_setup_pSeries;
 	}
 
 
@@ -1333,11 +1367,11 @@ static int __init disable_multitce(char *str)
 	    firmware_has_feature(FW_FEATURE_LPAR) &&
 	    firmware_has_feature(FW_FEATURE_MULTITCE)) {
 		printk(KERN_INFO "Disabling MULTITCE firmware feature\n");
-		ppc_md.tce_build = tce_build_pSeriesLP;
-		ppc_md.tce_free	 = tce_free_pSeriesLP;
 		powerpc_firmware_features &= ~FW_FEATURE_MULTITCE;
 	}
 	return 1;
 }
 
 __setup("multitce=", disable_multitce);
+
+machine_subsys_initcall_sync(pseries, tce_iommu_bus_notifier_init);

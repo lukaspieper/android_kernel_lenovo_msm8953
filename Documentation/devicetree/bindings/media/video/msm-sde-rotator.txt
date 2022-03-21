@@ -15,6 +15,8 @@ Required properties
 - clocks:		List of Phandles for clock device nodes
 			needed by the device.
 - clock-names:		List of clock names needed by the device.
+- #list-cells:		Number of rotator cells, must be 1
+
 Bus Scaling Data:
 - qcom,msm-bus,name:		String property describing rotator client.
 - qcom,msm-bus,num-cases:	This is the the number of Bus Scaling use cases
@@ -79,8 +81,53 @@ Optional properties
 				limits.
 - qcom,mdss-rot-vbif-qos-setting: This array is used to program vbif qos remapper register
 				  priority for rotator clients.
+- qcom,mdss-rot-vbif-memtype:	Array of u32 vbif memory type settings for each xin port.
+- qcom,mdss-rot-cdp-setting:	Integer array of size two, to indicate client driven
+				prefetch is available or not. Index 0 represents
+				if CDP is enabled for read and index 1, if CDP
+				is enabled for write operation.
+- qcom,mdss-rot-qos-lut		A 4 cell property with the format of <rd_lut_0,
+				rd_lut_1, wr_lut_0, wr_lut_1> indicating the qos
+				lut settings for the rotator sspp and writeback
+				client.
+- qcom,mdss-rot-danger-lut	A two cell property with the format of <rd_lut,
+				wr_lut> indicating the danger lut settings for
+				the rotator sspp and writeback client.
+- qcom,mdss-rot-safe-lut	A two cell property with the format of <rd_lut,
+				wr_lut> indicating the safe lut settings for the
+				rotator sspp and writeback client.
+- qcom,mdss-inline-rot-qos-lut:	A 4 cell property with the format of <rd_lut_0,
+				rd_lut_1, wr_lut_0, wr_lut_1> indicating the qos
+				lut settings for the inline rotator sspp and
+				writeback client.
+- qcom,mdss-inline-rot-danger-lut: A two cell property with the format of
+				<rd_lut, wr_lut> indicating the danger lut
+				settings for the inline rotator sspp and
+				writeback client.
+- qcom,mdss-inline-rot-safe-lut: A two cell property with the format of
+				<rd_lut, wr_lut> indicating the safe lut
+				settings for the inline rotator sspp and
+				writeback client.
+- qcom,mdss-rot-qos-cpu-mask: A u32 value indicating desired PM QoS CPU
+				affine mask.
+- qcom,mdss-rot-qos-cpu-dma-latency: A u32 value indicating desired PM QoS CPU DMA
+				latency in usec.
 - qcom,mdss-rot-mode:		This is integer value indicates operation mode
 				of the rotator device
+- qcom,mdss-sbuf-headroom:	This integer value indicates stream buffer headroom in lines.
+- qcom,mdss-rot-linewidth:	This integer value indicates rotator line width supported in pixels.
+- cache-slice-names:		A set of names that identify the usecase names of a client that uses
+				cache slice. These strings are used to look up the cache slice
+				entries by name.
+- cache-slices:			The tuple has phandle to llcc device as the first argument and the
+				second argument is the usecase id of the client.
+- qcom,sde-ubwc-malsize:	A u32 property to specify the default UBWC
+				minimum allowable length configuration value.
+- qcom,sde-ubwc-swizzle:	A u32 property to specify the default UBWC
+				swizzle configuration value.
+- qcom,rot-reg-bus:		Property to provide Bus scaling for register
+				access for rotator blocks.
+- power-domains:		A phandle to respective power domain node.
 
 Subnode properties:
 - compatible:		Compatible name used in smmu v2.
@@ -102,8 +149,13 @@ Example:
 		reg = <0xfd900000 0x22100>,
 			<0xfd925000 0x1000>;
 		reg-names = "mdp_phys", "rot_vbif_phys";
+
+		#list-cells = <1>;
+
 		interrupt-parent = <&mdss_mdp>;
 		interrupts = <2 0>;
+
+		power-domains = <&mdss_mdp>;
 
 		qcom,mdss-mdp-reg-offset = <0x00001000>;
 
@@ -115,6 +167,8 @@ Example:
 		clock-names = "iface_clk", "rot_core_clk";
 
 		qcom,mdss-highest-bank-bit = <0x2>;
+		qcom,sde-ubwc-malsize = <0>;
+		qcom,sde-ubwc-swizzle = <1>;
 
 		/* Bus Scale Settings */
 		qcom,msm-bus,name = "mdss_rotator";
@@ -127,9 +181,37 @@ Example:
 
 		/* VBIF QoS remapper settings*/
 		qcom,mdss-rot-vbif-qos-setting = <1 1 1 1>;
+		qcom,mdss-rot-vbif-memtype = <3 3>;
+
+		com,mdss-rot-cdp-setting = <1 1>;
 
 		qcom,mdss-default-ot-rd-limit = <8>;
 		qcom,mdss-default-ot-wr-limit = <16>;
+
+		qcom,mdss-rot-qos-lut = <0x0 0x0 0x0 0x0>;
+		qcom,mdss-rot-danger-lut = <0x0 0x0>;
+		qcom,mdss-rot-safe-lut = <0x0000ffff 0x0>;
+
+		qcom,mdss-rot-qos-cpu-mask = <0xf>;
+		qcom,mdss-rot-qos-cpu-dma-latency = <75>;
+
+		qcom,mdss-inline-rot-qos-lut = <0x0 0x0 0x00112233 0x44556677>;
+		qcom,mdss-inline-rot-danger-lut = <0x0 0x0000ffff>;
+		qcom,mdss-inline-rot-safe-lut = <0x0 0x0000ff00>;
+
+		qcom,mdss-sbuf-headroom = <20>;
+		cache-slice-names = "rotator";
+		cache-slices = <&llcc 4>;
+
+		rot_reg: qcom,rot-reg-bus {
+			qcom,msm-bus,name = "mdss_rot_reg";
+			qcom,msm-bus,num-cases = <2>;
+			qcom,msm-bus,num-paths = <1>;
+			qcom,msm-bus,active-only;
+			qcom,msm-bus,vectors-KBps =
+				<1 590 0 0>,
+				<1 590 0 76800>;
+		};
 
 		smmu_rot_unsec: qcom,smmu_rot_unsec_cb {
 			compatible = "qcom,smmu_sde_rot_unsec";

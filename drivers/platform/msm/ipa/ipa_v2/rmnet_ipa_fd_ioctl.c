@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2015, 2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -50,6 +50,7 @@
 #define WAN_IOC_QUERY_TETHER_STATS_ALL32 _IOWR(WAN_IOC_MAGIC, \
 		WAN_IOCTL_QUERY_TETHER_STATS_ALL, \
 		compat_uptr_t)
+
 #endif
 
 static unsigned int dev_num = 1;
@@ -161,7 +162,7 @@ static long wan_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 		if (rmnet_ipa_poll_tethering_stats(
 		(struct wan_ioctl_poll_tethering_stats *)param)) {
-			IPAWANERR("WAN_IOCTL_POLL_TETHERING_STATS failed\n");
+			IPAWANERR_RL("WAN_IOCTL_POLL_TETHERING_STATS failed\n");
 			retval = -EFAULT;
 			break;
 		}
@@ -253,7 +254,7 @@ static long wan_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			retval = -ENOMEM;
 			break;
 		}
-		if (copy_from_user(param, (const void __user *)arg, pyld_sz)) {
+		if (copy_from_user(param, (u8 *)arg, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -265,7 +266,7 @@ static long wan_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
-		if (copy_to_user((void __user *)arg, param, pyld_sz)) {
+		if (copy_to_user((u8 *)arg, param, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -284,8 +285,9 @@ static long wan_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
-		if (rmnet_ipa_query_tethering_stats(NULL, true)) {
-			IPAWANERR("WAN_IOC_QUERY_TETHER_STATS failed\n");
+		if (rmnet_ipa_reset_tethering_stats(
+				(struct wan_ioctl_reset_tether_stats *)param)) {
+			IPAWANERR("WAN_IOC_RESET_TETHER_STATS failed\n");
 			retval = -EFAULT;
 			break;
 		}
@@ -325,6 +327,9 @@ long compat_wan_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 	case WAN_IOC_QUERY_DL_FILTER_STATS32:
 		cmd = WAN_IOC_QUERY_DL_FILTER_STATS;
+		break;
+	case WAN_IOC_QUERY_TETHER_STATS_ALL32:
+		cmd = WAN_IOC_QUERY_TETHER_STATS_ALL;
 		break;
 	default:
 		return -ENOIOCTLCMD;

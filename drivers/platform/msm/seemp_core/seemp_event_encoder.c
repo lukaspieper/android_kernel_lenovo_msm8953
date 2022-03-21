@@ -11,10 +11,8 @@
  * GNU General Public License for more details.
  */
 
-#define PROVIDE_PARAM_ID
-
-#include "seemp_logk.h"
 #include <linux/seemp_param_id.h>
+#include "seemp_logk.h"
 #include "seemp_event_encoder.h"
 
 static char *scan_id(char *s);
@@ -37,8 +35,8 @@ static void check_param_range(char *section_eq, bool param,
 			} else {
 				*numeric_value = (__s32)long_value;
 				/* We are checking whether the value
-				*  lies within 16bits
-				*/
+				 * lies within 16bits
+				 */
 				*numeric = (long_value >= -32768) &&
 					(long_value <= 32767);
 			}

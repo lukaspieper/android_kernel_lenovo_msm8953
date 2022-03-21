@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2014, 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2014, 2016, 2019 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,7 +18,7 @@
 #include <linux/of.h>
 #include <linux/kmemleak.h>
 #include <linux/ratelimit.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <linux/slab.h>
 #include <linux/of.h>
 #include <linux/kmemleak.h>
@@ -221,7 +221,7 @@ void diagmem_free(struct diagchar_dev *driver, void *buf, int pool_type)
 			break;
 		}
 		spin_lock_irqsave(&mempool->lock, flags);
-		if (mempool->count > 0) {
+		if (mempool->count > 0 && buf) {
 			mempool_free(buf, mempool->pool);
 			atomic_add(-1, (atomic_t *)&mempool->count);
 		} else {
@@ -236,6 +236,7 @@ void diagmem_free(struct diagchar_dev *driver, void *buf, int pool_type)
 void diagmem_init(struct diagchar_dev *driver, int index)
 {
 	struct diag_mempool_t *mempool = NULL;
+
 	if (!driver)
 		return;
 
@@ -286,7 +287,7 @@ void diagmem_exit(struct diagchar_dev *driver, int index)
 		mempool_destroy(mempool->pool);
 		mempool->pool = NULL;
 	} else {
-		pr_err("diag: Unable to destory %s pool, count: %d\n",
+		pr_err("diag: Unable to destroy %s pool, count: %d\n",
 		       mempool->name, mempool->count);
 	}
 	spin_unlock_irqrestore(&mempool->lock, flags);

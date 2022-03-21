@@ -276,6 +276,7 @@ asmlinkage long sys_oabi_epoll_wait(int epfd,
 				    int maxevents, int timeout)
 {
 	struct epoll_event *kbuf;
+	struct oabi_epoll_event e;
 	mm_segment_t fs;
 	long ret, err, i;
 
@@ -294,8 +295,11 @@ asmlinkage long sys_oabi_epoll_wait(int epfd,
 	set_fs(fs);
 	err = 0;
 	for (i = 0; i < ret; i++) {
-		__put_user_error(kbuf[i].events, &events->events, err);
-		__put_user_error(kbuf[i].data,   &events->data,   err);
+		e.events = kbuf[i].events;
+		e.data = kbuf[i].data;
+		err = __copy_to_user(events, &e, sizeof(e));
+		if (err)
+			break;
 		events++;
 	}
 	kfree(kbuf);
@@ -328,9 +332,11 @@ asmlinkage long sys_oabi_semtimedop(int semid,
 		return -ENOMEM;
 	err = 0;
 	for (i = 0; i < nsops; i++) {
-		__get_user_error(sops[i].sem_num, &tsops->sem_num, err);
-		__get_user_error(sops[i].sem_op,  &tsops->sem_op,  err);
-		__get_user_error(sops[i].sem_flg, &tsops->sem_flg, err);
+		struct oabi_sembuf osb;
+		err |= __copy_from_user(&osb, tsops, sizeof(osb));
+		sops[i].sem_num = osb.sem_num;
+		sops[i].sem_op = osb.sem_op;
+		sops[i].sem_flg = osb.sem_flg;
 		tsops++;
 	}
 	if (timeout) {
@@ -407,7 +413,7 @@ asmlinkage long sys_oabi_sendto(int fd, void __user *buff,
 	return sys_sendto(fd, buff, len, flags, addr, addrlen);
 }
 
-asmlinkage long sys_oabi_sendmsg(int fd, struct msghdr __user *msg, unsigned flags)
+asmlinkage long sys_oabi_sendmsg(int fd, struct user_msghdr __user *msg, unsigned flags)
 {
 	struct sockaddr __user *addr;
 	int msg_namelen;
@@ -453,7 +459,7 @@ asmlinkage long sys_oabi_socketcall(int call, unsigned long __user *args)
 		break;
 	case SYS_SENDMSG:
 		if (copy_from_user(a, args, 3 * sizeof(long)) == 0)
-			r = sys_oabi_sendmsg(a[0], (struct msghdr __user *)a[1], a[2]);
+			r = sys_oabi_sendmsg(a[0], (struct user_msghdr __user *)a[1], a[2]);
 		break;
 	default:
 		r = sys_socketcall(call, args);

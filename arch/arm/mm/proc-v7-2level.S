@@ -36,16 +36,16 @@
  *
  *	It is assumed that:
  *	- we are not using split page tables
+ *
+ *	Note that we always need to flush BTAC/BTB if IBE is set
+ *	even on Cortex-A8 revisions not affected by 430973.
+ *	If IBE is not set, the flush BTAC/BTB won't do anything.
  */
 ENTRY(cpu_v7_switch_mm)
 #ifdef CONFIG_MMU
-	mov	r2, #0
 	mmid	r1, r1				@ get mm->context.id
 	ALT_SMP(orr	r0, r0, #TTB_FLAGS_SMP)
 	ALT_UP(orr	r0, r0, #TTB_FLAGS_UP)
-#ifdef CONFIG_ARM_ERRATA_430973
-	mcr	p15, 0, r2, c7, c5, 6		@ flush BTAC/BTB
-#endif
 #ifdef CONFIG_PID_IN_CONTEXTIDR
 	mrc	p15, 0, r2, c13, c0, 1		@ read current context ID
 	lsr	r2, r2, #8			@ extract the PID

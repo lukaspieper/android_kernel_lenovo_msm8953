@@ -174,7 +174,6 @@ void notify_esoc_clients(struct esoc_clink *esoc_clink, unsigned long evt);
 static inline void notify_esoc_clients(struct esoc_clink *esoc_clink,
 							unsigned long evt)
 {
-	return;
 }
 #endif
 bool esoc_req_eng_enabled(struct esoc_clink *esoc_clink);

@@ -45,7 +45,8 @@ enum {
 	SATA_FSL_MAX_PRD_DIRECT	= 16,	/* Direct PRDT entries */
 
 	SATA_FSL_HOST_FLAGS	= (ATA_FLAG_SATA | ATA_FLAG_PIO_DMA |
-				ATA_FLAG_PMP | ATA_FLAG_NCQ | ATA_FLAG_AN),
+				   ATA_FLAG_PMP | ATA_FLAG_NCQ |
+				   ATA_FLAG_AN | ATA_FLAG_NO_LOG_PAGE),
 
 	SATA_FSL_MAX_CMDS	= SATA_FSL_QUEUE_DEPTH,
 	SATA_FSL_CMD_HDR_SIZE	= 16,	/* 4 DWORDS */
@@ -512,7 +513,7 @@ static unsigned int sata_fsl_fill_sg(struct ata_queued_cmd *qc, void *cmd_desc,
 	return num_prde;
 }
 
-static enum ata_completion_errors sata_fsl_qc_prep(struct ata_queued_cmd *qc)
+static void sata_fsl_qc_prep(struct ata_queued_cmd *qc)
 {
 	struct ata_port *ap = qc->ap;
 	struct sata_fsl_port_priv *pp = ap->private_data;
@@ -558,8 +559,6 @@ static enum ata_completion_errors sata_fsl_qc_prep(struct ata_queued_cmd *qc)
 
 	VPRINTK("SATA FSL : xx_qc_prep, di = 0x%x, ttl = %d, num_prde = %d\n",
 		desc_info, ttl_dwords, num_prde);
-
-	return AC_ERR_OK;
 }
 
 static unsigned int sata_fsl_qc_issue(struct ata_queued_cmd *qc)
@@ -870,6 +869,8 @@ try_offline_again:
 	 * PHY reset should remain asserted for atleast 1ms
 	 */
 	ata_msleep(ap, 1);
+
+	sata_set_spd(link);
 
 	/*
 	 * Now, bring the host controller online again, this can take time
@@ -1626,7 +1627,6 @@ MODULE_DEVICE_TABLE(of, fsl_sata_match);
 static struct platform_driver fsl_sata_driver = {
 	.driver = {
 		.name = "fsl-sata",
-		.owner = THIS_MODULE,
 		.of_match_table = fsl_sata_match,
 	},
 	.probe		= sata_fsl_probe,

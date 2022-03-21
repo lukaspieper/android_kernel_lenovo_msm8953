@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2013, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,7 +17,7 @@
 #include <linux/clk/msm-clk-provider.h>
 
 struct clk_ops;
-extern struct clk_ops clk_ops_voter;
+extern const struct clk_ops clk_ops_voter;
 
 struct clk_voter {
 	int is_branch;

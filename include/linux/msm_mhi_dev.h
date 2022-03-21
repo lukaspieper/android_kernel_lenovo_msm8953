@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,6 +18,8 @@
 
 #define IPA_DMA_SYNC                    1
 #define IPA_DMA_ASYNC                   0
+#define DMA_SYNC                    1
+#define DMA_ASYNC                   0
 
 enum cb_reason {
 	MHI_DEV_TRE_AVAILABLE = 0,
@@ -42,8 +44,8 @@ struct mhi_dev_client {
 
 	/* trace logs */
 	spinlock_t			tr_lock;
-	unsigned			tr_head;
-	unsigned			tr_tail;
+	unsigned int			tr_head;
+	unsigned int			tr_tail;
 	struct mhi_dev_trace		*tr_log;
 
 	/* client buffers */
@@ -113,8 +115,8 @@ enum mhi_client_channel {
 	MHI_CLIENT_DUN_IN = 33,
 	MHI_CLIENT_IP_SW_0_OUT = 34,
 	MHI_CLIENT_IP_SW_0_IN = 35,
-	MHI_CLIENT_IP_SW_1_OUT = 36,
-	MHI_CLIENT_IP_SW_1_IN = 37,
+	MHI_CLIENT_ADB_OUT = 36,
+	MHI_CLIENT_ADB_IN = 37,
 	MHI_CLIENT_IP_SW_2_OUT = 38,
 	MHI_CLIENT_IP_SW_2_IN = 39,
 	MHI_CLIENT_IP_SW_3_OUT = 40,
@@ -125,16 +127,19 @@ enum mhi_client_channel {
 	MHI_CLIENT_SMCT_IN = 45,
 	MHI_CLIENT_IP_SW_4_OUT  = 46,
 	MHI_CLIENT_IP_SW_4_IN  = 47,
-	MHI_MAX_SOFTWARE_CHANNELS = 48,
+	MHI_MAX_SOFTWARE_CHANNELS,
 	MHI_CLIENT_TEST_OUT = 60,
 	MHI_CLIENT_TEST_IN = 61,
 	MHI_CLIENT_RESERVED_1_LOWER = 62,
 	MHI_CLIENT_RESERVED_1_UPPER = 99,
 	MHI_CLIENT_IP_HW_0_OUT = 100,
 	MHI_CLIENT_IP_HW_0_IN = 101,
-	MHI_CLIENT_RESERVED_2_LOWER = 102,
+	MHI_CLIENT_ADPL_IN = 102,
+	MHI_CLIENT_IP_HW_1_OUT = 105,
+	MHI_CLIENT_IP_HW_1_IN = 106,
+	MHI_CLIENT_RESERVED_2_LOWER = 107,
 	MHI_CLIENT_RESERVED_2_UPPER = 127,
-	MHI_MAX_CHANNELS = 102,
+	MHI_MAX_CHANNELS = 107,
 	MHI_CLIENT_INVALID = 0xFFFFFFFF
 };
 
@@ -194,6 +199,13 @@ int mhi_dev_write_channel(struct mhi_req *wreq);
 int mhi_dev_channel_isempty(struct mhi_dev_client *handle);
 
 /**
+* mhi_dev_channel_has_pending_write() - Checks if there are any pending writes
+*					to be completed on inbound channel
+* @handle_client:	Client Handle issued during mhi_dev_open_channel
+*/
+bool mhi_dev_channel_has_pending_write(struct mhi_dev_client *handle);
+
+/**
  * mhi_ctrl_state_info() - Provide MHI state info
  *		@idx: Channel number idx. Look at channel_state_info and
  *		pass the index for the corresponding channel.
@@ -242,6 +254,12 @@ static inline int mhi_dev_channel_isempty(struct mhi_dev_client *handle)
 {
 	return -EINVAL;
 };
+
+static inline bool mhi_dev_channel_has_pending_write
+	(struct mhi_dev_client *handle)
+{
+	return false;
+}
 
 static inline int mhi_ctrl_state_info(uint32_t idx, uint32_t *info)
 {

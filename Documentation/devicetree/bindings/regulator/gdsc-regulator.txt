@@ -1,8 +1,8 @@
-Qualcomm Global Distributed Switch Controller (GDSC) Regulator Driver
+QTI Global Distributed Switch Controller (GDSC) Regulator Driver
 
 The GDSC driver, implemented under the regulator framework, is responsible for
 safely collapsing and restoring power to peripheral cores on chipsets like
-msm8974 for power savings.
+msm8996 for power savings.
 
 Required properties:
  - compatible:      Must be "qcom,gdsc"
@@ -40,7 +40,7 @@ Optional properties:
  - qcom,clk-dis-wait-val: Input value for CLK_DIS_WAIT controls state transition
 			 delay after halting clock in the collapsible core.
  - reg-names:		Names of the bases for the above "reg" registers.
-			Ex. "base", "domain_addr".
+			Ex. "base", "domain-addr", "sw-reset", "hw-ctrl-addr".
  - qcom,no-status-check-on-disable: Do not poll the status bit when GDSC
 			is disabled.
  - qcom,disallow-clear: Presence denotes the periph & core memory will not be
@@ -50,7 +50,31 @@ Optional properties:
 			to enable.
  - qcom,reset-aon-logic: If present, the GPU DEMET cells need to be reset while
 			 enabling the GX GDSC.
-
+ - vdd_parent-supply:	phandle to the regulator that this GDSC gates. If
+			present, need to vote for a minimum operational voltage
+			(LOW_SVS) on the GDSC parent regulator prior to
+			configuring it. The vote is removed once the GDSC FSM
+			has latched on to the new state.
+ - resets: reset specifier pair consisting of phandle for the reset controller
+			and reset lines used by this controller. These can be
+			supplied only if we support qcom,skip-logic-collapse.
+ - reset-names: reset signal name strings sorted in the same order as the resets
+			property. These can be supplied only if we support
+			qcom,skip-logic-collapse.
+ - qcom,poll-cfg-gdscr:	Poll the CFG register of the GDSC to determine if the
+			GDSC is enabled/disabled. This flag should not be set
+			in conjunction with "hw-ctrl-addr".
+ - qcom,toggle-sw-collapse-in-disable: If set, SW_COLLAPSE bit is toggled
+			in disable call.
+ - qcom,en-few-wait-val: Input value for EN_FEW_WAIT controls state transition
+			 delay after receiving ack signal (gds_enf_ack) from the
+			 longest en_few power switch chain.
+ - qcom,en-rest-wait-val: Input value for EN_REST_WAIT controls state transition
+			  delay after receiving ack signal (gds_enr_ack) from the
+			  longest en_rest power switch chain.
+ - qcom,skip-disable-before-sw-enable: Presence denotes a hardware requirement
+					to leave the GDSC on that has been
+					enabled by an entity external to HLOS.
 Example:
 	gdsc_oxili_gx: qcom,gdsc@fd8c4024 {
 		compatible = "qcom,gdsc";

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012,2014 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2014, 2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -277,7 +277,7 @@ static struct diag_remote_dev_ops diag_smux_fwd_ops = {
 	.fwd_complete = smux_fwd_complete,
 };
 
-int diag_smux_init()
+int diag_smux_init(void)
 {
 	int i;
 	int err = 0;
@@ -286,8 +286,8 @@ int diag_smux_init()
 
 	for (i = 0; i < NUM_SMUX_DEV; i++) {
 		ch = &diag_smux[i];
-		strlcpy(wq_name, "DIAG_SMUX_", 11);
-		strlcat(wq_name, ch->name, sizeof(ch->name));
+		strlcpy(wq_name, "DIAG_SMUX_", sizeof(wq_name));
+		strlcat(wq_name, ch->name, sizeof(wq_name));
 		ch->smux_wq = create_singlethread_workqueue(wq_name);
 		if (!ch->smux_wq) {
 			err = -ENOMEM;
@@ -314,10 +314,11 @@ fail:
 	return err;
 }
 
-void diag_smux_exit()
+void diag_smux_exit(void)
 {
 	int i;
 	struct diag_smux_info *ch = NULL;
+
 	for (i = 0; i < NUM_SMUX_DEV; i++) {
 		ch = &diag_smux[i];
 		kfree(ch->read_buf);

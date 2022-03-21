@@ -21,10 +21,10 @@ kgsl_gfp_mask(unsigned int page_order)
 {
 	unsigned int gfp_mask = __GFP_HIGHMEM;
 
-	if (page_order > 0)
-		gfp_mask |= __GFP_COMP | __GFP_NORETRY |
-			__GFP_NO_KSWAPD | __GFP_NOWARN;
-	else
+	if (page_order > 0) {
+		gfp_mask |= __GFP_COMP | __GFP_NORETRY | __GFP_NOWARN;
+		gfp_mask &= ~__GFP_RECLAIM;
+	} else
 		gfp_mask |= GFP_KERNEL;
 
 	if (kgsl_sharedmem_get_noretry() == true)

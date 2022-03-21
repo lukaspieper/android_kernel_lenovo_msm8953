@@ -71,19 +71,22 @@ enum ipa_hw_features {
  * SRAM.
  * @cmdOp : CPU->HW command opcode. See IPA_CPU_2_HW_COMMANDS
  * @cmdParams : CPU->HW command parameter. The parameter filed can hold 32 bits
- * of parameters (immediate parameters) and point on structure in system memory
- * (in such case the address must be accessible for HW)
+ *		of parameters (immediate parameters) and point on structure in
+ *		system memory (in such case the address must be accessible
+ *		for HW)
  * @responseOp : HW->CPU response opcode. See IPA_HW_2_CPU_RESPONSES
- * @responseParams : HW->CPU response parameter. The parameter filed can hold 32
- * bits of parameters (immediate parameters) and point on structure in system
- * memory
+ * @responseParams : HW->CPU response parameter. The parameter filed can hold
+ *			32 bits of parameters (immediate parameters) and point
+ *			on structure in system memory
  * @eventOp : HW->CPU event opcode. See IPA_HW_2_CPU_EVENTS
- * @eventParams : HW->CPU event parameter. The parameter filed can hold 32 bits of
- * parameters (immediate parameters) and point on structure in system memory
+ * @eventParams : HW->CPU event parameter. The parameter filed can hold 32 bits
+ *			of parameters (immediate parameters) and point on
+ *			structure in system memory
  * @firstErrorAddress : Contains the address of first error-source on SNOC
- * @hwState : State of HW. The state carries information regarding the error type.
- * @warningCounter : The warnings counter. The counter carries information regarding
- * non fatal errors in HW
+ * @hwState : State of HW. The state carries information regarding the error
+ *				type.
+ * @warningCounter : The warnings counter. The counter carries information
+ *			regarding non fatal errors in HW
  * @interfaceVersionCommon : The Common interface version as reported by HW
  *
  * The shared memory is used for communication between IPA HW and CPU.
@@ -476,10 +479,13 @@ enum ipa_cpu_2_hw_offload_commands {
 /**
  * enum ipa_hw_offload_channel_states - Values that represent
  * offload channel state machine.
- * @IPA_HW_OFFLOAD_CHANNEL_STATE_INITED_DISABLED : Channel is initialized but disabled
- * @IPA_HW_OFFLOAD_CHANNEL_STATE_RUNNING : Channel is running. Entered after SET_UP_COMMAND is processed successfully
+ * @IPA_HW_OFFLOAD_CHANNEL_STATE_INITED_DISABLED : Channel is initialized
+ *		but disabled
+ * @IPA_HW_OFFLOAD_CHANNEL_STATE_RUNNING : Channel is running. Entered after
+ *		SET_UP_COMMAND is processed successfully
  * @IPA_HW_OFFLOAD_CHANNEL_STATE_ERROR : Channel is in error state
- * @IPA_HW_OFFLOAD_CHANNEL_STATE_INVALID : Invalid state. Shall not be in use in operational scenario
+ * @IPA_HW_OFFLOAD_CHANNEL_STATE_INVALID : Invalid state. Shall not be in use
+ *		in operational scenario
  *
  * These states apply to both Tx and Rx paths. These do not
  * reflect the sub-state the state machine may be in

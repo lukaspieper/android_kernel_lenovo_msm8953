@@ -125,6 +125,7 @@ enum {
 	L2TP_ATTR_IP6_DADDR,		/* struct in6_addr */
 	L2TP_ATTR_UDP_ZERO_CSUM6_TX,	/* u8 */
 	L2TP_ATTR_UDP_ZERO_CSUM6_RX,	/* u8 */
+	L2TP_ATTR_PAD,
 	__L2TP_ATTR_MAX,
 };
 
@@ -141,6 +142,7 @@ enum {
 	L2TP_ATTR_RX_SEQ_DISCARDS,	/* u64 */
 	L2TP_ATTR_RX_OOS_PACKETS,	/* u64 */
 	L2TP_ATTR_RX_ERRORS,		/* u64 */
+	L2TP_ATTR_STATS_PAD,
 	__L2TP_ATTR_STATS_MAX,
 };
 
@@ -192,5 +194,6 @@ enum l2tp_debug_flags {
  */
 #define L2TP_GENL_NAME		"l2tp"
 #define L2TP_GENL_VERSION	0x1
+#define L2TP_GENL_MCGROUP       "l2tp"
 
 #endif /* _UAPI_LINUX_L2TP_H_ */

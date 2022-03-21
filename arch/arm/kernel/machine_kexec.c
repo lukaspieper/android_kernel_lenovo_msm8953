@@ -46,7 +46,8 @@ int machine_kexec_prepare(struct kimage *image)
 	 * and implements CPU hotplug for the current HW. If not, we won't be
 	 * able to kexec reliably, so fail the prepare operation.
 	 */
-	if (num_possible_cpus() > 1 && !platform_can_cpu_hotplug())
+	if (num_possible_cpus() > 1 && platform_can_secondary_boot() &&
+	    !platform_can_cpu_hotplug())
 		return -EINVAL;
 
 	/*
@@ -56,7 +57,7 @@ int machine_kexec_prepare(struct kimage *image)
 	for (i = 0; i < image->nr_segments; i++) {
 		current_segment = &image->segment[i];
 
-		if (!memblock_is_region_memory(current_segment->mem,
+		if (!memblock_is_region_memory(idmap_to_phys(current_segment->mem),
 					       current_segment->memsz))
 			return -EINVAL;
 
@@ -86,8 +87,11 @@ void machine_crash_nonpanic_core(void *unused)
 
 	set_cpu_online(smp_processor_id(), false);
 	atomic_dec(&waiting_for_crash_ipi);
-	while (1)
+
+	while (1) {
 		cpu_relax();
+		wfe();
+	}
 }
 
 static void machine_kexec_mask_interrupts(void)
@@ -127,12 +131,12 @@ void machine_crash_shutdown(struct pt_regs *regs)
 		msecs--;
 	}
 	if (atomic_read(&waiting_for_crash_ipi) > 0)
-		printk(KERN_WARNING "Non-crashing CPUs did not react to IPI\n");
+		pr_warn("Non-crashing CPUs did not react to IPI\n");
 
 	crash_save_cpu(regs, smp_processor_id());
 	machine_kexec_mask_interrupts();
 
-	printk(KERN_INFO "Loading crashdump kernel...\n");
+	pr_info("Loading crashdump kernel...\n");
 }
 
 /*
@@ -142,10 +146,8 @@ void (*kexec_reinit)(void);
 
 void machine_kexec(struct kimage *image)
 {
-	unsigned long page_list;
-	unsigned long reboot_code_buffer_phys;
-	unsigned long reboot_entry = (unsigned long)relocate_new_kernel;
-	unsigned long reboot_entry_phys;
+	unsigned long page_list, reboot_entry_phys;
+	void (*reboot_entry)(void);
 	void *reboot_code_buffer;
 
 	/*
@@ -158,9 +160,6 @@ void machine_kexec(struct kimage *image)
 
 	page_list = image->head & PAGE_MASK;
 
-	/* we need both effective and real address here */
-	reboot_code_buffer_phys =
-	    page_to_pfn(image->control_code_page) << PAGE_SHIFT;
 	reboot_code_buffer = page_address(image->control_code_page);
 
 	/* Prepare parameters for reboot_code_buffer*/
@@ -173,12 +172,13 @@ void machine_kexec(struct kimage *image)
 
 	/* copy our kernel relocation code to the control code page */
 	reboot_entry = fncpy(reboot_code_buffer,
-			     reboot_entry,
+			     &relocate_new_kernel,
 			     relocate_new_kernel_size);
-	reboot_entry_phys = (unsigned long)reboot_entry +
-		(reboot_code_buffer_phys - (unsigned long)reboot_code_buffer);
 
-	printk(KERN_INFO "Bye!\n");
+	/* get the identity mapping physical address for the reboot code */
+	reboot_entry_phys = virt_to_idmap(reboot_entry);
+
+	pr_info("Bye!\n");
 
 	if (kexec_reinit)
 		kexec_reinit();

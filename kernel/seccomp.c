@@ -16,6 +16,8 @@
 #include <linux/atomic.h>
 #include <linux/audit.h>
 #include <linux/compat.h>
+#include <linux/nospec.h>
+#include <linux/prctl.h>
 #include <linux/sched.h>
 #include <linux/seccomp.h>
 #include <linux/slab.h>
@@ -175,16 +177,15 @@ static int seccomp_check_filter(struct sock_filter *filter, unsigned int flen)
  */
 static u32 seccomp_run_filters(const struct seccomp_data *sd)
 {
-	struct seccomp_filter *f = ACCESS_ONCE(current->seccomp.filter);
 	struct seccomp_data sd_local;
 	u32 ret = SECCOMP_RET_ALLOW;
+	/* Make sure cross-thread synced filter points somewhere sane. */
+	struct seccomp_filter *f =
+			lockless_dereference(current->seccomp.filter);
 
 	/* Ensure unexpected behavior doesn't result in failing open. */
 	if (unlikely(WARN_ON(f == NULL)))
 		return SECCOMP_RET_KILL;
-
-	/* Make sure cross-thread synced filter points somewhere sane. */
-	smp_read_barrier_depends();
 
 	if (!sd) {
 		populate_seccomp_data(&sd_local);
@@ -215,8 +216,11 @@ static inline bool seccomp_may_assign_mode(unsigned long seccomp_mode)
 	return true;
 }
 
+void __weak arch_seccomp_spec_mitigate(struct task_struct *task) { }
+
 static inline void seccomp_assign_mode(struct task_struct *task,
-				       unsigned long seccomp_mode)
+				       unsigned long seccomp_mode,
+				       unsigned long flags)
 {
 	assert_spin_locked(&task->sighand->siglock);
 
@@ -226,6 +230,9 @@ static inline void seccomp_assign_mode(struct task_struct *task,
 	 * filter) is set.
 	 */
 	smp_mb__before_atomic();
+	/* Assume default seccomp processes want spec flaw mitigation. */
+	if ((flags & SECCOMP_FILTER_FLAG_SPEC_ALLOW) == 0)
+		arch_seccomp_spec_mitigate(task);
 	set_tsk_thread_flag(task, TIF_SECCOMP);
 }
 
@@ -293,7 +300,7 @@ static inline pid_t seccomp_can_sync_threads(void)
  * without dropping the locks.
  *
  */
-static inline void seccomp_sync_threads(void)
+static inline void seccomp_sync_threads(unsigned long flags)
 {
 	struct task_struct *thread, *caller;
 
@@ -334,7 +341,8 @@ static inline void seccomp_sync_threads(void)
 		 * allow one thread to transition the other.
 		 */
 		if (thread->seccomp.mode == SECCOMP_MODE_DISABLED)
-			seccomp_assign_mode(thread, SECCOMP_MODE_FILTER);
+			seccomp_assign_mode(thread, SECCOMP_MODE_FILTER,
+					    flags);
 	}
 }
 
@@ -346,16 +354,14 @@ static inline void seccomp_sync_threads(void)
  */
 static struct seccomp_filter *seccomp_prepare_filter(struct sock_fprog *fprog)
 {
-	struct seccomp_filter *filter;
-	unsigned long fp_size;
-	struct sock_filter *fp;
-	int new_len;
-	long ret;
+	struct seccomp_filter *sfilter;
+	int ret;
+	const bool save_orig = IS_ENABLED(CONFIG_CHECKPOINT_RESTORE);
 
 	if (fprog->len == 0 || fprog->len > BPF_MAXINSNS)
 		return ERR_PTR(-EINVAL);
+
 	BUG_ON(INT_MAX / fprog->len < sizeof(struct sock_filter));
-	fp_size = fprog->len * sizeof(struct sock_filter);
 
 	/*
 	 * Installing a seccomp filter requires that the task has
@@ -368,60 +374,21 @@ static struct seccomp_filter *seccomp_prepare_filter(struct sock_fprog *fprog)
 				     CAP_SYS_ADMIN) != 0)
 		return ERR_PTR(-EACCES);
 
-	fp = kzalloc(fp_size, GFP_KERNEL|__GFP_NOWARN);
-	if (!fp)
+	/* Allocate a new seccomp_filter */
+	sfilter = kzalloc(sizeof(*sfilter), GFP_KERNEL | __GFP_NOWARN);
+	if (!sfilter)
 		return ERR_PTR(-ENOMEM);
 
-	/* Copy the instructions from fprog. */
-	ret = -EFAULT;
-	if (copy_from_user(fp, fprog->filter, fp_size))
-		goto free_prog;
+	ret = bpf_prog_create_from_user(&sfilter->prog, fprog,
+					seccomp_check_filter, save_orig);
+	if (ret < 0) {
+		kfree(sfilter);
+		return ERR_PTR(ret);
+	}
 
-	/* Check and rewrite the fprog via the skb checker */
-	ret = bpf_check_classic(fp, fprog->len);
-	if (ret)
-		goto free_prog;
+	atomic_set(&sfilter->usage, 1);
 
-	/* Check and rewrite the fprog for seccomp use */
-	ret = seccomp_check_filter(fp, fprog->len);
-	if (ret)
-		goto free_prog;
-
-	/* Convert 'sock_filter' insns to 'bpf_insn' insns */
-	ret = bpf_convert_filter(fp, fprog->len, NULL, &new_len);
-	if (ret)
-		goto free_prog;
-
-	/* Allocate a new seccomp_filter */
-	ret = -ENOMEM;
-	filter = kzalloc(sizeof(struct seccomp_filter),
-			 GFP_KERNEL|__GFP_NOWARN);
-	if (!filter)
-		goto free_prog;
-
-	filter->prog = bpf_prog_alloc(bpf_prog_size(new_len), __GFP_NOWARN);
-	if (!filter->prog)
-		goto free_filter;
-
-	ret = bpf_convert_filter(fp, fprog->len, filter->prog->insnsi, &new_len);
-	if (ret)
-		goto free_filter_prog;
-
-	kfree(fp);
-	atomic_set(&filter->usage, 1);
-	filter->prog->len = new_len;
-
-	bpf_prog_select_runtime(filter->prog);
-
-	return filter;
-
-free_filter_prog:
-	__bpf_prog_free(filter->prog);
-free_filter:
-	kfree(filter);
-free_prog:
-	kfree(fp);
-	return ERR_PTR(ret);
+	return sfilter;
 }
 
 /**
@@ -437,7 +404,7 @@ seccomp_prepare_user_filter(const char __user *user_filter)
 	struct seccomp_filter *filter = ERR_PTR(-EFAULT);
 
 #ifdef CONFIG_COMPAT
-	if (is_compat_task()) {
+	if (in_compat_syscall()) {
 		struct compat_sock_fprog fprog32;
 		if (copy_from_user(&fprog32, user_filter, sizeof(fprog32)))
 			goto out;
@@ -494,9 +461,15 @@ static long seccomp_attach_filter(unsigned int flags,
 
 	/* Now that the new filter is in place, synchronize to all threads. */
 	if (flags & SECCOMP_FILTER_FLAG_TSYNC)
-		seccomp_sync_threads();
+		seccomp_sync_threads(flags);
 
 	return 0;
+}
+
+void __get_seccomp_filter(struct seccomp_filter *filter)
+{
+	/* Reference count is bounded by the number of total processes. */
+	atomic_inc(&filter->usage);
 }
 
 /* get_seccomp_filter - increments the reference count of the filter on @tsk */
@@ -505,28 +478,31 @@ void get_seccomp_filter(struct task_struct *tsk)
 	struct seccomp_filter *orig = tsk->seccomp.filter;
 	if (!orig)
 		return;
-	/* Reference count is bounded by the number of total processes. */
-	atomic_inc(&orig->usage);
+	__get_seccomp_filter(orig);
 }
 
 static inline void seccomp_filter_free(struct seccomp_filter *filter)
 {
 	if (filter) {
-		bpf_prog_free(filter->prog);
+		bpf_prog_destroy(filter->prog);
 		kfree(filter);
 	}
 }
 
-/* put_seccomp_filter - decrements the ref count of tsk->seccomp.filter */
-void put_seccomp_filter(struct task_struct *tsk)
+static void __put_seccomp_filter(struct seccomp_filter *orig)
 {
-	struct seccomp_filter *orig = tsk->seccomp.filter;
 	/* Clean up single-reference branches iteratively. */
 	while (orig && atomic_dec_and_test(&orig->usage)) {
 		struct seccomp_filter *freeme = orig;
 		orig = orig->prev;
 		seccomp_filter_free(freeme);
 	}
+}
+
+/* put_seccomp_filter - decrements the ref count of tsk->seccomp.filter */
+void put_seccomp_filter(struct task_struct *tsk)
+{
+	__put_seccomp_filter(tsk->seccomp.filter);
 }
 
 /**
@@ -555,24 +531,17 @@ static void seccomp_send_sigsys(int syscall, int reason)
  * To be fully secure this must be combined with rlimit
  * to limit the stack allocations too.
  */
-static int mode1_syscalls[] = {
+static const int mode1_syscalls[] = {
 	__NR_seccomp_read, __NR_seccomp_write, __NR_seccomp_exit, __NR_seccomp_sigreturn,
 	0, /* null terminated */
 };
 
-#ifdef CONFIG_COMPAT
-static int mode1_syscalls_32[] = {
-	__NR_seccomp_read_32, __NR_seccomp_write_32, __NR_seccomp_exit_32, __NR_seccomp_sigreturn_32,
-	0, /* null terminated */
-};
-#endif
-
 static void __secure_computing_strict(int this_syscall)
 {
-	int *syscall_whitelist = mode1_syscalls;
+	const int *syscall_whitelist = mode1_syscalls;
 #ifdef CONFIG_COMPAT
-	if (is_compat_task())
-		syscall_whitelist = mode1_syscalls_32;
+	if (in_compat_syscall())
+		syscall_whitelist = get_compat_mode1_syscalls();
 #endif
 	do {
 		if (*syscall_whitelist == this_syscall)
@@ -591,7 +560,11 @@ void secure_computing_strict(int this_syscall)
 {
 	int mode = current->seccomp.mode;
 
-	if (mode == 0)
+	if (IS_ENABLED(CONFIG_CHECKPOINT_RESTORE) &&
+	    unlikely(current->ptrace & PT_SUSPEND_SECCOMP))
+		return;
+
+	if (mode == SECCOMP_MODE_DISABLED)
 		return;
 	else if (mode == SECCOMP_MODE_STRICT)
 		__secure_computing_strict(this_syscall);
@@ -704,6 +677,10 @@ int __secure_computing(const struct seccomp_data *sd)
 	int mode = current->seccomp.mode;
 	int this_syscall;
 
+	if (IS_ENABLED(CONFIG_CHECKPOINT_RESTORE) &&
+	    unlikely(current->ptrace & PT_SUSPEND_SECCOMP))
+		return 0;
+
 	this_syscall = sd ? sd->nr :
 		syscall_get_nr(current, task_pt_regs(current));
 
@@ -744,7 +721,7 @@ static long seccomp_set_mode_strict(void)
 #ifdef TIF_NOTSC
 	disable_TSC();
 #endif
-	seccomp_assign_mode(current, seccomp_mode);
+	seccomp_assign_mode(current, seccomp_mode, 0);
 	ret = 0;
 
 out:
@@ -802,7 +779,7 @@ static long seccomp_set_mode_filter(unsigned int flags,
 	/* Do not free the successfully attached filter. */
 	prepared = NULL;
 
-	seccomp_assign_mode(current, seccomp_mode);
+	seccomp_assign_mode(current, seccomp_mode, flags);
 out:
 	spin_unlock_irq(&current->sighand->siglock);
 	if (flags & SECCOMP_FILTER_FLAG_TSYNC)
@@ -874,3 +851,76 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 	/* prctl interface doesn't have flags, so they are always zero. */
 	return do_seccomp(op, 0, uargs);
 }
+
+#if defined(CONFIG_SECCOMP_FILTER) && defined(CONFIG_CHECKPOINT_RESTORE)
+long seccomp_get_filter(struct task_struct *task, unsigned long filter_off,
+			void __user *data)
+{
+	struct seccomp_filter *filter;
+	struct sock_fprog_kern *fprog;
+	long ret;
+	unsigned long count = 0;
+
+	if (!capable(CAP_SYS_ADMIN) ||
+	    current->seccomp.mode != SECCOMP_MODE_DISABLED) {
+		return -EACCES;
+	}
+
+	spin_lock_irq(&task->sighand->siglock);
+	if (task->seccomp.mode != SECCOMP_MODE_FILTER) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	filter = task->seccomp.filter;
+	while (filter) {
+		filter = filter->prev;
+		count++;
+	}
+
+	if (filter_off >= count) {
+		ret = -ENOENT;
+		goto out;
+	}
+	count -= filter_off;
+
+	filter = task->seccomp.filter;
+	while (filter && count > 1) {
+		filter = filter->prev;
+		count--;
+	}
+
+	if (WARN_ON(count != 1 || !filter)) {
+		/* The filter tree shouldn't shrink while we're using it. */
+		ret = -ENOENT;
+		goto out;
+	}
+
+	fprog = filter->prog->orig_prog;
+	if (!fprog) {
+		/* This must be a new non-cBPF filter, since we save
+		 * every cBPF filter's orig_prog above when
+		 * CONFIG_CHECKPOINT_RESTORE is enabled.
+		 */
+		ret = -EMEDIUMTYPE;
+		goto out;
+	}
+
+	ret = fprog->len;
+	if (!data)
+		goto out;
+
+	__get_seccomp_filter(filter);
+	spin_unlock_irq(&task->sighand->siglock);
+
+	if (copy_to_user(data, fprog->filter, bpf_classic_proglen(fprog)))
+		ret = -EFAULT;
+
+	__put_seccomp_filter(filter);
+	return ret;
+
+out:
+	spin_unlock_irq(&task->sighand->siglock);
+	return ret;
+}
+#endif

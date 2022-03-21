@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,12 +9,14 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
-*/
+ */
 #ifndef __SEEMP_LOGK_STUB__
 #define __SEEMP_LOGK_STUB__
 
 #ifdef CONFIG_SEEMP_CORE
 #include <linux/kernel.h>
+#include <linux/seemp_api.h>
+#include <linux/socket.h>
 
 #define MAX_BUF_SIZE 188
 
@@ -50,7 +52,7 @@ static inline void *seemp_setup_buf(char **buf)
  * with 2 extra parameters
  */
 static inline void seemp_logk_sendto(int fd, void __user *buff, size_t len,
-		unsigned flags, struct sockaddr __user *addr, int addr_len)
+		unsigned int flags, struct sockaddr __user *addr, int addr_len)
 {
 	char *buf = NULL;
 	void *blck = NULL;
@@ -67,89 +69,31 @@ static inline void seemp_logk_sendto(int fd, void __user *buff, size_t len,
 	seemp_logk_kernel_end(blck);
 }
 
-/*
- * NOTE: only recvfrom is going to be instrumented
- * since recv sys call internally calls recvfrom
- * with 2 extra parameters
- */
-static inline void seemp_logk_recvfrom(int fd, void __user *ubuf,
-		size_t size, unsigned flags, struct sockaddr __user *addr,
-		int __user *addr_len)
+static inline void seemp_logk_rtic(__u8 type, pid_t pid, __u8 asset_id[0x20],
+		__u8 asset_category, __u8 response)
 {
 	char *buf = NULL;
 	void *blck = NULL;
 
-	/*sets up buf and blck correctly*/
 	blck = seemp_setup_buf(&buf);
 	if (!blck)
 		return;
 
-	/*fill the buf*/
-	SEEMP_LOGK_RECORD(SEEMP_API_kernel__recvfrom, "size=%u,fd=%d",
-			(unsigned int)size, fd);
+	SEEMP_LOGK_RECORD(SEEMP_API_kernel__rtic,
+		"app_pid=%d,rtic_type=%u,asset_id=%s,asset_category=%u,response=%u",
+		pid, type, asset_id, asset_category, response);
 
 	seemp_logk_kernel_end(blck);
 }
-
-static inline void seemp_logk_oom_adjust_write(pid_t pid,
-					kuid_t uid, int oom_adj)
-{
-	char *buf = NULL;
-	void *blck = NULL;
-
-	/*sets up buf and blck correctly*/
-	blck = seemp_setup_buf(&buf);
-	if (!blck)
-		return;
-
-	/*fill the buf*/
-	SEEMP_LOGK_RECORD(SEEMP_API_kernel__oom_adjust_write,
-			 "app_uid=%d,app_pid=%d,oom_adj=%d",
-			uid.val, pid, oom_adj);
-
-	seemp_logk_kernel_end(blck);
-}
-
-static inline void seemp_logk_oom_score_adj_write(pid_t pid, kuid_t uid,
-					int oom_adj_score)
-{
-	char *buf = NULL;
-	void *blck = NULL;
-
-	/*sets up buf and blck correctly*/
-	blck = seemp_setup_buf(&buf);
-	if (!blck)
-		return;
-
-	/*fill the buf*/
-	snprintf(buf, MAX_BUF_SIZE,
-		"-1|kernel|oom_score_adj_write|app_uid=%d,app_pid=%d,oom_adj=%d|--end",
-		uid.val, pid, oom_adj_score);
-
-	seemp_logk_kernel_end(blck);
-}
-
 #else
 static inline void seemp_logk_sendto(int fd, void __user *buff,
-		size_t len, unsigned flags, struct sockaddr __user *addr,
+		size_t len, unsigned int flags, struct sockaddr __user *addr,
 		int addr_len)
 {
 }
 
-static inline void seemp_logk_recvfrom
-		(int fd, void __user *ubuf, size_t size,
-		unsigned flags, struct sockaddr __user *addr,
-		int __user *addr_len)
-{
-}
-
-static inline void seemp_logk_oom_adjust_write
-		(pid_t pid, kuid_t uid, int oom_adj)
-{
-}
-
-static inline void seemp_logk_oom_score_adj_write
-		(pid_t pid, kuid_t uid, int oom_adj_score)
+static inline void seemp_logk_rtic(__u8 type, __u64 actor, __u8 asset_id[0x20],
+		__u8 asset_category, __u8 response)
 {
 }
 #endif

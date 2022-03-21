@@ -62,6 +62,7 @@ static void __iomem *__ioremap_caller(phys_addr_t phys_addr, size_t size,
 	if (!area)
 		return NULL;
 	addr = (unsigned long)area->addr;
+	area->phys_addr = phys_addr;
 
 #ifdef CONFIG_ARCH_MSM8953_SOC_SETTINGS
 	if (phys_addr >= MSM8953_TLMM_START_ADDR &&

@@ -21,12 +21,11 @@
 #include <linux/moduleparam.h>
 #include <linux/interrupt.h>
 #include <linux/irqdomain.h>
+#include <linux/irqchip.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
-#include "irqchip.h"
-
 
 /* The source ID bits start from 4 to 31 (total 28 bits)*/
 #define BIT_OFS			4
@@ -109,7 +108,7 @@ static irqreturn_t keystone_irq_handler(int irq, void *keystone_irq)
 			dev_dbg(kirq->dev, "dispatch bit %d, virq %d\n",
 				src, virq);
 			if (!virq)
-				dev_warn(kirq->dev, "sporious irq detected hwirq %d, virq %d\n",
+				dev_warn(kirq->dev, "spurious irq detected hwirq %d, virq %d\n",
 					 src, virq);
 			raw_spin_lock_irqsave(&kirq->wa_lock, wa_lock_flags);
 			generic_handle_irq(virq);
@@ -129,11 +128,11 @@ static int keystone_irq_map(struct irq_domain *h, unsigned int virq,
 
 	irq_set_chip_data(virq, kirq);
 	irq_set_chip_and_handler(virq, &kirq->chip, handle_level_irq);
-	set_irq_flags(virq, IRQF_VALID | IRQF_PROBE);
+	irq_set_probe(virq);
 	return 0;
 }
 
-static struct irq_domain_ops keystone_irq_ops = {
+static const struct irq_domain_ops keystone_irq_ops = {
 	.map	= keystone_irq_map,
 	.xlate	= irq_domain_xlate_onecell,
 };
@@ -228,7 +227,6 @@ static struct platform_driver keystone_irq_device_driver = {
 	.remove		= keystone_irq_remove,
 	.driver		= {
 		.name	= "keystone_irq",
-		.owner	= THIS_MODULE,
 		.of_match_table	= of_match_ptr(keystone_irq_dt_ids),
 	}
 };

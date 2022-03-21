@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, 2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,7 +35,7 @@ int ipa_enable_data_path(u32 clnt_hdl)
 	/* From IPA 2.0, disable HOLB */
 	if ((ipa_ctx->ipa_hw_type >= IPA_HW_v2_0) &&
 		IPA_CLIENT_IS_CONS(ep->client)) {
-		memset(&holb_cfg, 0 , sizeof(holb_cfg));
+		memset(&holb_cfg, 0, sizeof(holb_cfg));
 		holb_cfg.en = IPA_HOLB_TMR_DIS;
 		holb_cfg.tmr_val = 0;
 		res = ipa2_cfg_ep_holb(clnt_hdl, &holb_cfg);
@@ -46,7 +46,7 @@ int ipa_enable_data_path(u32 clnt_hdl)
 	    (ep->keep_ipa_awake ||
 	     ipa_ctx->resume_on_connect[ep->client] ||
 	     !ipa_should_pipe_be_suspended(ep->client))) {
-		memset(&ep_cfg_ctrl, 0 , sizeof(ep_cfg_ctrl));
+		memset(&ep_cfg_ctrl, 0, sizeof(ep_cfg_ctrl));
 		ep_cfg_ctrl.ipa_ep_suspend = false;
 		ipa2_cfg_ep_ctrl(clnt_hdl, &ep_cfg_ctrl);
 	}
@@ -74,7 +74,7 @@ int ipa_disable_data_path(u32 clnt_hdl)
 
 	/* Suspend the pipe */
 	if (IPA_CLIENT_IS_CONS(ep->client)) {
-		memset(&ep_cfg_ctrl, 0 , sizeof(struct ipa_ep_cfg_ctrl));
+		memset(&ep_cfg_ctrl, 0, sizeof(struct ipa_ep_cfg_ctrl));
 		ep_cfg_ctrl.ipa_ep_suspend = true;
 		ipa2_cfg_ep_ctrl(clnt_hdl, &ep_cfg_ctrl);
 	}
@@ -95,10 +95,50 @@ int ipa_disable_data_path(u32 clnt_hdl)
 	return res;
 }
 
+int ipa2_enable_force_clear(u32 request_id, bool throttle_source,
+	u32 source_pipe_bitmask)
+{
+	struct ipa_enable_force_clear_datapath_req_msg_v01 req;
+	int result;
+
+	memset(&req, 0, sizeof(req));
+	req.request_id = request_id;
+	req.source_pipe_bitmask = source_pipe_bitmask;
+	if (throttle_source) {
+		req.throttle_source_valid = 1;
+		req.throttle_source = 1;
+	}
+	result = qmi_enable_force_clear_datapath_send(&req);
+	if (result) {
+		IPAERR("qmi_enable_force_clear_datapath_send failed %d\n",
+			result);
+		return result;
+	}
+
+	return 0;
+}
+
+int ipa2_disable_force_clear(u32 request_id)
+{
+	struct ipa_disable_force_clear_datapath_req_msg_v01 req;
+	int result;
+
+	memset(&req, 0, sizeof(req));
+	req.request_id = request_id;
+	result = qmi_disable_force_clear_datapath_send(&req);
+	if (result) {
+		IPAERR("qmi_disable_force_clear_datapath_send failed %d\n",
+			result);
+		return result;
+	}
+
+	return 0;
+}
+
 static int ipa2_smmu_map_peer_bam(unsigned long dev)
 {
-	phys_addr_t base = 0;
-	u32 size = 0;
+	phys_addr_t base;
+	u32 size;
 	struct iommu_domain *smmu_domain;
 	struct ipa_smmu_cb_ctx *cb = ipa2_get_smmu_ctx();
 
@@ -116,7 +156,7 @@ static int ipa2_smmu_map_peer_bam(unsigned long dev)
 					roundup(size + base -
 					rounddown(base, PAGE_SIZE), PAGE_SIZE),
 					IOMMU_READ | IOMMU_WRITE |
-					IOMMU_DEVICE)) {
+					IOMMU_MMIO)) {
 					IPAERR("Fail to ipa_iommu_map\n");
 					return -EINVAL;
 				}

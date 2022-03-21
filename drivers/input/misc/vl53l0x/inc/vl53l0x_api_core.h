@@ -1,6 +1,6 @@
 /*
- *  vl53l0x_api_calibration.h - Linux kernel modules for
- *	STM VL53L0 FlightSense TOF sensor
+ *  vl53l0x_api_core.h - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,8 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
-
 
 #ifndef _VL_API_CORE_H_
 #define _VL_API_CORE_H_

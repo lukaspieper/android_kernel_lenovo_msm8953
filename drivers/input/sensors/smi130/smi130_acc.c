@@ -1325,7 +1325,7 @@
 #define SMI_ACC2X2_SET_BITSLICE(regvar, bitname, val)\
 	((regvar & ~bitname##__MSK) | ((val<<bitname##__POS)&bitname##__MSK))
 
-#define CHECK_CHIP_ID_TIME_MAX 5
+#define CHECK_CHIP_ID_TIME_MAX 1
 #define SMI_ACC255_CHIP_ID 0XFA
 #define SMI_ACC250E_CHIP_ID 0XF9
 #define SMI_ACC222E_CHIP_ID 0XF8
@@ -1339,7 +1339,7 @@
 
 #define MAX_FIFO_F_LEVEL 32
 #define MAX_FIFO_F_BYTES 6
-#define SMI_ACC_MAX_RETRY_I2C_XFER (100)
+#define SMI_ACC_MAX_RETRY_I2C_XFER (2)
 
 #ifdef CONFIG_DOUBLE_TAP
 #define DEFAULT_TAP_JUDGE_PERIOD 1000    /* default judge in 1 second */
@@ -1529,7 +1529,7 @@ struct bosch_sensor_data {
 };
 
 #ifdef CONFIG_ENABLE_SMI_ACC_GYRO_BUFFERING
-#define SMI_ACC_MAXSAMPLE        4000
+#define SMI_ACC_MAXSAMPLE        5000
 #define G_MAX                    23920640
 struct smi_acc_sample {
 	int xyz[3];
@@ -1603,11 +1603,13 @@ struct smi130_acc_data {
 	bool read_acc_boot_sample;
 	int acc_bufsample_cnt;
 	bool acc_buffer_smi130_samples;
+	bool acc_enable;
 	struct kmem_cache *smi_acc_cachepool;
 	struct smi_acc_sample *smi130_acc_samplist[SMI_ACC_MAXSAMPLE];
 	int max_buffer_time;
 	struct input_dev *accbuf_dev;
 	int report_evt_cnt;
+	struct mutex acc_sensor_buff;
 #endif
 #ifdef SMI130_HRTIMER
 	struct hrtimer smi130_hrtimer;
@@ -1966,8 +1968,9 @@ static int smi130_acc_check_chip_id(struct i2c_client *client,
 	while (read_count++ < CHECK_CHIP_ID_TIME_MAX) {
 		if (smi130_acc_smbus_read_byte(client, SMI_ACC2X2_CHIP_ID_REG,
 							&chip_id) < 0) {
-			PERR("Bosch Sensortec Device not found\n\n"
+			PERR("Bosch Sensortec Device not found\n"
 			"i2c bus read error, read chip_id:%d\n", chip_id);
+			err = -ENODEV;
 			continue;
 		} else {
 		for (i = 0; i < smi130_acc_sensor_type_count; i++) {
@@ -1975,7 +1978,7 @@ static int smi130_acc_check_chip_id(struct i2c_client *client,
 				data->sensor_type =
 					sensor_type_map[i].sensor_type;
 				data->chip_id = chip_id;
-				PINFO("Bosch Sensortec Device detected,\n\n"
+				PINFO("Bosch Sensortec Device detected\n"
 					" HW IC name: %s\n",
 						sensor_type_map[i].sensor_name);
 					return err;
@@ -1985,7 +1988,7 @@ static int smi130_acc_check_chip_id(struct i2c_client *client,
 			return err;
 		else {
 			if (read_count == CHECK_CHIP_ID_TIME_MAX) {
-				PERR("Failed! Bosch Sensortec Device\n\n"
+				PERR("Failed! Bosch Sensortec Device\n"
 					" not found, mismatch chip_id:%d\n",
 								chip_id);
 					err = -ENODEV;
@@ -4120,11 +4123,24 @@ static inline int smi130_check_acc_early_buff_enable_flag(
 	else
 		return 0;
 }
+static void smi130_check_acc_enable_flag(struct smi130_acc_data *client_data,
+		unsigned long data)
+{
+	if (data == SMI_ACC2X2_MODE_NORMAL)
+		client_data->acc_enable = true;
+	else
+		client_data->acc_enable = false;
+}
 #else
 static inline int smi130_check_acc_early_buff_enable_flag(
 		struct smi130_acc_data *client_data)
 {
 	return 0;
+}
+static void smi130_check_acc_enable_flag(struct smi130_acc_data *client_data,
+		unsigned long data)
+{
+
 }
 #endif
 
@@ -5528,13 +5544,17 @@ static ssize_t smi130_acc_mode_store(struct device *dev,
 	struct i2c_client *client = to_i2c_client(dev);
 	struct smi130_acc_data *smi130_acc = i2c_get_clientdata(client);
 
-	error = smi130_check_acc_early_buff_enable_flag(smi130_acc);
-	if (error)
-		return count;
 
 	error = kstrtoul(buf, 10, &data);
 	if (error)
 		return error;
+
+	smi130_check_acc_enable_flag(smi130_acc, data);
+
+	error = smi130_check_acc_early_buff_enable_flag(smi130_acc);
+	if (error)
+		return count;
+
 	if (smi130_acc_set_mode(smi130_acc->smi130_acc_client,
 		(unsigned char) data, SMI_ACC_ENABLED_BSX) < 0)
 			return -EINVAL;
@@ -6534,8 +6554,9 @@ static int smi_acc_read_bootsampl(struct smi130_acc_data *client_data,
 {
 	int i = 0;
 
+	client_data->acc_buffer_smi130_samples = false;
+
 	if (enable_read) {
-		client_data->acc_buffer_smi130_samples = false;
 		for (i = 0; i < client_data->acc_bufsample_cnt; i++) {
 			if (client_data->debug_level & 0x08)
 				PINFO("acc=%d,x=%d,y=%d,z=%d,sec=%d,ns=%lld\n",
@@ -6602,7 +6623,9 @@ static ssize_t read_acc_boot_sample_store(struct device *dev,
 		PERR("Invalid value of input, input=%ld\n", enable);
 		return -EINVAL;
 	}
+	mutex_lock(&smi130_acc->acc_sensor_buff);
 	err = smi_acc_read_bootsampl(smi130_acc, enable);
+	mutex_unlock(&smi130_acc->acc_sensor_buff);
 	if (err)
 		return err;
 
@@ -6616,7 +6639,7 @@ static DEVICE_ATTR(range, S_IRUGO | S_IWUSR,
 static DEVICE_ATTR(bandwidth, S_IRUGO | S_IWUSR,
 		smi130_acc_bandwidth_show, smi130_acc_bandwidth_store);
 #ifdef CONFIG_ENABLE_SMI_ACC_GYRO_BUFFERING
-static DEVICE_ATTR(read_acc_boot_sample, S_IRUGO|S_IWUSR,
+static DEVICE_ATTR(read_acc_boot_sample, 0644,
 		read_acc_boot_sample_show, read_acc_boot_sample_store);
 #endif
 static DEVICE_ATTR(op_mode, S_IRUGO | S_IWUSR,
@@ -6944,6 +6967,7 @@ static void store_acc_boot_sample(struct smi130_acc_data *client_data,
 {
 	if (false == client_data->acc_buffer_smi130_samples)
 		return;
+	mutex_lock(&client_data->acc_sensor_buff);
 	if (ts.tv_sec <  client_data->max_buffer_time) {
 		if (client_data->acc_bufsample_cnt < SMI_ACC_MAXSAMPLE) {
 			client_data->smi130_acc_samplist[client_data->
@@ -6962,7 +6986,11 @@ static void store_acc_boot_sample(struct smi130_acc_data *client_data,
 		PINFO("End of ACC buffering %d\n",
 				client_data->acc_bufsample_cnt);
 		client_data->acc_buffer_smi130_samples = false;
+		if (client_data->acc_enable == false)
+			smi130_acc_set_mode(client_data->smi130_acc_client,
+					SMI_ACC2X2_MODE_SUSPEND, 1);
 	}
+	mutex_unlock(&client_data->acc_sensor_buff);
 }
 #else
 static void store_acc_boot_sample(struct smi130_acc_data *client_data,
@@ -7029,8 +7057,11 @@ static int smi130_acc_early_buff_init(struct i2c_client *client,
 	}
 
 	client_data->acc_buffer_smi130_samples = true;
+	client_data->acc_enable = false;
 
 	smi130_set_cpu_idle_state(true);
+
+	mutex_init(&client_data->acc_sensor_buff);
 
 	smi130_acc_set_mode(client, SMI_ACC2X2_MODE_NORMAL, 1);
 	smi130_acc_set_bandwidth(client, SMI_ACC2X2_BW_62_50HZ);
@@ -7045,7 +7076,6 @@ clean_exit1:
 		kmem_cache_free(client_data->smi_acc_cachepool,
 				client_data->smi130_acc_samplist[i]);
 	kmem_cache_destroy(client_data->smi_acc_cachepool);
-
 	return 0;
 }
 
@@ -7732,64 +7762,6 @@ void smi130_acc_shutdown(struct i2c_client *client)
 	mutex_unlock(&data->enable_mutex);
 }
 
-#ifdef CONFIG_PM
-static int smi130_acc_suspend(struct i2c_client *client, pm_message_t mesg)
-{
-	struct smi130_acc_data *data = i2c_get_clientdata(client);
-
-	mutex_lock(&data->enable_mutex);
-	if (atomic_read(&data->enable) == 1) {
-		smi130_acc_set_mode(data->smi130_acc_client,
-			SMI_ACC2X2_MODE_SUSPEND, SMI_ACC_ENABLED_INPUT);
-#ifndef CONFIG_SMI_ACC_ENABLE_NEWDATA_INT
-		cancel_delayed_work_sync(&data->work);
-#endif
-	}
-	if (data->is_timer_running) {
-		hrtimer_cancel(&data->timer);
-		data->base_time = 0;
-		data->timestamp = 0;
-		data->fifo_time = 0;
-		data->acc_count = 0;
-	}
-	mutex_unlock(&data->enable_mutex);
-
-	return 0;
-}
-
-static int smi130_acc_resume(struct i2c_client *client)
-{
-	struct smi130_acc_data *data = i2c_get_clientdata(client);
-
-	mutex_lock(&data->enable_mutex);
-	if (atomic_read(&data->enable) == 1) {
-		smi130_acc_set_mode(data->smi130_acc_client,
-			SMI_ACC2X2_MODE_NORMAL, SMI_ACC_ENABLED_INPUT);
-#ifndef CONFIG_SMI_ACC_ENABLE_NEWDATA_INT
-		schedule_delayed_work(&data->work,
-				msecs_to_jiffies(atomic_read(&data->delay)));
-#endif
-	}
-	if (data->is_timer_running) {
-		hrtimer_start(&data->timer,
-					ns_to_ktime(data->time_odr),
-			HRTIMER_MODE_REL);
-		data->base_time = 0;
-		data->timestamp = 0;
-		data->is_timer_running = 1;
-	}
-	mutex_unlock(&data->enable_mutex);
-
-	return 0;
-}
-
-#else
-
-#define smi130_acc_suspend      NULL
-#define smi130_acc_resume       NULL
-
-#endif /* CONFIG_PM */
-
 static const struct i2c_device_id smi130_acc_id[] = {
 	{ SENSOR_NAME, 0 },
 	{ }
@@ -7808,8 +7780,6 @@ static struct i2c_driver smi130_acc_driver = {
 		.name   = SENSOR_NAME,
 		.of_match_table = smi130_acc_of_match,
 	},
-	.suspend    = smi130_acc_suspend,
-	.resume     = smi130_acc_resume,
 	.id_table   = smi130_acc_id,
 	.probe      = smi130_acc_probe,
 	.remove     = smi130_acc_remove,

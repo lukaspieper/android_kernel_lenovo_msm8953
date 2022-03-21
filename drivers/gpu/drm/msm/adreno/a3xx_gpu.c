@@ -41,32 +41,6 @@ extern bool hang_debug;
 
 static void a3xx_dump(struct msm_gpu *gpu);
 
-static inline bool adreno_is_a305(struct adreno_gpu *gpu)
-{
-	return gpu->revn == 305;
-}
-
-static inline bool adreno_is_a306(struct adreno_gpu *gpu)
-{
-	/* yes, 307, because a305c is 306 */
-	return gpu->revn == 307;
-}
-
-static inline bool adreno_is_a320(struct adreno_gpu *gpu)
-{
-	return gpu->revn == 320;
-}
-
-static inline bool adreno_is_a330(struct adreno_gpu *gpu)
-{
-	return gpu->revn == 330;
-}
-
-static inline bool adreno_is_a330v2(struct adreno_gpu *gpu)
-{
-	return adreno_is_a330(gpu) && (gpu->rev.patchid > 0);
-}
-
 static void a3xx_me_init(struct msm_gpu *gpu)
 {
 	struct msm_ringbuffer *ring = gpu->rb;
@@ -607,7 +581,7 @@ struct msm_gpu *a3xx_gpu_init(struct drm_device *dev)
 #endif
 	}
 
-	if (!gpu->mmu) {
+	if (!gpu->aspace) {
 		/* TODO we think it is possible to configure the GPU to
 		 * restrict access to VRAM carveout.  But the required
 		 * registers are unknown.  For now just bail out and

@@ -147,6 +147,12 @@ static int mmc_ios_show(struct seq_file *s, void *data)
 	case MMC_TIMING_SD_HS:
 		str = "sd high-speed";
 		break;
+	case MMC_TIMING_UHS_SDR12:
+		str = "sd uhs SDR12";
+		break;
+	case MMC_TIMING_UHS_SDR25:
+		str = "sd uhs SDR25";
+		break;
 	case MMC_TIMING_UHS_SDR50:
 		str = "sd uhs SDR50";
 		break;
@@ -163,7 +169,8 @@ static int mmc_ios_show(struct seq_file *s, void *data)
 		str = "mmc HS200";
 		break;
 	case MMC_TIMING_MMC_HS400:
-		str = "mmc HS400";
+		str = mmc_card_hs400es(host->card) ?
+			"mmc HS400 enhanced strobe" : "mmc HS400";
 		break;
 	default:
 		str = "invalid";
@@ -186,6 +193,25 @@ static int mmc_ios_show(struct seq_file *s, void *data)
 		break;
 	}
 	seq_printf(s, "signal voltage:\t%u (%s)\n", ios->signal_voltage, str);
+
+	switch (ios->drv_type) {
+	case MMC_SET_DRIVER_TYPE_A:
+		str = "driver type A";
+		break;
+	case MMC_SET_DRIVER_TYPE_B:
+		str = "driver type B";
+		break;
+	case MMC_SET_DRIVER_TYPE_C:
+		str = "driver type C";
+		break;
+	case MMC_SET_DRIVER_TYPE_D:
+		str = "driver type D";
+		break;
+	default:
+		str = "invalid";
+		break;
+	}
+	seq_printf(s, "driver type:\t%u (%s)\n", ios->drv_type, str);
 
 	return 0;
 }
@@ -216,7 +242,7 @@ static int mmc_clock_opt_set(void *data, u64 val)
 	struct mmc_host *host = data;
 
 	/* We need this check due to input value is u64 */
-	if (val > host->f_max)
+	if (val != 0 && (val > host->f_max || val < host->f_min))
 		return -EINVAL;
 
 	mmc_claim_host(host);
@@ -249,7 +275,7 @@ static int mmc_scale_set(void *data, u64 val)
 	mmc_host_clk_hold(host);
 
 	/* change frequency from sysfs manually */
-	err = mmc_clk_update_freq(host, val, host->clk_scaling.state);
+	err = mmc_clk_update_freq(host, val, host->clk_scaling.state, 0);
 	if (err == -EAGAIN)
 		err = 0;
 	else if (err)
@@ -312,10 +338,15 @@ static int mmc_force_err_set(void *data, u64 val)
 {
 	struct mmc_host *host = data;
 
-	if (host && host->ops && host->ops->force_err_irq) {
-		mmc_host_clk_hold(host);
+	if (host && host->card && host->ops &&
+			host->ops->force_err_irq) {
+		/*
+		 * To access the force error irq reg, we need to make
+		 * sure the host is powered up and host clock is ticking.
+		 */
+		mmc_get_card(host->card);
 		host->ops->force_err_irq(host, val);
-		mmc_host_clk_release(host);
+		mmc_put_card(host->card);
 	}
 
 	return 0;
@@ -349,6 +380,79 @@ static int mmc_err_state_clear(void *data, u64 val)
 
 DEFINE_SIMPLE_ATTRIBUTE(mmc_err_state, mmc_err_state_get,
 		mmc_err_state_clear, "%llu\n");
+
+static int mmc_err_stats_show(struct seq_file *file, void *data)
+{
+	struct mmc_host *host = (struct mmc_host *)file->private;
+
+	if (!host)
+		return -EINVAL;
+
+	seq_printf(file, "# Command Timeout Occurred:\t %d\n",
+		   host->err_stats[MMC_ERR_CMD_TIMEOUT]);
+
+	seq_printf(file, "# Command CRC Errors Occurred:\t %d\n",
+		   host->err_stats[MMC_ERR_CMD_CRC]);
+
+	seq_printf(file, "# Data Timeout Occurred:\t %d\n",
+		   host->err_stats[MMC_ERR_DAT_TIMEOUT]);
+
+	seq_printf(file, "# Data CRC Errors Occurred:\t %d\n",
+		   host->err_stats[MMC_ERR_DAT_CRC]);
+
+	seq_printf(file, "# Auto-Cmd Error Occurred:\t %d\n",
+		   host->err_stats[MMC_ERR_ADMA]);
+
+	seq_printf(file, "# ADMA Error Occurred:\t %d\n",
+		   host->err_stats[MMC_ERR_ADMA]);
+
+	seq_printf(file, "# Tuning Error Occurred:\t %d\n",
+		   host->err_stats[MMC_ERR_TUNING]);
+
+	seq_printf(file, "# CMDQ RED Errors:\t\t %d\n",
+		   host->err_stats[MMC_ERR_CMDQ_RED]);
+
+	seq_printf(file, "# CMDQ GCE Errors:\t\t %d\n",
+		   host->err_stats[MMC_ERR_CMDQ_GCE]);
+
+	seq_printf(file, "# CMDQ ICCE Errors:\t\t %d\n",
+		   host->err_stats[MMC_ERR_CMDQ_ICCE]);
+
+	seq_printf(file, "# Request Timedout:\t %d\n",
+		   host->err_stats[MMC_ERR_REQ_TIMEOUT]);
+
+	seq_printf(file, "# CMDQ Request Timedout:\t %d\n",
+		   host->err_stats[MMC_ERR_CMDQ_REQ_TIMEOUT]);
+
+	seq_printf(file, "# ICE Config Errors:\t\t %d\n",
+		   host->err_stats[MMC_ERR_ICE_CFG]);
+	return 0;
+}
+
+static int mmc_err_stats_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mmc_err_stats_show, inode->i_private);
+}
+
+static ssize_t mmc_err_stats_write(struct file *filp, const char __user *ubuf,
+				   size_t cnt, loff_t *ppos)
+{
+	struct mmc_host *host = filp->f_mapping->host->i_private;
+
+	if (!host)
+		return -EINVAL;
+
+	pr_debug("%s: Resetting MMC error statistics", __func__);
+	memset(host->err_stats, 0, sizeof(host->err_stats));
+
+	return cnt;
+}
+
+static const struct file_operations mmc_err_stats_fops = {
+	.open	= mmc_err_stats_open,
+	.read	= seq_read,
+	.write	= mmc_err_stats_write,
+};
 
 void mmc_add_host_debugfs(struct mmc_host *host)
 {
@@ -390,15 +494,18 @@ void mmc_add_host_debugfs(struct mmc_host *host)
 		&host->cmdq_thist_enabled))
 		goto err_node;
 
-	if (!debugfs_create_file("err_state", S_IRUSR | S_IWUSR, root, host,
-		&mmc_err_state))
-		goto err_node;
-
 #ifdef CONFIG_MMC_RING_BUFFER
 	if (!debugfs_create_file("ring_buffer", S_IRUSR,
 				root, host, &mmc_ring_buffer_fops))
 		goto err_node;
 #endif
+	if (!debugfs_create_file("err_state", S_IRUSR | S_IWUSR, root, host,
+		&mmc_err_state))
+		goto err_node;
+
+	if (!debugfs_create_file("err_stats", 0600, root, host,
+		&mmc_err_stats_fops))
+		goto err_node;
 
 #ifdef CONFIG_MMC_CLKGATE
 	if (!debugfs_create_u32("clk_delay", (S_IRUSR | S_IWUSR),
@@ -440,7 +547,7 @@ static int mmc_dbg_card_status_get(void *data, u64 *val)
 
 	mmc_get_card(card);
 	if (mmc_card_cmdq(card)) {
-		ret = mmc_cmdq_halt_on_empty_queue(card->host);
+		ret = mmc_cmdq_halt_on_empty_queue(card->host, 0);
 		if (ret) {
 			pr_err("%s: halt failed while doing %s err (%d)\n",
 					mmc_hostname(card->host), __func__,
@@ -480,15 +587,9 @@ static int mmc_ext_csd_open(struct inode *inode, struct file *filp)
 	if (!buf)
 		return -ENOMEM;
 
-	ext_csd = kmalloc(512, GFP_KERNEL);
-	if (!ext_csd) {
-		err = -ENOMEM;
-		goto out_free_halt;
-	}
-
 	mmc_get_card(card);
 	if (mmc_card_cmdq(card)) {
-		err = mmc_cmdq_halt_on_empty_queue(card->host);
+		err = mmc_cmdq_halt_on_empty_queue(card->host, 0);
 		if (err) {
 			pr_err("%s: halt failed while doing %s err (%d)\n",
 					mmc_hostname(card->host), __func__,
@@ -497,7 +598,8 @@ static int mmc_ext_csd_open(struct inode *inode, struct file *filp)
 			goto out_free_halt;
 		}
 	}
-	err = mmc_send_ext_csd(card, ext_csd);
+
+	err = mmc_get_ext_csd(card, &ext_csd);
 	if (err)
 		goto out_free;
 
@@ -527,7 +629,6 @@ out_free:
 	mmc_put_card(card);
 out_free_halt:
 	kfree(buf);
-	kfree(ext_csd);
 	return err;
 }
 

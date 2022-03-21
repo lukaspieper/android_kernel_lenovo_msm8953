@@ -1,3 +1,15 @@
+/* Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM kmem
 
@@ -6,7 +18,7 @@
 
 #include <linux/types.h>
 #include <linux/tracepoint.h>
-#include <trace/events/gfpflags.h>
+#include <trace/events/mmflags.h>
 
 DECLARE_EVENT_CLASS(kmem_alloc,
 
@@ -154,18 +166,18 @@ TRACE_EVENT(mm_page_free,
 	TP_ARGS(page, order),
 
 	TP_STRUCT__entry(
-		__field(	struct page *,	page		)
+		__field(	unsigned long,	pfn		)
 		__field(	unsigned int,	order		)
 	),
 
 	TP_fast_assign(
-		__entry->page		= page;
+		__entry->pfn		= page_to_pfn(page);
 		__entry->order		= order;
 	),
 
 	TP_printk("page=%p pfn=%lu order=%d",
-			__entry->page,
-			page_to_pfn(__entry->page),
+			pfn_to_page(__entry->pfn),
+			__entry->pfn,
 			__entry->order)
 );
 
@@ -176,18 +188,18 @@ TRACE_EVENT(mm_page_free_batched,
 	TP_ARGS(page, cold),
 
 	TP_STRUCT__entry(
-		__field(	struct page *,	page		)
+		__field(	unsigned long,	pfn		)
 		__field(	int,		cold		)
 	),
 
 	TP_fast_assign(
-		__entry->page		= page;
+		__entry->pfn		= page_to_pfn(page);
 		__entry->cold		= cold;
 	),
 
 	TP_printk("page=%p pfn=%lu order=0 cold=%d",
-			__entry->page,
-			page_to_pfn(__entry->page),
+			pfn_to_page(__entry->pfn),
+			__entry->pfn,
 			__entry->cold)
 );
 
@@ -199,22 +211,22 @@ TRACE_EVENT(mm_page_alloc,
 	TP_ARGS(page, order, gfp_flags, migratetype),
 
 	TP_STRUCT__entry(
-		__field(	struct page *,	page		)
+		__field(	unsigned long,	pfn		)
 		__field(	unsigned int,	order		)
 		__field(	gfp_t,		gfp_flags	)
 		__field(	int,		migratetype	)
 	),
 
 	TP_fast_assign(
-		__entry->page		= page;
+		__entry->pfn		= page ? page_to_pfn(page) : -1UL;
 		__entry->order		= order;
 		__entry->gfp_flags	= gfp_flags;
 		__entry->migratetype	= migratetype;
 	),
 
 	TP_printk("page=%p pfn=%lu order=%d migratetype=%d gfp_flags=%s",
-		__entry->page,
-		__entry->page ? page_to_pfn(__entry->page) : 0,
+		__entry->pfn != -1UL ? pfn_to_page(__entry->pfn) : NULL,
+		__entry->pfn != -1UL ? __entry->pfn : 0,
 		__entry->order,
 		__entry->migratetype,
 		show_gfp_flags(__entry->gfp_flags))
@@ -227,20 +239,20 @@ DECLARE_EVENT_CLASS(mm_page,
 	TP_ARGS(page, order, migratetype),
 
 	TP_STRUCT__entry(
-		__field(	struct page *,	page		)
+		__field(	unsigned long,	pfn		)
 		__field(	unsigned int,	order		)
 		__field(	int,		migratetype	)
 	),
 
 	TP_fast_assign(
-		__entry->page		= page;
+		__entry->pfn		= page ? page_to_pfn(page) : -1UL;
 		__entry->order		= order;
 		__entry->migratetype	= migratetype;
 	),
 
 	TP_printk("page=%p pfn=%lu order=%u migratetype=%d percpu_refill=%d",
-		__entry->page,
-		__entry->page ? page_to_pfn(__entry->page) : 0,
+		__entry->pfn != -1UL ? pfn_to_page(__entry->pfn) : NULL,
+		__entry->pfn != -1UL ? __entry->pfn : 0,
 		__entry->order,
 		__entry->migratetype,
 		__entry->order == 0)
@@ -253,14 +265,26 @@ DEFINE_EVENT(mm_page, mm_page_alloc_zone_locked,
 	TP_ARGS(page, order, migratetype)
 );
 
-DEFINE_EVENT_PRINT(mm_page, mm_page_pcpu_drain,
+TRACE_EVENT(mm_page_pcpu_drain,
 
 	TP_PROTO(struct page *page, unsigned int order, int migratetype),
 
 	TP_ARGS(page, order, migratetype),
 
+	TP_STRUCT__entry(
+		__field(	unsigned long,	pfn		)
+		__field(	unsigned int,	order		)
+		__field(	int,		migratetype	)
+	),
+
+	TP_fast_assign(
+		__entry->pfn		= page ? page_to_pfn(page) : -1UL;
+		__entry->order		= order;
+		__entry->migratetype	= migratetype;
+	),
+
 	TP_printk("page=%p pfn=%lu order=%d migratetype=%d",
-		__entry->page, page_to_pfn(__entry->page),
+		pfn_to_page(__entry->pfn), __entry->pfn,
 		__entry->order, __entry->migratetype)
 );
 
@@ -275,7 +299,7 @@ TRACE_EVENT(mm_page_alloc_extfrag,
 		alloc_migratetype, fallback_migratetype),
 
 	TP_STRUCT__entry(
-		__field(	struct page *,	page			)
+		__field(	unsigned long,	pfn			)
 		__field(	int,		alloc_order		)
 		__field(	int,		fallback_order		)
 		__field(	int,		alloc_migratetype	)
@@ -284,7 +308,7 @@ TRACE_EVENT(mm_page_alloc_extfrag,
 	),
 
 	TP_fast_assign(
-		__entry->page			= page;
+		__entry->pfn			= page_to_pfn(page);
 		__entry->alloc_order		= alloc_order;
 		__entry->fallback_order		= fallback_order;
 		__entry->alloc_migratetype	= alloc_migratetype;
@@ -294,8 +318,8 @@ TRACE_EVENT(mm_page_alloc_extfrag,
 	),
 
 	TP_printk("page=%p pfn=%lu alloc_order=%d fallback_order=%d pageblock_order=%d alloc_migratetype=%d fallback_migratetype=%d fragmenting=%d change_ownership=%d",
-		__entry->page,
-		page_to_pfn(__entry->page),
+		pfn_to_page(__entry->pfn),
+		__entry->pfn,
 		__entry->alloc_order,
 		__entry->fallback_order,
 		pageblock_order,
@@ -312,9 +336,14 @@ DECLARE_EVENT_CLASS(ion_alloc,
 		 const char *heap_name,
 		 size_t len,
 		 unsigned int mask,
-		 unsigned int flags),
+		 unsigned int flags,
+		 pid_t client_pid,
+		 char *current_comm,
+		 pid_t current_pid,
+		 void *buffer),
 
-	TP_ARGS(client_name, heap_name, len, mask, flags),
+	TP_ARGS(client_name, heap_name, len, mask, flags, client_pid,
+					current_comm, current_pid, buffer),
 
 	TP_STRUCT__entry(
 		__array(char,		client_name, 64)
@@ -322,6 +351,10 @@ DECLARE_EVENT_CLASS(ion_alloc,
 		__field(size_t,		len)
 		__field(unsigned int,	mask)
 		__field(unsigned int,	flags)
+		__field(pid_t,		client_pid)
+		__array(char,		current_comm, 16)
+		__field(pid_t,		current_pid)
+		__field(void *,		buffer)
 	),
 
 	TP_fast_assign(
@@ -330,14 +363,24 @@ DECLARE_EVENT_CLASS(ion_alloc,
 		__entry->len		= len;
 		__entry->mask		= mask;
 		__entry->flags		= flags;
+		__entry->client_pid	= client_pid;
+		strlcpy(__entry->current_comm, current_comm, 16);
+		__entry->current_pid	= current_pid;
+		__entry->buffer		= buffer;
 	),
 
-	TP_printk("client_name=%s heap_name=%s len=%zu mask=0x%x flags=0x%x",
+	TP_printk("client_name=%s heap_name=%s len=%zu mask=0x%x flags=0x%x "
+			"client_pid=%d current_comm=%s current_pid=%d "
+			"buffer=%pK",
 		__entry->client_name,
 		__entry->heap_name,
 		__entry->len,
 		__entry->mask,
-		__entry->flags)
+		__entry->flags,
+		__entry->client_pid,
+		__entry->current_comm,
+		__entry->current_pid,
+		__entry->buffer)
 );
 
 DEFINE_EVENT(ion_alloc, ion_alloc_buffer_start,
@@ -346,9 +389,14 @@ DEFINE_EVENT(ion_alloc, ion_alloc_buffer_start,
 		 const char *heap_name,
 		 size_t len,
 		 unsigned int mask,
-		 unsigned int flags),
+		 unsigned int flags,
+		 pid_t client_pid,
+		 char *current_comm,
+		 pid_t current_pid,
+		 void *buffer),
 
-	TP_ARGS(client_name, heap_name, len, mask, flags)
+	TP_ARGS(client_name, heap_name, len, mask, flags, client_pid,
+					current_comm, current_pid, buffer)
 );
 
 DEFINE_EVENT(ion_alloc, ion_alloc_buffer_end,
@@ -357,9 +405,67 @@ DEFINE_EVENT(ion_alloc, ion_alloc_buffer_end,
 		 const char *heap_name,
 		 size_t len,
 		 unsigned int mask,
-		 unsigned int flags),
+		 unsigned int flags,
+		 pid_t client_pid,
+		 char *current_comm,
+		 pid_t current_pid,
+		 void *buffer),
 
-	TP_ARGS(client_name, heap_name, len, mask, flags)
+	TP_ARGS(client_name, heap_name, len, mask, flags, client_pid,
+					current_comm, current_pid, buffer)
+);
+
+DECLARE_EVENT_CLASS(ion_free,
+
+	TP_PROTO(const char *client_name,
+		 pid_t client_pid,
+		 char *current_comm,
+		 pid_t current_pid,
+		 void *buffer,
+		 size_t size),
+
+	TP_ARGS(client_name, client_pid, current_comm, current_pid,
+							buffer, size),
+
+	TP_STRUCT__entry(
+		__array(char,		client_name, 64)
+		__field(pid_t,		client_pid)
+		__array(char,		current_comm, 16)
+		__field(pid_t,		current_pid)
+		__field(void *,	buffer)
+		__field(size_t,	size)
+	),
+
+	TP_fast_assign(
+		strlcpy(__entry->client_name, client_name, 64);
+		__entry->client_pid	= client_pid;
+		strlcpy(__entry->current_comm, current_comm, 16);
+		__entry->current_pid	= current_pid;
+		__entry->buffer		= buffer;
+		__entry->size		= size;
+	),
+
+	TP_printk("client_name=%s client_pid=%d current_comm=%s "
+				"current_pid=%d buffer=%pK size=%zu",
+		__entry->client_name,
+		__entry->client_pid,
+		__entry->current_comm,
+		__entry->current_pid,
+		__entry->buffer,
+		__entry->size)
+);
+
+DEFINE_EVENT(ion_free, ion_free_buffer,
+
+	TP_PROTO(const char *client_name,
+		 pid_t client_pid,
+		 char *current_comm,
+		 pid_t current_pid,
+		 void *buffer,
+		 size_t size),
+
+	TP_ARGS(client_name, client_pid, current_comm, current_pid,
+							buffer, size)
 );
 
 DECLARE_EVENT_CLASS(ion_alloc_error,
@@ -586,7 +692,7 @@ DECLARE_EVENT_CLASS(smmu_map,
 		__entry->len = len;
 		),
 
-	TP_printk("v_addr=%p p_addr=%pa chunk_size=0x%lu len=%zu",
+	TP_printk("v_addr=%p p_addr=%pa chunk_size=0x%lx len=%zu",
 		(void *)__entry->va,
 		&__entry->pa,
 		__entry->chunk_size,

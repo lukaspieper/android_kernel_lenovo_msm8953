@@ -81,7 +81,7 @@ static void mdp4_plane_install_properties(struct drm_plane *plane,
 	// XXX
 }
 
-int mdp4_plane_set_property(struct drm_plane *plane,
+static int mdp4_plane_set_property(struct drm_plane *plane,
 		struct drm_property *property, uint64_t val)
 {
 	// XXX
@@ -99,7 +99,7 @@ static const struct drm_plane_funcs mdp4_plane_funcs = {
 };
 
 static int mdp4_plane_prepare_fb(struct drm_plane *plane,
-		const struct drm_plane_state *new_state)
+				 struct drm_plane_state *new_state)
 {
 	struct mdp4_plane *mdp4_plane = to_mdp4_plane(plane);
 	struct mdp4_kms *mdp4_kms = get_kms(plane);
@@ -109,11 +109,11 @@ static int mdp4_plane_prepare_fb(struct drm_plane *plane,
 		return 0;
 
 	DBG("%s: prepare: FB[%u]", mdp4_plane->name, fb->base.id);
-	return msm_framebuffer_prepare(fb, mdp4_kms->id);
+	return msm_framebuffer_prepare(fb, mdp4_kms->aspace);
 }
 
 static void mdp4_plane_cleanup_fb(struct drm_plane *plane,
-		const struct drm_plane_state *old_state)
+				  struct drm_plane_state *old_state)
 {
 	struct mdp4_plane *mdp4_plane = to_mdp4_plane(plane);
 	struct mdp4_kms *mdp4_kms = get_kms(plane);
@@ -123,7 +123,7 @@ static void mdp4_plane_cleanup_fb(struct drm_plane *plane,
 		return;
 
 	DBG("%s: cleanup: FB[%u]", mdp4_plane->name, fb->base.id);
-	msm_framebuffer_cleanup(fb, mdp4_kms->id);
+	msm_framebuffer_cleanup(fb, mdp4_kms->aspace);
 }
 
 
@@ -172,13 +172,13 @@ static void mdp4_plane_set_scanout(struct drm_plane *plane,
 			MDP4_PIPE_SRC_STRIDE_B_P3(fb->pitches[3]));
 
 	mdp4_write(mdp4_kms, REG_MDP4_PIPE_SRCP0_BASE(pipe),
-			msm_framebuffer_iova(fb, mdp4_kms->id, 0));
+			msm_framebuffer_iova(fb, mdp4_kms->aspace, 0));
 	mdp4_write(mdp4_kms, REG_MDP4_PIPE_SRCP1_BASE(pipe),
-			msm_framebuffer_iova(fb, mdp4_kms->id, 1));
+			msm_framebuffer_iova(fb, mdp4_kms->aspace, 1));
 	mdp4_write(mdp4_kms, REG_MDP4_PIPE_SRCP2_BASE(pipe),
-			msm_framebuffer_iova(fb, mdp4_kms->id, 2));
+			msm_framebuffer_iova(fb, mdp4_kms->aspace, 2));
 	mdp4_write(mdp4_kms, REG_MDP4_PIPE_SRCP3_BASE(pipe),
-			msm_framebuffer_iova(fb, mdp4_kms->id, 3));
+			msm_framebuffer_iova(fb, mdp4_kms->aspace, 3));
 
 	plane->fb = fb;
 }
@@ -397,7 +397,8 @@ struct drm_plane *mdp4_plane_init(struct drm_device *dev,
 
 	type = private_plane ? DRM_PLANE_TYPE_PRIMARY : DRM_PLANE_TYPE_OVERLAY;
 	ret = drm_universal_plane_init(dev, plane, 0xff, &mdp4_plane_funcs,
-				 mdp4_plane->formats, mdp4_plane->nformats, type);
+				 mdp4_plane->formats, mdp4_plane->nformats,
+				 type, NULL);
 	if (ret)
 		goto fail;
 

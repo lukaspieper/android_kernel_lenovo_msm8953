@@ -1,4 +1,4 @@
-Qualcomm Interprocessor Communication Spinlock
+Qualcomm Technologies inc Interprocessor Communication Spinlock
 
 --Dedicated Hardware Implementation--
 Required properties:

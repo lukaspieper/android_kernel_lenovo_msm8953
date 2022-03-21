@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -44,12 +44,20 @@
 #define VIDEO_META_DATA_BUFFER_SIZE	\
 	(VIDEO_NUM_OF_PES_PACKETS * VIDEO_META_DATA_PACKET_SIZE)
 
+#define AUDIO_NUM_OF_PES_PACKETS			100
+
+#define AUDIO_META_DATA_PACKET_SIZE	\
+	(DVB_RINGBUFFER_PKTHDRSIZE +	\
+		sizeof(struct mpq_streambuffer_packet_header) + \
+		sizeof(struct mpq_adapter_audio_meta_data))
+
+#define AUDIO_META_DATA_BUFFER_SIZE	\
+	(AUDIO_NUM_OF_PES_PACKETS * AUDIO_META_DATA_PACKET_SIZE)
+
 /* Max number open() request can be done on demux device */
 #define MPQ_MAX_DMX_FILES				128
 
-/**
- * TSIF alias name length
- */
+/* TSIF alias name length */
 #define TSIF_NAME_LENGTH				20
 
 /**
@@ -308,7 +316,7 @@ struct mpq_video_feed_info {
 	u32 pes_header_offset;
 	int fullness_wait_cancel;
 	enum mpq_adapter_stream_if stream_interface;
-	const struct dvb_dmx_video_patterns *patterns[DVB_DMX_MAX_SEARCH_PATTERN_NUM];
+const struct dvb_dmx_video_patterns *patterns[DVB_DMX_MAX_SEARCH_PATTERN_NUM];
 	int patterns_num;
 	char prev_pattern[DVB_DMX_MAX_PATTERN_LEN];
 	u32 frame_offset;
@@ -319,6 +327,30 @@ struct mpq_video_feed_info {
 	int found_sequence_header_pattern;
 	struct dvb_dmx_video_prefix_size_masks prefix_size;
 	u32 first_prefix_size;
+	struct dmx_pts_dts_info saved_pts_dts_info;
+	struct dmx_pts_dts_info new_pts_dts_info;
+	int saved_info_used;
+	int new_info_exists;
+	int first_pts_dts_copy;
+	u32 tei_errs;
+	int last_continuity;
+	u32 continuity_errs;
+	u32 ts_packets_num;
+	u32 ts_dropped_bytes;
+	u64 prev_stc;
+};
+
+/* require a bare minimal mpq_audio_feed_info struct */
+struct mpq_audio_feed_info {
+	struct mpq_streambuffer *audio_buffer;
+	spinlock_t audio_buffer_lock;
+	struct mpq_decoder_buffers_desc buffer_desc;
+	struct pes_packet_header pes_header;
+	u32 pes_header_left_bytes;
+	u32 pes_header_offset;
+	int fullness_wait_cancel;
+	enum mpq_adapter_stream_if stream_interface;
+	u32 frame_offset; /* pes frame offset */
 	struct dmx_pts_dts_info saved_pts_dts_info;
 	struct dmx_pts_dts_info new_pts_dts_info;
 	int saved_info_used;
@@ -367,6 +399,7 @@ struct mpq_feed {
 	struct ion_handle *sdmx_buf_handle;
 
 	struct mpq_video_feed_info video_info;
+	struct mpq_audio_feed_info audio_info;
 };
 
 /**
@@ -496,7 +529,7 @@ struct mpq_demux {
 		u32 cc_errors;
 
 		/* Time of last video frame output */
-		struct timespec out_last_time;
+		ktime_t out_last_time;
 	} decoder_stat[MPQ_ADAPTER_MAX_NUM_OF_INTERFACES];
 
 	u32 sdmx_process_count;
@@ -508,7 +541,10 @@ struct mpq_demux {
 	u32 sdmx_process_packets_min;
 	enum sdmx_log_level sdmx_log_level;
 
-	struct timespec last_notification_time;
+	ktime_t last_notification_time;
+	int ts_packet_timestamp_source;
+	/* Disable cache operations on qseecom heap since not supported */
+	int disable_cache_ops;
 };
 
 /**
@@ -879,11 +915,12 @@ struct dvb_demux_feed *mpq_dmx_peer_rec_feed(struct dvb_demux_feed *feed);
 /**
  * mpq_dmx_decoder_eos_cmd() - Report EOS event to the mpq_streambuffer
  *
- * @mpq_feed: Video mpq_feed object for notification
+ * @mpq_feed: Audio/Video mpq_feed object for notification
+ * @feed_type: Feed type( Audio or Video )
  *
  * Return error code
  */
-int mpq_dmx_decoder_eos_cmd(struct mpq_feed *mpq_feed);
+int mpq_dmx_decoder_eos_cmd(struct mpq_feed *mpq_feed, int feed_type);
 
 /**
  * mpq_dmx_parse_mandatory_pes_header() - Parse non-optional PES header fields
@@ -965,7 +1002,7 @@ static inline void mpq_dmx_save_pts_dts(struct mpq_video_feed_info *feed_data)
  * mpq_dmx_write_pts_dts() - Write out the saved PTS/DTS data and mark as used
  *
  * @feed_data:	Video feed structure where PTS/DTS was saved
- * @info:	PTS/DTS stucture to write to
+ * @info:	PTS/DTS structure to write to
  */
 static inline void mpq_dmx_write_pts_dts(struct mpq_video_feed_info *feed_data,
 					struct dmx_pts_dts_info *info)
@@ -992,16 +1029,9 @@ static inline void mpq_dmx_write_pts_dts(struct mpq_video_feed_info *feed_data,
  *
  * Return	time-delta in msec
  */
-static inline u32 mpq_dmx_calc_time_delta(struct timespec *curr_time,
-	struct timespec *prev_time)
+static inline u32 mpq_dmx_calc_time_delta(ktime_t curr_time, ktime_t prev_time)
 {
-	struct timespec delta_time;
-	u64 delta_time_ms;
-
-	delta_time = timespec_sub(*curr_time, *prev_time);
-
-	delta_time_ms = ((u64)delta_time.tv_sec * MSEC_PER_SEC) +
-		delta_time.tv_nsec / NSEC_PER_MSEC;
+	s64 delta_time_ms = ktime_ms_delta(curr_time, prev_time);
 
 	return (u32)delta_time_ms;
 }
@@ -1023,6 +1053,66 @@ int mpq_dmx_get_param_scramble_even(void);
 /* Return the common module parameter mpq_sdmx_scramble_default_discard */
 int mpq_dmx_get_param_scramble_default_discard(void);
 
+/* APIs for Audio stream buffers interface -- Added for broadcase use case */
+/*
+ * The Audio/Video drivers (or consumers) require the stream_buffer information
+ * for consuming packet headers and compressed AV data from the
+ * ring buffer filled by demux driver which is the producer
+ */
+struct mpq_streambuffer *consumer_audio_streambuffer(int dmx_ts_pes_audio);
+struct mpq_streambuffer *consumer_video_streambuffer(int dmx_ts_pes_video);
+
+int mpq_dmx_init_audio_feed(struct mpq_feed *mpq_feed);
+
+int mpq_dmx_terminate_audio_feed(struct mpq_feed *mpq_feed);
+
+int mpq_dmx_parse_remaining_audio_pes_header(
+				struct dvb_demux_feed *feed,
+				struct mpq_audio_feed_info *feed_data,
+				struct pes_packet_header *pes_header,
+				const u8 *buf,
+				u32 *ts_payload_offset,
+				int *bytes_avail);
+
+static inline void mpq_dmx_save_audio_pts_dts(
+				struct mpq_audio_feed_info *feed_data)
+{
+	if (feed_data->new_info_exists) {
+		feed_data->saved_pts_dts_info.pts_exist =
+			feed_data->new_pts_dts_info.pts_exist;
+		feed_data->saved_pts_dts_info.pts =
+			feed_data->new_pts_dts_info.pts;
+		feed_data->saved_pts_dts_info.dts_exist =
+			feed_data->new_pts_dts_info.dts_exist;
+		feed_data->saved_pts_dts_info.dts =
+			feed_data->new_pts_dts_info.dts;
+
+		feed_data->new_info_exists = 0;
+		feed_data->saved_info_used = 0;
+	}
+}
+
+/*
+ * mpq_dmx_process_audio_packet - Assemble Audio PES data and output to
+ * stream buffer connected to decoder.
+ */
+int mpq_dmx_process_audio_packet(struct dvb_demux_feed *feed, const u8 *buf);
+
+static inline void mpq_dmx_write_audio_pts_dts(
+					struct mpq_audio_feed_info *feed_data,
+					struct dmx_pts_dts_info *info)
+{
+	if (!feed_data->saved_info_used) {
+		info->pts_exist = feed_data->saved_pts_dts_info.pts_exist;
+		info->pts = feed_data->saved_pts_dts_info.pts;
+		info->dts_exist = feed_data->saved_pts_dts_info.dts_exist;
+		info->dts = feed_data->saved_pts_dts_info.dts;
+
+		feed_data->saved_info_used = 1;
+	} else {
+		info->pts_exist = 0;
+		info->dts_exist = 0;
+	}
+}
 
 #endif /* _MPQ_DMX_PLUGIN_COMMON_H */
-

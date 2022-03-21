@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -95,12 +95,11 @@ int icm20602_init_reg_map(void)
 #define W_FLG	0
 #define R_FLG	1
 int icm20602_bulk_read(struct inv_icm20602_state *st,
-			int reg, char *buf, int size)
+			int reg, u8 *buf, int size)
 {
 	int result = MPU_SUCCESS;
 	char tx_buf[2] = {0x0, 0x0};
-	int tmp_size = size;
-	int tmp_buf = buf;
+	u8 *tmp_buf = buf;
 	struct i2c_msg msg[2];
 
 	if (!st || !buf)
@@ -109,38 +108,31 @@ int icm20602_bulk_read(struct inv_icm20602_state *st,
 	if (st->interface == ICM20602_SPI) {
 		tx_buf[0] = ICM20602_READ_REG(reg);
 		result = spi_write_then_read(st->spi, &tx_buf[0],
-			1, tmp_buf, size);
+		1, tmp_buf, size);
 		if (result) {
-			dev_dbgerr("mpu read reg %u failed, rc %d\n",
-				reg, result);
+			pr_err("mpu read reg %u failed, rc %d\n",
+			reg, result);
 			result = -MPU_READ_FAIL;
 		}
 	} else {
 		result = size;
-		while (tmp_size > 0) {
 #ifdef ICM20602_I2C_SMBUS
-			result += i2c_smbus_read_i2c_block_data(st->client,
-				reg, (tmp_size < 32)?tmp_size:32, tmp_buf);
-			tmp_size -= 32;
-			tmp_buf += tmp_size;
+		result += i2c_smbus_read_i2c_block_data(st->client,
+		reg, size, tmp_buf);
 #else
-			tx_buf[0] = reg;
-			msg[0].addr = st->client->addr;
-			msg[0].flags = W_FLG;
-			msg[0].len = 1;
-			msg[0].buf = tx_buf;
+		tx_buf[0] = reg;
+		msg[0].addr = st->client->addr;
+		msg[0].flags = W_FLG;
+		msg[0].len = 1;
+		msg[0].buf = tx_buf;
 
-			msg[1].addr = st->client->addr;
-			msg[1].flags = I2C_M_RD;
-			msg[1].len = (tmp_size < 32)?tmp_size:32;
-			msg[1].buf = tmp_buf;
-			i2c_transfer(st->client->adapter, msg, ARRAY_SIZE(msg));
-			tmp_size -= 32;
-			tmp_buf += tmp_size;
+		msg[1].addr = st->client->addr;
+		msg[1].flags = I2C_M_RD;
+		msg[1].len = size;
+		msg[1].buf = tmp_buf;
+		i2c_transfer(st->client->adapter, msg, ARRAY_SIZE(msg));
 #endif
-		}
 	}
-
 	return result;
 }
 
@@ -156,7 +148,7 @@ static int icm20602_write_reg(struct inv_icm20602_state *st,
 		txbuf[1] = val;
 		result = spi_write_then_read(st->spi, &txbuf[0], 2, NULL, 0);
 		if (result) {
-			dev_dbgerr("mpu write reg %u failed, rc %d\n",
+			pr_err("mpu write reg %u failed, rc %d\n",
 						reg, val);
 			result = -MPU_READ_FAIL;
 		}
@@ -192,7 +184,7 @@ static int icm20602_read_reg(struct inv_icm20602_state *st,
 		result = spi_write_then_read(st->spi,
 						&txbuf[0], 1, rxbuf, 1);
 		if (result) {
-			dev_dbgerr("mpu read reg %u failed, rc %d\n",
+			pr_err("mpu read reg %u failed, rc %d\n",
 						reg, result);
 			result = -MPU_READ_FAIL;
 		}
@@ -201,7 +193,7 @@ static int icm20602_read_reg(struct inv_icm20602_state *st,
 		result = i2c_smbus_read_i2c_block_data(st->client,
 						reg, 1, rxbuf);
 		if (result != 1) {
-			dev_dbgerr("mpu read reg %u failed, rc %d\n",
+			pr_err("mpu read reg %u failed, rc %d\n",
 						reg, result);
 			result = -MPU_READ_FAIL;
 		}
@@ -228,11 +220,11 @@ static int icm20602_read_reg(struct inv_icm20602_state *st,
 #define combine_8_to_16(upper, lower) ((upper << 8) | lower)
 
 int icm20602_read_raw(struct inv_icm20602_state *st,
-		struct struct_icm20602_real_data *real_data, u8 type)
+		struct struct_icm20602_real_data *real_data, uint32_t type)
 {
 	struct struct_icm20602_raw_data raw_data;
 
-	if (type & ACCEL != 0) {
+	if ((type & ACCEL) != 0) {
 		icm20602_read_reg(st,
 			reg_set_20602.ACCEL_XOUT_H.address,
 			&raw_data.ACCEL_XOUT_H);
@@ -264,7 +256,7 @@ int icm20602_read_raw(struct inv_icm20602_state *st,
 			raw_data.ACCEL_ZOUT_L);
 	}
 
-	if (type & GYRO != 0) {
+	if ((type & GYRO) != 0) {
 		icm20602_read_reg(st,
 			reg_set_20602.GYRO_XOUT_H.address,
 			&raw_data.GYRO_XOUT_H);
@@ -317,7 +309,7 @@ int icm20602_start_fifo(struct inv_icm20602_state *st)
 		reg_set_20602.USER_CTRL.reg_u.REG.FIFO_EN = 0x1;
 		if (icm20602_write_reg_simple(st,
 						reg_set_20602.USER_CTRL)) {
-			dev_dbgerr("icm20602 start fifo failed\n");
+			pr_err("icm20602 start fifo failed\n");
 			return -MPU_FAIL;
 		}
 
@@ -326,7 +318,7 @@ int icm20602_start_fifo(struct inv_icm20602_state *st)
 		reg_set_20602.INT_ENABLE.reg_u.REG.DATA_RDY_INT_EN = 0x0;
 		if (icm20602_write_reg_simple(st,
 						reg_set_20602.INT_ENABLE)) {
-			dev_dbgerr("icm20602 set FIFO_OFLOW_EN failed\n");
+			pr_err("icm20602 set FIFO_OFLOW_EN failed\n");
 			return -MPU_FAIL;
 		}
 	}
@@ -334,7 +326,7 @@ int icm20602_start_fifo(struct inv_icm20602_state *st)
 	return MPU_SUCCESS;
 }
 
-static int icm20602_stop_fifo(struct inv_icm20602_state *st)
+int icm20602_stop_fifo(struct inv_icm20602_state *st)
 {
 	struct icm20602_user_config *config = NULL;
 
@@ -346,7 +338,7 @@ static int icm20602_stop_fifo(struct inv_icm20602_state *st)
 		if (icm20602_write_reg_simple(st,
 				reg_set_20602.USER_CTRL)) {
 			reg_set_20602.USER_CTRL.reg_u.REG.FIFO_RST = 0x0;
-			dev_dbgerr("icm20602 stop fifo failed\n");
+			pr_err("icm20602 stop fifo failed\n");
 			return -MPU_FAIL;
 		}
 		reg_set_20602.USER_CTRL.reg_u.REG.FIFO_RST = 0x0;
@@ -355,16 +347,42 @@ static int icm20602_stop_fifo(struct inv_icm20602_state *st)
 	return MPU_SUCCESS;
 }
 
+int icm20602_int_status(struct inv_icm20602_state *st,
+	u8 *int_status)
+{
+	return icm20602_read_reg(st,
+		reg_set_20602.INT_STATUS.address, int_status);
+}
+
+int icm20602_int_wm_status(struct inv_icm20602_state *st,
+	u8 *int_status)
+{
+	return icm20602_read_reg(st,
+		reg_set_20602.FIFO_WM_INT_STATUS.address, int_status);
+}
+
+int icm20602_fifo_count(struct inv_icm20602_state *st,
+	u16 *fifo_count)
+{
+	u8 count_h, count_l;
+
+	*fifo_count = 0;
+	icm20602_read_reg(st, reg_set_20602.FIFO_COUNTH.address, &count_h);
+	icm20602_read_reg(st, reg_set_20602.FIFO_COUNTL.address, &count_l);
+	*fifo_count |= (count_h << 8);
+	*fifo_count |= count_l;
+	return MPU_SUCCESS;
+}
+
 static int icm20602_config_waterlevel(struct inv_icm20602_state *st)
 {
 	struct icm20602_user_config *config = NULL;
-	u8 val = 0;
+	uint8_t val = 0;
 
 	config = st->config;
 	if (config->fifo_enabled != true)
 		return MPU_SUCCESS;
 	/* config waterlevel as the fps need */
-		config->gyro_accel_sample_rate);
 	config->fifo_waterlevel = (config->user_fps_in_ms /
 				(1000 / config->gyro_accel_sample_rate))
 				*ICM20602_PACKAGE_SIZE;
@@ -372,7 +390,7 @@ static int icm20602_config_waterlevel(struct inv_icm20602_state *st)
 	if (config->fifo_waterlevel > 1023 ||
 		config->fifo_waterlevel/50 >
 		(1023-config->fifo_waterlevel)/ICM20602_PACKAGE_SIZE) {
-		dev_dbgerr("set fifo_waterlevel failed %d\n",
+		pr_err("set fifo_waterlevel failed %d\n",
 					config->fifo_waterlevel);
 		return MPU_FAIL;
 	}
@@ -414,11 +432,7 @@ static int icm20602_read_ST_code(struct inv_icm20602_state *st)
 
 static int icm20602_set_self_test(struct inv_icm20602_state *st)
 {
-	uint8_t raw_data[6] = {0, 0, 0, 0, 0, 0};
-	uint8_t selfTest[6];
-	float factory_trim[6];
 	int result = 0;
-	int ii;
 
 	reg_set_20602.SMPLRT_DIV.reg_u.REG.SMPLRT_DIV = 0;
 	result |= icm20602_write_reg_simple(st, reg_set_20602.SMPLRT_DIV);
@@ -447,15 +461,13 @@ static int icm20602_do_test_acc(struct inv_icm20602_state *st,
 {
 	struct struct_icm20602_real_data *real_data =
 		kmalloc(sizeof(struct inv_icm20602_state), GFP_ATOMIC);
-	struct icm20602_user_config *config = st->config;
-	int i, j;
+	int i;
 
 	for (i = 0; i < SELFTEST_COUNT; i++) {
 		icm20602_read_raw(st, real_data, ACCEL);
 		acc->X += real_data->ACCEL_XOUT;
 		acc->Y += real_data->ACCEL_YOUT;
 		acc->Z += real_data->ACCEL_ZOUT;
-		/* sample rate is 1kHz*/
 		usleep_range(1000, 1001);
 	}
 	acc->X /= SELFTEST_COUNT;
@@ -477,7 +489,6 @@ static int icm20602_do_test_acc(struct inv_icm20602_state *st,
 		acc_st->X += real_data->ACCEL_XOUT;
 		acc_st->Y += real_data->ACCEL_YOUT;
 		acc_st->Z += real_data->ACCEL_ZOUT;
-		/* sample rate is 1kHz */
 		usleep_range(1000, 1001);
 	}
 	acc_st->X /= SELFTEST_COUNT;
@@ -497,14 +508,13 @@ static int icm20602_do_test_gyro(struct inv_icm20602_state *st,
 {
 	struct struct_icm20602_real_data *real_data =
 		kmalloc(sizeof(struct inv_icm20602_state), GFP_ATOMIC);
-	int i, j;
+	int i;
 
 	for (i = 0; i < SELFTEST_COUNT; i++) {
 		icm20602_read_raw(st, real_data, GYRO);
 		gyro->X += real_data->GYRO_XOUT;
 		gyro->Y += real_data->GYRO_YOUT;
 		gyro->Z += real_data->GYRO_ZOUT;
-		/* sample rate is 1kHz*/
 		usleep_range(1000, 1001);
 	}
 	gyro->X /= SELFTEST_COUNT;
@@ -526,7 +536,6 @@ static int icm20602_do_test_gyro(struct inv_icm20602_state *st,
 		gyro_st->X += real_data->GYRO_XOUT;
 		gyro_st->Y += real_data->GYRO_YOUT;
 		gyro_st->Z += real_data->GYRO_ZOUT;
-		/* sample rate is 1kHz */
 		usleep_range(1000, 1001);
 	}
 	gyro_st->X /= SELFTEST_COUNT;
@@ -555,9 +564,8 @@ static bool icm20602_check_acc_selftest(struct inv_icm20602_state *st,
 	st_otp.Y = (st_otp.Y != 0) ? mpu_st_tb[acc_ST_code.Y - 1] : 0;
 	st_otp.Z = (st_otp.Z != 0) ? mpu_st_tb[acc_ST_code.Z - 1] : 0;
 
-	if (st_otp.X & st_otp.Y & st_otp.Z == 0) {
+	if ((st_otp.X & st_otp.Y & st_otp.Z) == 0)
 		otp_value_zero = true;
-	}
 
 	st_shift_cust.X = acc_st->X - acc->X;
 	st_shift_cust.Y = acc_st->X - acc->Y;
@@ -613,13 +621,12 @@ static int icm20602_check_gyro_selftest(struct inv_icm20602_state *st,
 	gyro_ST_code.Y = st->config->gyro_self_test.Y;
 	gyro_ST_code.Z = st->config->gyro_self_test.Z;
 
-	st_otp.X = (st_otp.X != 0) ? mpu_st_tb[gyro_ST_code.X - 1] : 0;
-	st_otp.Y = (st_otp.Y != 0) ? mpu_st_tb[gyro_ST_code.Y - 1] : 0;
-	st_otp.Z = (st_otp.Z != 0) ? mpu_st_tb[gyro_ST_code.Z - 1] : 0;
+	st_otp.X = (gyro_ST_code.X != 0) ? mpu_st_tb[gyro_ST_code.X - 1] : 0;
+	st_otp.Y = (gyro_ST_code.Y != 0) ? mpu_st_tb[gyro_ST_code.Y - 1] : 0;
+	st_otp.Z = (gyro_ST_code.Z != 0) ? mpu_st_tb[gyro_ST_code.Z - 1] : 0;
 
-	if (st_otp.X & st_otp.Y & st_otp.Z == 0) {
+	if ((st_otp.X & st_otp.Y & st_otp.Z) == 0)
 		otp_value_zero = true;
-	}
 
 	st_shift_cust.X = gyro_st->X - gyro->X;
 	st_shift_cust.Y = gyro_st->X - gyro->Y;
@@ -728,8 +735,6 @@ static int icm20602_initialize_gyro(struct inv_icm20602_state *st)
 {
 	struct icm20602_user_config *config = NULL;
 	int result = MPU_SUCCESS;
-	int sample_rate;
-	uint8_t fchoice_b;
 
 	if (st == NULL)
 		return -MPU_FAIL;
@@ -779,14 +784,14 @@ static int icm20602_initialize_gyro(struct inv_icm20602_state *st)
 				reg_set_20602.ACCEL_CONFIG2);
 
 	if (result) {
-		dev_dbgerr("icm20602 init gyro and accel failed\n");
+		pr_err("icm20602 init gyro and accel failed\n");
 		return -MPU_FAIL;
 	}
 
 	return result;
 }
 
-int icm20602_set_power_itg(struct inv_mpu9250_state *st, bool power_on)
+int icm20602_set_power_itg(struct inv_icm20602_state *st, bool power_on)
 {
 	int result = MPU_SUCCESS;
 
@@ -800,7 +805,7 @@ int icm20602_set_power_itg(struct inv_mpu9250_state *st, bool power_on)
 					reg_set_20602.PWR_MGMT_1);
 	}
 	if (result) {
-		dev_dbgerr("set power failed power %d  err %d\n",
+		pr_err("set power failed power %d  err %d\n",
 					power_on, result);
 		return result;
 	}
@@ -816,10 +821,11 @@ int icm20602_init_device(struct inv_icm20602_state *st)
 	int result = MPU_SUCCESS;
 	struct icm20602_user_config *config = NULL;
 	int package_count;
+	int i;
 
 	config = st->config;
 	if (st == NULL || st->config == NULL) {
-		dev_dbgerr("icm20602 validate config failed\n");
+		pr_err("icm20602 validate config failed\n");
 		return -MPU_FAIL;
 	}
 
@@ -844,14 +850,14 @@ int icm20602_init_device(struct inv_icm20602_state *st)
 
 	/* init gyro and accel */
 	if (icm20602_initialize_gyro(st)) {
-		dev_dbgerr("icm20602 init device failed\n");
+		pr_err("icm20602 init device failed\n");
 		return -MPU_FAIL;
 	}
 
 	/* if FIFO enable, config FIFO */
 	if (config->fifo_enabled) {
 		if (icm20602_config_fifo(st)) {
-			dev_dbgerr("icm20602 init config fifo failed\n");
+			pr_err("icm20602 init config fifo failed\n");
 			return -MPU_FAIL;
 		}
 	} else {
@@ -859,7 +865,7 @@ int icm20602_init_device(struct inv_icm20602_state *st)
 		reg_set_20602.INT_ENABLE.reg_u.REG.DATA_RDY_INT_EN = 0x0;
 		if (icm20602_write_reg_simple(st,
 				reg_set_20602.INT_ENABLE)) {
-			dev_dbgerr("icm20602 set raw rdy failed\n");
+			pr_err("icm20602 set raw rdy failed\n");
 			return -MPU_FAIL;
 		}
 	}
@@ -867,20 +873,38 @@ int icm20602_init_device(struct inv_icm20602_state *st)
 	/* buffer malloc */
 	package_count = config->fifo_waterlevel / ICM20602_PACKAGE_SIZE;
 
-	st->buf = kmalloc(config->fifo_waterlevel * 2, GFP_ATOMIC);
-	memset(st->buf, 0, config->fifo_waterlevel * 2);
+	st->buf = kzalloc(config->fifo_waterlevel * 2, GFP_ATOMIC);
+	if (!st->buf)
+		return -ENOMEM;
 
-	st->data_push = kmalloc_array(package_count,
+	st->data_push = kcalloc(package_count,
 		sizeof(struct struct_icm20602_data), GFP_ATOMIC);
-	memset(st->data_push,
-		0, (sizeof(struct struct_icm20602_data)*package_count));
+	if (!st->data_push)
+		return -ENOMEM;
+
+	for (i = 0; i < package_count; i++) {
+		st->data_push[i].raw_data =
+			kzalloc(ICM20602_PACKAGE_SIZE, GFP_ATOMIC);
+	}
 
 	return result;
 }
 
-int icm20602_rw_test(struct inv_icm20602_state *st)
+int icm20602_reset_fifo(struct inv_icm20602_state *st)
 {
-	u8 val = 0;
+	reg_set_20602.USER_CTRL.reg_u.REG.FIFO_RST = 0x1;
+	if (icm20602_write_reg_simple(st, reg_set_20602.USER_CTRL)) {
+		reg_set_20602.USER_CTRL.reg_u.REG.FIFO_RST = 0x0;
+		return -MPU_FAIL;
+	}
+	reg_set_20602.USER_CTRL.reg_u.REG.FIFO_RST = 0x0;
+	return MPU_SUCCESS;
+}
+
+
+void icm20602_rw_test(struct inv_icm20602_state *st)
+{
+	uint8_t val = 0;
 
 	reg_set_20602.PWR_MGMT_2.reg_u.REG.STBY_ZG = 0x1;
 	icm20602_write_reg_simple(st, reg_set_20602.PWR_MGMT_2);
@@ -890,21 +914,19 @@ int icm20602_rw_test(struct inv_icm20602_state *st)
 	icm20602_read_reg(st, reg_set_20602.PWR_MGMT_2.address, &val);
 	icm20602_read_reg(st, reg_set_20602.CONFIG.address, &val);
 
-	return 0;
 }
 
 int icm20602_detect(struct inv_icm20602_state *st)
 {
 	int result = MPU_SUCCESS;
 	uint8_t retry = 0, val = 0;
-	uint8_t usr_ctrl = 0;
 
-	dev_dbginfo("icm20602_detect\n");
+	pr_debug("icm20602_detect\n");
 	/* reset to make sure previous state are not there */
 	reg_set_20602.PWR_MGMT_1.reg_u.REG.DEVICE_RESET = 0x1;
 	result = icm20602_write_reg_simple(st, reg_set_20602.PWR_MGMT_1);
 	if (result) {
-		dev_dbgerr("mpu write reg 0x%x value 0x%x failed\n",
+		pr_err("mpu write reg 0x%x value 0x%x failed\n",
 		reg_set_20602.PWR_MGMT_1.reg_u.reg,
 		reg_set_20602.PWR_MGMT_1.reg_u.REG.DEVICE_RESET);
 		return result;
@@ -928,10 +950,10 @@ int icm20602_detect(struct inv_icm20602_state *st)
 	}
 
 	if (val != ICM20602_WHO_AM_I) {
-		dev_dbgerr("detect mpu failed,whoami reg 0x%x\n", val);
+		pr_err("detect mpu failed,whoami reg 0x%x\n", val);
 		result = -MPU_FAIL;
 	} else {
-		dev_dbginfo("detect mpu ok,whoami reg 0x%x\n", val);
+		pr_debug("detect mpu ok,whoami reg 0x%x\n", val);
 	}
 	icm20602_rw_test(st);
 

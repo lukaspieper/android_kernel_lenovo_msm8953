@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -194,7 +194,7 @@ static int tsmc_dsi_pll_enable_seq_8916(struct mdss_pll_resources *dsi_pll_res)
 
 /* Op structures */
 
-static struct clk_ops clk_ops_dsi_vco = {
+static const struct clk_ops clk_ops_dsi_vco = {
 	.set_rate = vco_set_rate_lpm,
 	.round_rate = vco_round_rate,
 	.handoff = vco_handoff,

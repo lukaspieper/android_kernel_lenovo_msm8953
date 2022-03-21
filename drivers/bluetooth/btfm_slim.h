@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,13 +13,13 @@
 #define BTFM_SLIM_H
 #include <linux/slimbus/slimbus.h>
 
-#define BTFMSLIM_DBG(fmt, arg...)  pr_debug("%s: " fmt "\n" , __func__ , ## arg)
-#define BTFMSLIM_INFO(fmt, arg...) pr_info("%s: " fmt "\n" , __func__ , ## arg)
-#define BTFMSLIM_ERR(fmt, arg...)  pr_err("%s: " fmt "\n" , __func__ , ## arg)
+#define BTFMSLIM_DBG(fmt, arg...)  pr_debug("%s: " fmt "\n", __func__, ## arg)
+#define BTFMSLIM_INFO(fmt, arg...) pr_info("%s: " fmt "\n", __func__, ## arg)
+#define BTFMSLIM_ERR(fmt, arg...)  pr_err("%s: " fmt "\n", __func__, ## arg)
 
 /* Vendor specific defines
- This should redefines in slimbus slave specific header
-*/
+ * This should redefines in slimbus slave specific header
+ */
 #define SLIM_SLAVE_COMPATIBLE_STR	"btfmslim_slave"
 #define SLIM_SLAVE_REG_OFFSET		0x0000
 #define SLIM_SLAVE_RXPORT		NULL
@@ -39,7 +39,7 @@
 enum {
 	BTFM_FM_SLIM_TX = 0,
 	BTFM_BT_SCO_SLIM_TX,
-	BTFM_BT_SCO_SLIM_RX,
+	BTFM_BT_SCO_A2DP_SLIM_RX,
 	BTFM_BT_SPLIT_A2DP_SLIM_RX,
 	BTFM_SLIM_NUM_CODEC_DAIS
 };
@@ -68,6 +68,7 @@ struct btfmslim {
 
 	uint32_t num_rx_port;
 	uint32_t num_tx_port;
+	uint32_t sample_rate;
 
 	struct btfmslim_ch *rx_chs;
 	struct btfmslim_ch *tx_chs;
@@ -76,6 +77,8 @@ struct btfmslim {
 	int (*vendor_port_en)(struct btfmslim *btfmslim, uint8_t port_num,
 		uint8_t rxport, uint8_t enable);
 };
+
+extern int btfm_feedback_ch_setting;
 
 /**
  * btfm_slim_hw_init: Initialize slimbus slave device
@@ -159,6 +162,14 @@ int btfm_slim_disable_ch(struct btfmslim *btfmslim,
  * Returns:
  * -ENOMEM
  * 0
-*/
+ */
 int btfm_slim_register_codec(struct device *dev);
+
+/**
+ * btfm_slim_unregister_codec: Unregister codec driver in slimbus device node
+ * @dev: device node
+ * Returns:
+ * VOID
+ */
+void btfm_slim_unregister_codec(struct device *dev);
 #endif /* BTFM_SLIM_H */

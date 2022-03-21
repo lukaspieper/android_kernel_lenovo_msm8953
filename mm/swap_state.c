@@ -17,10 +17,9 @@
 #include <linux/blkdev.h>
 #include <linux/pagevec.h>
 #include <linux/migrate.h>
-#include <linux/page_cgroup.h>
+#include <linux/delay.h>
 
 #include <asm/pgtable.h>
-#include "internal.h"
 
 /*
  * swapper_space is a fiction, retained to simplify the path through
@@ -34,17 +33,13 @@ static const struct address_space_operations swap_aops = {
 #endif
 };
 
-static struct backing_dev_info swap_backing_dev_info = {
-	.name		= "swap",
-	.capabilities	= BDI_CAP_NO_ACCT_AND_WRITEBACK | BDI_CAP_SWAP_BACKED,
-};
-
 struct address_space swapper_spaces[MAX_SWAPFILES] = {
 	[0 ... MAX_SWAPFILES - 1] = {
 		.page_tree	= RADIX_TREE_INIT(GFP_ATOMIC|__GFP_NOWARN),
 		.i_mmap_writable = ATOMIC_INIT(0),
 		.a_ops		= &swap_aops,
-		.backing_dev_info = &swap_backing_dev_info,
+		/* swap cache doesn't use writeback related tags */
+		.flags		= 1 << AS_NO_WRITEBACK_TAGS,
 	}
 };
 
@@ -93,18 +88,17 @@ int __add_to_swap_cache(struct page *page, swp_entry_t entry)
 	VM_BUG_ON_PAGE(PageSwapCache(page), page);
 	VM_BUG_ON_PAGE(!PageSwapBacked(page), page);
 
-	page_cache_get(page);
+	get_page(page);
 	SetPageSwapCache(page);
 	set_page_private(page, entry.val);
 
 	address_space = swap_address_space(entry);
 	spin_lock_irq(&address_space->tree_lock);
 	error = radix_tree_insert(&address_space->page_tree,
-					entry.val, page);
+				  swp_offset(entry), page);
 	if (likely(!error)) {
 		address_space->nrpages++;
-		__inc_zone_page_state(page, NR_FILE_PAGES);
-		__inc_zone_page_state(page, NR_SWAPCACHE);
+		__inc_node_page_state(page, NR_FILE_PAGES);
 		INC_CACHE_INFO(add_total);
 	}
 	spin_unlock_irq(&address_space->tree_lock);
@@ -118,7 +112,7 @@ int __add_to_swap_cache(struct page *page, swp_entry_t entry)
 		VM_BUG_ON(error == -EEXIST);
 		set_page_private(page, 0UL);
 		ClearPageSwapCache(page);
-		page_cache_release(page);
+		put_page(page);
 	}
 
 	return error;
@@ -152,12 +146,11 @@ void __delete_from_swap_cache(struct page *page)
 
 	entry.val = page_private(page);
 	address_space = swap_address_space(entry);
-	radix_tree_delete(&address_space->page_tree, page_private(page));
+	radix_tree_delete(&address_space->page_tree, swp_offset(entry));
 	set_page_private(page, 0);
 	ClearPageSwapCache(page);
 	address_space->nrpages--;
-	__dec_zone_page_state(page, NR_FILE_PAGES);
-	__dec_zone_page_state(page, NR_SWAPCACHE);
+	__dec_node_page_state(page, NR_FILE_PAGES);
 	INC_CACHE_INFO(del_total);
 }
 
@@ -180,6 +173,11 @@ int add_to_swap(struct page *page, struct list_head *list)
 	if (!entry.val)
 		return 0;
 
+	if (mem_cgroup_try_charge_swap(page, entry)) {
+		swapcache_free(entry);
+		return 0;
+	}
+
 	if (unlikely(PageTransHuge(page)))
 		if (unlikely(split_huge_page_to_list(page, list))) {
 			swapcache_free(entry);
@@ -195,13 +193,12 @@ int add_to_swap(struct page *page, struct list_head *list)
 	 * deadlock in the swap out path.
 	 */
 	/*
-	 * Add it to the swap cache and mark it dirty
+	 * Add it to the swap cache.
 	 */
 	err = add_to_swap_cache(page, entry,
 			__GFP_HIGH|__GFP_NOMEMALLOC|__GFP_NOWARN);
 
-	if (!err) {	/* Success */
-		SetPageDirty(page);
+	if (!err) {
 		return 1;
 	} else {	/* -ENOMEM radix-tree allocation failure */
 		/*
@@ -232,7 +229,7 @@ void delete_from_swap_cache(struct page *page)
 	spin_unlock_irq(&address_space->tree_lock);
 
 	swapcache_free(entry);
-	page_cache_release(page);
+	put_page(page);
 }
 
 /* 
@@ -258,7 +255,8 @@ static inline void free_swap_cache(struct page *page)
 void free_page_and_swap_cache(struct page *page)
 {
 	free_swap_cache(page);
-	page_cache_release(page);
+	if (!is_huge_zero_page(page))
+		put_page(page);
 }
 
 /*
@@ -286,7 +284,7 @@ struct page * lookup_swap_cache(swp_entry_t entry)
 {
 	struct page *page;
 
-	page = find_get_page(swap_address_space(entry), entry.val);
+	page = find_get_page(swap_address_space(entry), swp_offset(entry));
 
 	if (page) {
 		INC_CACHE_INFO(find_success);
@@ -298,17 +296,14 @@ struct page * lookup_swap_cache(swp_entry_t entry)
 	return page;
 }
 
-/* 
- * Locate a page of swap in physical memory, reserving swap cache space
- * and reading the disk if it is not already cached.
- * A failure return means that either the page allocation failed or that
- * the swap entry is no longer in use.
- */
-struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
-			struct vm_area_struct *vma, unsigned long addr)
+struct page *__read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
+			struct vm_area_struct *vma, unsigned long addr,
+			bool *new_page_allocated)
 {
 	struct page *found_page, *new_page = NULL;
+	struct address_space *swapper_space = swap_address_space(entry);
 	int err;
+	*new_page_allocated = false;
 
 	do {
 		/*
@@ -316,8 +311,7 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		 * called after lookup_swap_cache() failed, re-calling
 		 * that would confuse statistics.
 		 */
-		found_page = find_get_page(swap_address_space(entry),
-					entry.val);
+		found_page = find_get_page(swapper_space, swp_offset(entry));
 		if (found_page)
 			break;
 
@@ -333,7 +327,7 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		/*
 		 * call radix_tree_preload() while we can wait.
 		 */
-		err = radix_tree_maybe_preload(gfp_mask & GFP_RECLAIM_MASK);
+		err = radix_tree_maybe_preload(gfp_mask & GFP_KERNEL);
 		if (err)
 			break;
 
@@ -357,8 +351,11 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 			 * busy looping, we just conditionally invoke the
 			 * scheduler here, if there are some more important
 			 * tasks to run.
+			 *
+			 * cond_resched() may not work if the process is RT.
+			 * We need a usleep_range() give up CPU to another task.
 			 */
-			cond_resched();
+			usleep_range(500, 1000);
 			continue;
 		}
 		if (err) {		/* swp entry is obsolete ? */
@@ -367,21 +364,21 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		}
 
 		/* May fail (-ENOMEM) if radix-tree node allocation failed. */
-		__set_page_locked(new_page);
-		SetPageSwapBacked(new_page);
+		__SetPageLocked(new_page);
+		__SetPageSwapBacked(new_page);
 		err = __add_to_swap_cache(new_page, entry);
 		if (likely(!err)) {
 			radix_tree_preload_end();
 			/*
 			 * Initiate read into locked page and return.
 			 */
+			SetPageWorkingset(new_page);
 			lru_cache_add_anon(new_page);
-			swap_readpage(new_page);
+			*new_page_allocated = true;
 			return new_page;
 		}
 		radix_tree_preload_end();
-		ClearPageSwapBacked(new_page);
-		__clear_page_locked(new_page);
+		__ClearPageLocked(new_page);
 		/*
 		 * add_to_swap_cache() doesn't return -EEXIST, so we can safely
 		 * clear SWAP_HAS_CACHE flag.
@@ -390,8 +387,27 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 	} while (err != -ENOMEM);
 
 	if (new_page)
-		page_cache_release(new_page);
+		put_page(new_page);
 	return found_page;
+}
+
+/*
+ * Locate a page of swap in physical memory, reserving swap cache space
+ * and reading the disk if it is not already cached.
+ * A failure return means that either the page allocation failed or that
+ * the swap entry is no longer in use.
+ */
+struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
+			struct vm_area_struct *vma, unsigned long addr)
+{
+	bool page_was_allocated;
+	struct page *retpage = __read_swap_cache_async(entry, gfp_mask,
+			vma, addr, &page_was_allocated);
+
+	if (page_was_allocated)
+		swap_readpage(retpage);
+
+	return retpage;
 }
 
 static unsigned long swapin_nr_pages(unsigned long offset)
@@ -400,7 +416,7 @@ static unsigned long swapin_nr_pages(unsigned long offset)
 	unsigned int pages, max_pages, last_ra;
 	static atomic_t last_readahead_pages;
 
-	max_pages = 1 << ACCESS_ONCE(page_cluster);
+	max_pages = 1 << READ_ONCE(page_cluster);
 	if (max_pages <= 1)
 		return 1;
 
@@ -456,6 +472,10 @@ static unsigned long swapin_nr_pages(unsigned long offset)
  * the readahead.
  *
  * Caller must hold down_read on the vma->vm_mm if vma is not NULL.
+ * This is needed to ensure the VMA will not be freed in our back. In the case
+ * of the speculative page fault handler, this cannot happen, even if we don't
+ * hold the mmap_sem. Callees are assumed to take care of reading VMA's fields
+ * using READ_ONCE() to read consistent values.
  */
 struct page *swapin_readahead(swp_entry_t entry, gfp_t gfp_mask,
 			struct vm_area_struct *vma, unsigned long addr)
@@ -486,7 +506,7 @@ struct page *swapin_readahead(swp_entry_t entry, gfp_t gfp_mask,
 			continue;
 		if (offset != entry_offset)
 			SetPageReadahead(page);
-		page_cache_release(page);
+		put_page(page);
 	}
 	blk_finish_plug(&plug);
 

@@ -15,11 +15,15 @@
 /* These ELF defines belong to uapi but libc elf.h already defines them */
 #define EM_ARCOMPACT		93
 
+#define EM_ARCV2		195	/* ARCv2 Cores */
+
+#define EM_ARC_INUSE		(IS_ENABLED(CONFIG_ISA_ARCOMPACT) ? \
+					EM_ARCOMPACT : EM_ARCV2)
+
 /* ARC Relocations (kernel Modules only) */
 #define  R_ARC_32		0x4
 #define  R_ARC_32_ME		0x1B
-#define  R_ARC_S25H_PCREL	0x10
-#define  R_ARC_S25W_PCREL	0x11
+#define  R_ARC_32_PCREL		0x31
 
 /*to set parameters in the core dumps */
 #define ELF_ARCH		EM_ARCOMPACT

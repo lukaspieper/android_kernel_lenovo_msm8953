@@ -31,8 +31,6 @@
 #include <linux/security.h>
 #include <linux/compat.h>
 #include <linux/fs_stack.h>
-#include <linux/aio.h>
-#include <linux/ecryptfs.h>
 #include "ecryptfs_kernel.h"
 
 /**
@@ -53,12 +51,6 @@ static ssize_t ecryptfs_read_update_atime(struct kiocb *iocb,
 	struct file *file = iocb->ki_filp;
 
 	rc = generic_file_read_iter(iocb, to);
-	/*
-	 * Even though this is a async interface, we need to wait
-	 * for IO to finish to update atime
-	 */
-	if (-EIOCBQUEUED == rc)
-		rc = wait_on_sync_kiocb(iocb);
 	if (rc >= 0) {
 		path = ecryptfs_dentry_to_lower_path(file->f_path.dentry);
 		touch_atime(path);
@@ -76,11 +68,11 @@ struct ecryptfs_getdents_callback {
 
 /* Inspired by generic filldir in fs/readdir.c */
 static int
-ecryptfs_filldir(void *dirent, const char *lower_name, int lower_namelen,
-		 loff_t offset, u64 ino, unsigned int d_type)
+ecryptfs_filldir(struct dir_context *ctx, const char *lower_name,
+		 int lower_namelen, loff_t offset, u64 ino, unsigned int d_type)
 {
 	struct ecryptfs_getdents_callback *buf =
-	    (struct ecryptfs_getdents_callback *)dirent;
+		container_of(ctx, struct ecryptfs_getdents_callback, ctx);
 	size_t name_size;
 	char *name;
 	int rc;
@@ -137,7 +129,7 @@ struct kmem_cache *ecryptfs_file_info_cache;
 
 static int read_or_initialize_metadata(struct dentry *dentry)
 {
-	struct inode *inode = dentry->d_inode;
+	struct inode *inode = d_inode(dentry);
 	struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
 	struct ecryptfs_crypt_stat *crypt_stat;
 	int rc;
@@ -192,7 +184,7 @@ static int ecryptfs_mmap(struct file *file, struct vm_area_struct *vma)
 
 /**
  * ecryptfs_open
- * @inode: inode speciying file to open
+ * @inode: inode specifying file to open
  * @file: Structure to return filled in
  *
  * Opens the file specified by inode.
@@ -204,9 +196,6 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 	int rc = 0;
 	struct ecryptfs_crypt_stat *crypt_stat = NULL;
 	struct dentry *ecryptfs_dentry = file->f_path.dentry;
-	int ret;
-
-
 	/* Private value of ecryptfs_dentry allocated in
 	 * ecryptfs_lookup() */
 	struct ecryptfs_file_info *file_info;
@@ -252,24 +241,6 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 	ecryptfs_printk(KERN_DEBUG, "inode w/ addr = [0x%p], i_ino = "
 			"[0x%.16lx] size: [0x%.16llx]\n", inode, inode->i_ino,
 			(unsigned long long)i_size_read(inode));
-
-	if (get_events() && get_events()->open_cb) {
-
-		ret = vfs_fsync(file, false);
-
-		if (ret)
-			ecryptfs_printk(KERN_ERR,
-				"failed to sync file ret = %d.\n", ret);
-
-		get_events()->open_cb(ecryptfs_inode_to_lower(inode),
-			crypt_stat);
-
-		if (crypt_stat->flags & ECRYPTFS_METADATA_IN_XATTR) {
-			truncate_inode_pages(inode->i_mapping, 0);
-			truncate_inode_pages(
-				ecryptfs_inode_to_lower(inode)->i_mapping, 0);
-		}
-	}
 	goto out;
 out_put:
 	ecryptfs_put_lower_file(inode);
@@ -282,7 +253,7 @@ out:
 
 /**
  * ecryptfs_dir_open
- * @inode: inode speciying file to open
+ * @inode: inode specifying file to open
  * @file: Structure to return filled in
  *
  * Opens the file specified by inode.
@@ -336,7 +307,6 @@ static int ecryptfs_release(struct inode *inode, struct file *file)
 	ecryptfs_put_lower_file(inode);
 	kmem_cache_free(ecryptfs_file_info_cache,
 			ecryptfs_file_to_private(file));
-
 	return 0;
 }
 
@@ -411,7 +381,6 @@ ecryptfs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return rc;
 
 	switch (cmd) {
-	case FITRIM:
 	case FS_IOC32_GETFLAGS:
 	case FS_IOC32_SETFLAGS:
 	case FS_IOC32_GETVERSION:
@@ -427,7 +396,7 @@ ecryptfs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 #endif
 
 const struct file_operations ecryptfs_dir_fops = {
-	.iterate = ecryptfs_readdir,
+	.iterate_shared = ecryptfs_readdir,
 	.read = generic_read_dir,
 	.unlocked_ioctl = ecryptfs_unlocked_ioctl,
 #ifdef CONFIG_COMPAT
@@ -441,9 +410,7 @@ const struct file_operations ecryptfs_dir_fops = {
 
 const struct file_operations ecryptfs_main_fops = {
 	.llseek = generic_file_llseek,
-	.read = new_sync_read,
 	.read_iter = ecryptfs_read_update_atime,
-	.write = new_sync_write,
 	.write_iter = generic_file_write_iter,
 	.unlocked_ioctl = ecryptfs_unlocked_ioctl,
 #ifdef CONFIG_COMPAT

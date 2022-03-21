@@ -80,7 +80,6 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct squashfs_sb_info *msblk;
 	struct squashfs_super_block *sblk = NULL;
-	char b[BDEVNAME_SIZE];
 	struct inode *root;
 	long long root_inode;
 	unsigned short flags;
@@ -124,8 +123,8 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_magic = le32_to_cpu(sblk->s_magic);
 	if (sb->s_magic != SQUASHFS_MAGIC) {
 		if (!silent)
-			ERROR("Can't find a SQUASHFS superblock on %s\n",
-						bdevname(sb->s_bdev, b));
+			ERROR("Can't find a SQUASHFS superblock on %pg\n",
+						sb->s_bdev);
 		goto failed_mount;
 	}
 
@@ -153,7 +152,7 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	 * Check the system page size is not larger than the filesystem
 	 * block size (by default 128K).  This is currently not supported.
 	 */
-	if (PAGE_CACHE_SIZE > msblk->block_size) {
+	if (PAGE_SIZE > msblk->block_size) {
 		ERROR("Page size > filesystem block size (%d).  This is "
 			"currently not supported!\n", msblk->block_size);
 		goto failed_mount;
@@ -179,7 +178,7 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	msblk->fragments = le32_to_cpu(sblk->fragments);
 	flags = le16_to_cpu(sblk->flags);
 
-	TRACE("Found valid superblock on %s\n", bdevname(sb->s_bdev, b));
+	TRACE("Found valid superblock on %pg\n", sb->s_bdev);
 	TRACE("Inodes are %scompressed\n", SQUASHFS_UNCOMPRESSED_INODES(flags)
 				? "un" : "");
 	TRACE("Data is %scompressed\n", SQUASHFS_UNCOMPRESSED_DATA(flags)
@@ -421,7 +420,8 @@ static int __init init_inodecache(void)
 {
 	squashfs_inode_cachep = kmem_cache_create("squashfs_inode_cache",
 		sizeof(struct squashfs_inode_info), 0,
-		SLAB_HWCACHE_ALIGN|SLAB_RECLAIM_ACCOUNT, init_once);
+		SLAB_HWCACHE_ALIGN|SLAB_RECLAIM_ACCOUNT|SLAB_ACCOUNT,
+		init_once);
 
 	return squashfs_inode_cachep ? 0 : -ENOMEM;
 }
@@ -445,15 +445,9 @@ static int __init init_squashfs_fs(void)
 	if (err)
 		return err;
 
-	if (!squashfs_init_read_wq()) {
-		destroy_inodecache();
-		return -ENOMEM;
-        }
-
 	err = register_filesystem(&squashfs_fs_type);
 	if (err) {
 		destroy_inodecache();
-		squashfs_destroy_read_wq();
 		return err;
 	}
 
@@ -467,7 +461,6 @@ static void __exit exit_squashfs_fs(void)
 {
 	unregister_filesystem(&squashfs_fs_type);
 	destroy_inodecache();
-	squashfs_destroy_read_wq();
 }
 
 

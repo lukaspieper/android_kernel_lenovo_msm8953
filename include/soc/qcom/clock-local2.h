@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -40,7 +40,7 @@ struct clk_freq_tbl {
 	u32	n_val;
 	u32	d_val;
 	u32	div_src_val;
-	const unsigned	sys_vdd;
+	const unsigned long sys_vdd;
 };
 
 #define FREQ_END	(ULONG_MAX-1)
@@ -78,6 +78,7 @@ struct rcg_clk {
 	bool non_local_children;
 	int non_local_control_timeout;
 	bool force_enable_rcgr;
+
 	void *const __iomem *base;
 };
 
@@ -122,6 +123,7 @@ struct branch_clk {
 	bool check_enable_bit;
 	bool aggr_sibling_rates;
 	bool is_prepared;
+
 	void *const __iomem *base;
 };
 
@@ -147,6 +149,7 @@ struct local_vote_clk {
 	u32 bcr_reg;
 	u32 en_mask;
 	const u32 halt_check;
+
 	void * __iomem *base;
 };
 
@@ -164,6 +167,7 @@ static inline struct local_vote_clk *to_local_vote_clk(struct clk *clk)
 struct reset_clk {
 	struct clk c;
 	u32 reset_reg;
+
 	void *__iomem *base;
 };
 
@@ -177,7 +181,7 @@ static inline struct reset_clk *to_reset_clk(struct clk *clk)
  * @multiplier: measurement scale-up factor
  * @divider: measurement scale-down factor
  * @c: clk
-*/
+ */
 struct measure_clk {
 	u64 sample_ticks;
 	u32 multiplier;
@@ -193,6 +197,7 @@ struct measure_clk_data {
 	u32 xo_div4_cbcr;
 	u32 ctl_reg;
 	u32 status_reg;
+
 	void *const __iomem *base;
 };
 
@@ -213,6 +218,7 @@ struct gate_clk {
 	u32 en_mask;
 	u32 en_reg;
 	unsigned int delay_us;
+
 	void *const __iomem *base;
 };
 
@@ -232,23 +238,23 @@ void set_rate_hid(struct rcg_clk *clk, struct clk_freq_tbl *nf);
  */
 extern spinlock_t local_clock_reg_lock;
 
-extern struct clk_ops clk_ops_empty;
-extern struct clk_ops clk_ops_rcg;
-extern struct clk_ops clk_ops_rcg_mnd;
-extern struct clk_ops clk_ops_branch;
-extern struct clk_ops clk_ops_vote;
-extern struct clk_ops clk_ops_rcg_hdmi;
-extern struct clk_ops clk_ops_rcg_edp;
-extern struct clk_ops clk_ops_byte;
-extern struct clk_ops clk_ops_pixel;
-extern struct clk_ops clk_ops_byte_multiparent;
-extern struct clk_ops clk_ops_pixel_multiparent;
-extern struct clk_ops clk_ops_edppixel;
-extern struct clk_ops clk_ops_gate;
-extern struct clk_ops clk_ops_rst;
+extern const struct clk_ops clk_ops_empty;
+extern const struct clk_ops clk_ops_rcg;
+extern const struct clk_ops clk_ops_rcg_mnd;
+extern const struct clk_ops clk_ops_branch;
+extern const struct clk_ops clk_ops_vote;
+extern const struct clk_ops clk_ops_rcg_hdmi;
+extern const struct clk_ops clk_ops_rcg_edp;
+extern const struct clk_ops clk_ops_byte;
+extern const struct clk_ops clk_ops_pixel;
+extern const struct clk_ops clk_ops_byte_multiparent;
+extern const struct clk_ops clk_ops_pixel_multiparent;
+extern const struct clk_ops clk_ops_edppixel;
+extern const struct clk_ops clk_ops_gate;
+extern const struct clk_ops clk_ops_rst;
 extern struct clk_mux_ops mux_reg_ops;
 extern struct mux_div_ops rcg_mux_div_ops;
-extern struct clk_div_ops postdiv_reg_ops;
+extern const  struct clk_div_ops postdiv_reg_ops;
 
 enum handoff pixel_rcg_handoff(struct clk *clk);
 enum handoff byte_rcg_handoff(struct clk *clk);
@@ -262,7 +268,7 @@ unsigned long measure_get_rate(struct clk *c);
 		.ops = &clk_ops_empty, \
 		.dbg_name = #name, \
 		CLK_INIT(name), \
-	}; \
+	} \
 
 #endif /* __ARCH_ARM_MACH_MSM_CLOCK_LOCAL_2_H */
 

@@ -277,20 +277,12 @@ static int write_mii_word(rtl8150_t * dev, u8 phy, __u8 indx, u16 reg)
 		return 1;
 }
 
-static void set_ethernet_addr(rtl8150_t *dev)
+static inline void set_ethernet_addr(rtl8150_t * dev)
 {
-	u8 node_id[ETH_ALEN];
-	int ret;
+	u8 node_id[6];
 
-	ret = get_registers(dev, IDR, sizeof(node_id), node_id);
-
-	if (ret == sizeof(node_id)) {
-		ether_addr_copy(dev->netdev->dev_addr, node_id);
-	} else {
-		eth_hw_addr_random(dev->netdev);
-		netdev_notice(dev->netdev, "Assigned a random MAC address: %pM\n",
-			      dev->netdev->dev_addr);
-	}
+	get_registers(dev, IDR, sizeof(node_id), node_id);
+	memcpy(dev->netdev->dev_addr, node_id, sizeof(node_id));
 }
 
 static int rtl8150_set_mac_address(struct net_device *netdev, void *p)
@@ -302,7 +294,7 @@ static int rtl8150_set_mac_address(struct net_device *netdev, void *p)
 		return -EBUSY;
 
 	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
-	netdev_dbg(netdev, "Setting MAC address to %pKM\n", netdev->dev_addr);
+	netdev_dbg(netdev, "Setting MAC address to %pM\n", netdev->dev_addr);
 	/* Set the IDR registers. */
 	set_registers(dev, IDR, netdev->addr_len, netdev->dev_addr);
 #ifdef EEPROM_WRITE
@@ -479,7 +471,7 @@ static void write_bulk_callback(struct urb *urb)
 	if (status)
 		dev_info(&urb->dev->dev, "%s: Tx status %d\n",
 			 dev->netdev->name, status);
-	dev->netdev->trans_start = jiffies;
+	netif_trans_update(dev->netdev);
 	netif_wake_queue(dev->netdev);
 }
 
@@ -722,7 +714,7 @@ static netdev_tx_t rtl8150_start_xmit(struct sk_buff *skb,
 	} else {
 		netdev->stats.tx_packets++;
 		netdev->stats.tx_bytes += skb->len;
-		netdev->trans_start = jiffies;
+		netif_trans_update(netdev);
 	}
 
 	return NETDEV_TX_OK;
@@ -781,14 +773,13 @@ static int rtl8150_open(struct net_device *netdev)
 static int rtl8150_close(struct net_device *netdev)
 {
 	rtl8150_t *dev = netdev_priv(netdev);
-	int res = 0;
 
 	netif_stop_queue(netdev);
 	if (!test_bit(RTL8150_UNPLUG, &dev->flags))
 		disable_net_traffic(dev);
 	unlink_all_urbs(dev);
 
-	return res;
+	return 0;
 }
 
 static void rtl8150_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *info)

@@ -98,8 +98,8 @@
  */
 
 /*
-Common Registers
-*/
+ * Common Registers
+ */
 #define IPA_REG_BASE_OFST_v2_0 0x00020000
 #define IPA_REG_BASE_OFST_v2_5 0x00040000
 #define IPA_REG_BASE_OFST_v2_6L IPA_REG_BASE_OFST_v2_5
@@ -216,8 +216,8 @@ Common Registers
 
 
 /*
- IPA HW 1.1 specific Registers
-*/
+ * IPA HW 1.1 specific Registers
+ */
 
 #define IPA_FILTER_FILTER_DIS_BMSK 0x1
 #define IPA_FILTER_FILTER_DIS_SHFT 0x0

@@ -1165,7 +1165,6 @@ static struct platform_driver serial_txx9_plat_driver = {
 #endif
 	.driver		= {
 		.name	= "serial_txx9",
-		.owner	= THIS_MODULE,
 	},
 };
 
@@ -1288,9 +1287,6 @@ static int __init serial_txx9_init(void)
 
 #ifdef ENABLE_SERIAL_TXX9_PCI
 	ret = pci_register_driver(&serial_txx9_pci_driver);
-	if (ret) {
-		platform_driver_unregister(&serial_txx9_plat_driver);
-	}
 #endif
 	if (ret == 0)
 		goto out;

@@ -1,6 +1,6 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015, 2018, The Linux Foundation. All rights reserved.
  *
- * This program is Mree software; you can redistribute it and/or modify
+ * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
  * only version 2 as published by the Free Software Foundation.
  *
@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  */
 
-/*Version = 2 */
+/* Version = 2 */
 #include <dt-bindings/msm/msm-bus-ids.h>
 
 &soc {
@@ -21,7 +21,7 @@
 		       <0x500000 0x11000>;
 		reg-names = "snoc-base", "bimc-base", "pcnoc-base";
 
-		/*Buses*/
+		/* Buses */
 
 		fab_bimc: fab-bimc {
 			cell-id = <MSM_BUS_FAB_BIMC>;
@@ -61,7 +61,7 @@
 
 		};
 
-		/*Masters*/
+		/* Masters */
 
 		mas_apps_proc: mas-apps-proc {
 			cell-id = <MSM_BUS_MASTER_AMPSS_M0>;
@@ -316,8 +316,7 @@
 			qcom,mas-rpm-id = <ICBID_MASTER_PCIE_0>;
 		};
 
-		/*Internal nodes*/
-
+		/* Internal nodes */
 
 		pcnoc_m_0: pcnoc-m-0 {
 			cell-id = <MSM_BUS_PNOC_M_0>;
@@ -491,7 +490,8 @@
 			qcom,mas-rpm-id = <ICBID_MASTER_PCNOC_S_8>;
 			qcom,slv-rpm-id = <ICBID_SLAVE_PCNOC_S_8>;
 		};
-		/*Slaves*/
+
+		/* Slaves */
 
 		slv_ebi:slv-ebi {
 			cell-id = <MSM_BUS_SLAVE_EBI_CH0>;

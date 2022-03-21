@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2016,2018 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -40,6 +40,7 @@ enum subsys_id {
  */
 enum ssctl_ssr_event_enum_type {
 	SSCTL_SSR_EVENT_ENUM_TYPE_MIN_ENUM_VAL = -2147483647,
+	SSCTL_SSR_EVENT_INVALID = -1,
 	SSCTL_SSR_EVENT_BEFORE_POWERUP = 0,
 	SSCTL_SSR_EVENT_AFTER_POWERUP = 1,
 	SSCTL_SSR_EVENT_BEFORE_SHUTDOWN = 2,

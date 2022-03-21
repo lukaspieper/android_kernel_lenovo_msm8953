@@ -26,6 +26,8 @@
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
+#include <linux/arm-smccc.h>
+#include <linux/kprobes.h>
 
 #include <asm/cacheflush.h>
 #include <asm/checksum.h>
@@ -36,8 +38,8 @@ EXPORT_SYMBOL(clear_page);
 	/* user mem (segment) */
 EXPORT_SYMBOL(__arch_copy_from_user);
 EXPORT_SYMBOL(__arch_copy_to_user);
-EXPORT_SYMBOL(__clear_user);
-EXPORT_SYMBOL(__copy_in_user);
+EXPORT_SYMBOL(__arch_clear_user);
+EXPORT_SYMBOL(__arch_copy_in_user);
 
 	/* physical memory */
 EXPORT_SYMBOL(memstart_addr);
@@ -68,8 +70,14 @@ EXPORT_SYMBOL(test_and_change_bit);
 
 #ifdef CONFIG_FUNCTION_TRACER
 EXPORT_SYMBOL(_mcount);
+NOKPROBE_SYMBOL(_mcount);
 #endif
+
+	/* arm-smccc */
+EXPORT_SYMBOL(__arm_smccc_smc);
+EXPORT_SYMBOL(__arm_smccc_hvc);
+
 	/* caching functions */
-EXPORT_SYMBOL(__dma_inv_range);
-EXPORT_SYMBOL(__dma_clean_range);
-EXPORT_SYMBOL(__dma_flush_range);
+EXPORT_SYMBOL(__dma_inv_area);
+EXPORT_SYMBOL(__dma_clean_area);
+EXPORT_SYMBOL(__dma_flush_area);

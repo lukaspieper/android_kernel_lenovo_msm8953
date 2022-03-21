@@ -20,14 +20,22 @@
 #include <linux/cn_proc.h>
 
 #if 0
-#define kdebug(FMT, ...) \
-	printk("[%-5.5s%5u] "FMT"\n", current->comm, current->pid ,##__VA_ARGS__)
+#define kdebug(FMT, ...)						\
+	printk("[%-5.5s%5u] " FMT "\n",					\
+	       current->comm, current->pid, ##__VA_ARGS__)
 #else
-#define kdebug(FMT, ...) \
-	no_printk("[%-5.5s%5u] "FMT"\n", current->comm, current->pid ,##__VA_ARGS__)
+#define kdebug(FMT, ...)						\
+do {									\
+	if (0)								\
+		no_printk("[%-5.5s%5u] " FMT "\n",			\
+			  current->comm, current->pid, ##__VA_ARGS__);	\
+} while (0)
 #endif
 
 static struct kmem_cache *cred_jar;
+
+/* init to 2 - one for init_task, one to ensure it is never freed */
+struct group_info init_groups = { .usage = ATOMIC_INIT(2) };
 
 /*
  * The initial credentials for the initial task
@@ -211,7 +219,7 @@ struct cred *cred_alloc_blank(void)
 	new->magic = CRED_MAGIC;
 #endif
 
-	if (security_cred_alloc_blank(new, GFP_KERNEL) < 0)
+	if (security_cred_alloc_blank(new, GFP_KERNEL_ACCOUNT) < 0)
 		goto error;
 
 	return new;
@@ -270,7 +278,7 @@ struct cred *prepare_creds(void)
 	new->security = NULL;
 #endif
 
-	if (security_prepare_creds(new, old, GFP_KERNEL) < 0)
+	if (security_prepare_creds(new, old, GFP_KERNEL_ACCOUNT) < 0)
 		goto error;
 	validate_creds(new);
 	return new;
@@ -443,6 +451,15 @@ int commit_creds(struct cred *new)
 		if (task->mm)
 			set_dumpable(task->mm, suid_dumpable);
 		task->pdeath_signal = 0;
+		/*
+		 * If a task drops privileges and becomes nondumpable,
+		 * the dumpability change must become visible before
+		 * the credential change; otherwise, a __ptrace_may_access()
+		 * racing with this change may be able to attach to a task it
+		 * shouldn't be able to attach to (as if the task had dropped
+		 * privileges without becoming nondumpable).
+		 * Pairs with a read barrier in __ptrace_may_access().
+		 */
 		smp_wmb();
 	}
 
@@ -577,8 +594,8 @@ EXPORT_SYMBOL(revert_creds);
 void __init cred_init(void)
 {
 	/* allocate a slab in which we can store credentials */
-	cred_jar = kmem_cache_create("cred_jar", sizeof(struct cred),
-				     0, SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+	cred_jar = kmem_cache_create("cred_jar", sizeof(struct cred), 0,
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT, NULL);
 }
 
 /**
@@ -636,7 +653,7 @@ struct cred *prepare_kernel_cred(struct task_struct *daemon)
 #ifdef CONFIG_SECURITY
 	new->security = NULL;
 #endif
-	if (security_prepare_creds(new, old, GFP_KERNEL) < 0)
+	if (security_prepare_creds(new, old, GFP_KERNEL_ACCOUNT) < 0)
 		goto error;
 
 	put_cred(old);

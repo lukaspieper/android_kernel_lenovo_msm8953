@@ -90,7 +90,7 @@ struct qseecom_send_resp_req {
  * @ion_fd - Ion file descriptor used when allocating memory.
  * @img_name - Name of the image.
  * @app_arch - Architecture of the image, i.e. 32bit or 64bit app
-*/
+ */
 struct qseecom_load_img_req {
 	uint32_t mdt_len; /* in */
 	uint32_t img_len; /* in */
@@ -277,13 +277,15 @@ struct qseecom_ce_info_req {
 	struct qseecom_ce_pipe_entry ce_pipe_entry[MAX_CE_PIPE_PAIR_PER_UNIT];
 };
 
+struct qseecom_ice_data_t {
+	int flag;
+};
+
 #define SG_ENTRY_SZ		sizeof(struct qseecom_sg_entry)
 #define SG_ENTRY_SZ_64BIT	sizeof(struct qseecom_sg_entry_64bit)
 
 struct file;
 
-extern long qseecom_ioctl(struct file *file,
-					unsigned cmd, unsigned long arg);
 
 #define QSEECOM_IOC_MAGIC    0x97
 
@@ -387,5 +389,7 @@ extern long qseecom_ioctl(struct file *file,
 #define QSEECOM_IOCTL_QUERY_CE_PIPE_INFO \
 	_IOWR(QSEECOM_IOC_MAGIC, 42, struct qseecom_ce_info_req)
 
+#define QSEECOM_IOCTL_SET_ICE_INFO \
+	_IOWR(QSEECOM_IOC_MAGIC, 43, struct qseecom_ice_data_t)
 
 #endif /* _UAPI_QSEECOM_H_ */

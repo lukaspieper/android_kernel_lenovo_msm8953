@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,7 +11,7 @@
  *
  */
 
-/* Qualcomm Crypto Engine driver OTA APIi */
+/* QTI Crypto Engine driver OTA APIi */
 
 #ifndef __CRYPTO_MSM_QCE_OTA_H
 #define __CRYPTO_MSM_QCE_OTA_H

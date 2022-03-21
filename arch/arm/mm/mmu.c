@@ -37,8 +37,8 @@
 #include <asm/mach/map.h>
 #include <asm/mach/pci.h>
 #include <asm/fixmap.h>
-#include <asm/early_ioremap.h>
 
+#include "fault.h"
 #include "mm.h"
 #include "tcm.h"
 
@@ -137,7 +137,7 @@ void __init init_default_cache_policy(unsigned long pmd)
 
 	initial_pmd_value = pmd;
 
-	pmd &= PMD_SECT_TEX(1) | PMD_SECT_BUFFERABLE | PMD_SECT_CACHEABLE;
+	pmd &= PMD_SECT_CACHE_MASK;
 
 	for (i = 0; i < ARRAY_SIZE(cache_policies); i++)
 		if (cache_policies[i].pmd == pmd) {
@@ -196,7 +196,7 @@ early_param("cachepolicy", early_cachepolicy);
 static int __init early_nocache(char *__unused)
 {
 	char *p = "buffered";
-	printk(KERN_WARNING "nocache is deprecated; use cachepolicy=%s\n", p);
+	pr_warn("nocache is deprecated; use cachepolicy=%s\n", p);
 	early_cachepolicy(p);
 	return 0;
 }
@@ -205,7 +205,7 @@ early_param("nocache", early_nocache);
 static int __init early_nowrite(char *__unused)
 {
 	char *p = "uncached";
-	printk(KERN_WARNING "nowb is deprecated; use cachepolicy=%s\n", p);
+	pr_warn("nowb is deprecated; use cachepolicy=%s\n", p);
 	early_cachepolicy(p);
 	return 0;
 }
@@ -243,7 +243,7 @@ __setup("noalign", noalign_setup);
 #define PROT_PTE_S2_DEVICE	PROT_PTE_DEVICE
 #define PROT_SECT_DEVICE	PMD_TYPE_SECT|PMD_SECT_AP_WRITE
 
-static struct mem_type mem_types[] = {
+static struct mem_type mem_types[] __ro_after_init = {
 	[MT_DEVICE] = {		  /* Strongly ordered / ARMv6 shared device */
 		.prot_pte	= PROT_PTE_DEVICE | L_PTE_MT_DEV_SHARED |
 				  L_PTE_SHARED,
@@ -358,45 +358,46 @@ const struct mem_type *get_mem_type(unsigned int type)
 }
 EXPORT_SYMBOL(get_mem_type);
 
-#define PTE_SET_FN(_name, pteop) \
-static int pte_set_##_name(pte_t *ptep, pgtable_t token, unsigned long addr, \
-			void *data) \
-{ \
-	pte_t pte = pteop(*ptep); \
-\
-	set_pte_ext(ptep, pte, 0); \
-	return 0; \
-} \
+static pte_t *(*pte_offset_fixmap)(pmd_t *dir, unsigned long addr);
 
-#define SET_MEMORY_FN(_name, callback) \
-int set_memory_##_name(unsigned long addr, int numpages) \
-{ \
-	unsigned long start = addr; \
-	unsigned long size = PAGE_SIZE*numpages; \
-	unsigned end = start + size; \
-\
-	if (!IS_ENABLED(CONFIG_FORCE_PAGES)) { \
-		if (start < MODULES_VADDR || start >= MODULES_END) \
-			return -EINVAL;\
-\
-		if (end < MODULES_VADDR || end >= MODULES_END) \
-			return -EINVAL; \
-	} \
-\
-	apply_to_page_range(&init_mm, start, size, callback, NULL); \
-	flush_tlb_kernel_range(start, end); \
-	return 0;\
+static pte_t bm_pte[PTRS_PER_PTE + PTE_HWTABLE_PTRS]
+	__aligned(PTE_HWTABLE_OFF + PTE_HWTABLE_SIZE) __initdata;
+
+static pte_t * __init pte_offset_early_fixmap(pmd_t *dir, unsigned long addr)
+{
+	return &bm_pte[pte_index(addr)];
 }
 
-PTE_SET_FN(ro, pte_wrprotect)
-PTE_SET_FN(rw, pte_mkwrite)
-PTE_SET_FN(x, pte_mkexec)
-PTE_SET_FN(nx, pte_mknexec)
+static pte_t *pte_offset_late_fixmap(pmd_t *dir, unsigned long addr)
+{
+	return pte_offset_kernel(dir, addr);
+}
 
-SET_MEMORY_FN(ro, pte_set_ro)
-SET_MEMORY_FN(rw, pte_set_rw)
-SET_MEMORY_FN(x, pte_set_x)
-SET_MEMORY_FN(nx, pte_set_nx)
+static inline pmd_t * __init fixmap_pmd(unsigned long addr)
+{
+	pgd_t *pgd = pgd_offset_k(addr);
+	pud_t *pud = pud_offset(pgd, addr);
+	pmd_t *pmd = pmd_offset(pud, addr);
+
+	return pmd;
+}
+
+void __init early_fixmap_init(void)
+{
+	pmd_t *pmd;
+
+	/*
+	 * The early fixmap range spans multiple pmds, for which
+	 * we are not prepared:
+	 */
+	BUILD_BUG_ON((__fix_to_virt(__end_of_early_ioremap_region) >> PMD_SHIFT)
+		     != FIXADDR_TOP >> PMD_SHIFT);
+
+	pmd = fixmap_pmd(FIXADDR_TOP);
+	pmd_populate_kernel(&init_mm, pmd, bm_pte);
+
+	pte_offset_fixmap = pte_offset_early_fixmap;
+}
 
 /*
  * To avoid TLB flush broadcasts, this uses local_flush_tlb_kernel_range().
@@ -406,7 +407,7 @@ SET_MEMORY_FN(nx, pte_set_nx)
 void __set_fixmap(enum fixed_addresses idx, phys_addr_t phys, pgprot_t prot)
 {
 	unsigned long vaddr = __fix_to_virt(idx);
-	pte_t *pte = pte_offset_kernel(pmd_off_k(vaddr), vaddr);
+	pte_t *pte = pte_offset_fixmap(pmd_off_k(vaddr), vaddr);
 
 	/* Make sure fixmap region does not exceed available allocation. */
 	BUILD_BUG_ON(FIXADDR_START + (__end_of_fixed_addresses * PAGE_SIZE) >
@@ -476,7 +477,7 @@ static void __init build_mem_type_table(void)
 	 * "update-able on write" bit on ARM610).  However, Xscale and
 	 * Xscale3 require this bit to be cleared.
 	 */
-	if (cpu_is_xscale() || cpu_is_xsc3()) {
+	if (cpu_is_xscale_family()) {
 		for (i = 0; i < ARRAY_SIZE(mem_types); i++) {
 			mem_types[i].prot_sect &= ~PMD_BIT4;
 			mem_types[i].prot_l1 &= ~PMD_BIT4;
@@ -556,16 +557,6 @@ static void __init build_mem_type_table(void)
 	s2_pgprot = cp->pte_s2;
 	hyp_device_pgprot = mem_types[MT_DEVICE].prot_pte;
 	s2_device_pgprot = mem_types[MT_DEVICE].prot_pte_s2;
-
-	/*
-	 * We don't use domains on ARMv6 (since this causes problems with
-	 * v6/v7 kernels), so we must use a separate memory type for user
-	 * r/o, kernel r/w to map the vectors page.
-	 */
-#ifndef CONFIG_ARM_LPAE
-	if (cpu_arch == CPU_ARCH_ARMv6)
-		vecs_pgprot |= L_PTE_MT_VECTORS;
-#endif
 
 #ifndef CONFIG_ARM_LPAE
 	/*
@@ -733,30 +724,50 @@ static void __init *early_alloc(unsigned long sz)
 	return early_alloc_aligned(sz, sz);
 }
 
-static pte_t * __init early_pte_alloc(pmd_t *pmd, unsigned long addr, unsigned long prot)
+static void *__init late_alloc(unsigned long sz)
+{
+	void *ptr = (void *)__get_free_pages(PGALLOC_GFP, get_order(sz));
+
+	if (!ptr || !pgtable_page_ctor(virt_to_page(ptr)))
+		BUG();
+	return ptr;
+}
+
+static pte_t * __init arm_pte_alloc(pmd_t *pmd, unsigned long addr,
+				unsigned long prot,
+				void *(*alloc)(unsigned long sz))
 {
 	if (pmd_none(*pmd)) {
-		pte_t *pte = early_alloc(PTE_HWTABLE_OFF + PTE_HWTABLE_SIZE);
+		pte_t *pte = alloc(PTE_HWTABLE_OFF + PTE_HWTABLE_SIZE);
 		__pmd_populate(pmd, __pa(pte), prot);
 	}
 	BUG_ON(pmd_bad(*pmd));
 	return pte_offset_kernel(pmd, addr);
 }
 
+static pte_t * __init early_pte_alloc(pmd_t *pmd, unsigned long addr,
+				      unsigned long prot)
+{
+	return arm_pte_alloc(pmd, addr, prot, early_alloc);
+}
+
 static void __init alloc_init_pte(pmd_t *pmd, unsigned long addr,
 				  unsigned long end, unsigned long pfn,
-				  const struct mem_type *type)
+				  const struct mem_type *type,
+				  void *(*alloc)(unsigned long sz),
+				  bool ng)
 {
-	pte_t *pte = early_pte_alloc(pmd, addr, type->prot_l1);
+	pte_t *pte = arm_pte_alloc(pmd, addr, type->prot_l1, alloc);
 	do {
-		set_pte_ext(pte, pfn_pte(pfn, __pgprot(type->prot_pte)), 0);
+		set_pte_ext(pte, pfn_pte(pfn, __pgprot(type->prot_pte)),
+			    ng ? PTE_EXT_NG : 0);
 		pfn++;
 	} while (pte++, addr += PAGE_SIZE, addr != end);
 }
 
 static void __init __map_init_section(pmd_t *pmd, unsigned long addr,
 			unsigned long end, phys_addr_t phys,
-			const struct mem_type *type)
+			const struct mem_type *type, bool ng)
 {
 	pmd_t *p = pmd;
 
@@ -774,7 +785,7 @@ static void __init __map_init_section(pmd_t *pmd, unsigned long addr,
 		pmd++;
 #endif
 	do {
-		*pmd = __pmd(phys | type->prot_sect);
+		*pmd = __pmd(phys | type->prot_sect | (ng ? PMD_SECT_nG : 0));
 		phys += SECTION_SIZE;
 	} while (pmd++, addr += SECTION_SIZE, addr != end);
 
@@ -783,7 +794,8 @@ static void __init __map_init_section(pmd_t *pmd, unsigned long addr,
 
 static void __init alloc_init_pmd(pud_t *pud, unsigned long addr,
 				      unsigned long end, phys_addr_t phys,
-				      const struct mem_type *type)
+				      const struct mem_type *type,
+				      void *(*alloc)(unsigned long sz), bool ng)
 {
 	pmd_t *pmd = pmd_offset(pud, addr);
 	unsigned long next;
@@ -801,10 +813,10 @@ static void __init alloc_init_pmd(pud_t *pud, unsigned long addr,
 		 */
 		if (type->prot_sect &&
 				((addr | next | phys) & ~SECTION_MASK) == 0) {
-			__map_init_section(pmd, addr, next, phys, type);
+			__map_init_section(pmd, addr, next, phys, type, ng);
 		} else {
 			alloc_init_pte(pmd, addr, next,
-						__phys_to_pfn(phys), type);
+				       __phys_to_pfn(phys), type, alloc, ng);
 		}
 
 		phys += next - addr;
@@ -814,21 +826,24 @@ static void __init alloc_init_pmd(pud_t *pud, unsigned long addr,
 
 static void __init alloc_init_pud(pgd_t *pgd, unsigned long addr,
 				  unsigned long end, phys_addr_t phys,
-				  const struct mem_type *type)
+				  const struct mem_type *type,
+				  void *(*alloc)(unsigned long sz), bool ng)
 {
 	pud_t *pud = pud_offset(pgd, addr);
 	unsigned long next;
 
 	do {
 		next = pud_addr_end(addr, end);
-		alloc_init_pmd(pud, addr, next, phys, type);
+		alloc_init_pmd(pud, addr, next, phys, type, alloc, ng);
 		phys += next - addr;
 	} while (pud++, addr = next, addr != end);
 }
 
 #ifndef CONFIG_ARM_LPAE
-static void __init create_36bit_mapping(struct map_desc *md,
-					const struct mem_type *type)
+static void __init create_36bit_mapping(struct mm_struct *mm,
+					struct map_desc *md,
+					const struct mem_type *type,
+					bool ng)
 {
 	unsigned long addr, length, end;
 	phys_addr_t phys;
@@ -839,8 +854,7 @@ static void __init create_36bit_mapping(struct map_desc *md,
 	length = PAGE_ALIGN(md->length);
 
 	if (!(cpu_architecture() >= CPU_ARCH_ARMv6 || cpu_is_xsc3())) {
-		printk(KERN_ERR "MM: CPU does not support supersection "
-		       "mapping for 0x%08llx at 0x%08lx\n",
+		pr_err("MM: CPU does not support supersection mapping for 0x%08llx at 0x%08lx\n",
 		       (long long)__pfn_to_phys((u64)md->pfn), addr);
 		return;
 	}
@@ -852,15 +866,13 @@ static void __init create_36bit_mapping(struct map_desc *md,
 	 *	of the actual domain assignments in use.
 	 */
 	if (type->domain) {
-		printk(KERN_ERR "MM: invalid domain in supersection "
-		       "mapping for 0x%08llx at 0x%08lx\n",
+		pr_err("MM: invalid domain in supersection mapping for 0x%08llx at 0x%08lx\n",
 		       (long long)__pfn_to_phys((u64)md->pfn), addr);
 		return;
 	}
 
 	if ((addr | length | __pfn_to_phys(md->pfn)) & ~SUPERSECTION_MASK) {
-		printk(KERN_ERR "MM: cannot create mapping for 0x%08llx"
-		       " at 0x%08lx invalid alignment\n",
+		pr_err("MM: cannot create mapping for 0x%08llx at 0x%08lx invalid alignment\n",
 		       (long long)__pfn_to_phys((u64)md->pfn), addr);
 		return;
 	}
@@ -871,7 +883,7 @@ static void __init create_36bit_mapping(struct map_desc *md,
 	 */
 	phys |= (((md->pfn >> (32 - PAGE_SHIFT)) & 0xF) << 20);
 
-	pgd = pgd_offset_k(addr);
+	pgd = pgd_offset(mm, addr);
 	end = addr + length;
 	do {
 		pud_t *pud = pud_offset(pgd, addr);
@@ -879,7 +891,8 @@ static void __init create_36bit_mapping(struct map_desc *md,
 		int i;
 
 		for (i = 0; i < 16; i++)
-			*pmd++ = __pmd(phys | type->prot_sect | PMD_SECT_SUPER);
+			*pmd++ = __pmd(phys | type->prot_sect | PMD_SECT_SUPER |
+				       (ng ? PMD_SECT_nG : 0));
 
 		addr += SUPERSECTION_SIZE;
 		phys += SUPERSECTION_SIZE;
@@ -888,34 +901,14 @@ static void __init create_36bit_mapping(struct map_desc *md,
 }
 #endif	/* !CONFIG_ARM_LPAE */
 
-/*
- * Create the page directory entries and any necessary
- * page tables for the mapping specified by `md'.  We
- * are able to cope here with varying sizes and address
- * offsets, and we take full advantage of sections and
- * supersections.
- */
-void __init create_mapping(struct map_desc *md)
+static void __init __create_mapping(struct mm_struct *mm, struct map_desc *md,
+				    void *(*alloc)(unsigned long sz),
+				    bool ng)
 {
 	unsigned long addr, length, end;
 	phys_addr_t phys;
 	const struct mem_type *type;
 	pgd_t *pgd;
-
-	if (md->virtual != vectors_base() && md->virtual < TASK_SIZE) {
-		printk(KERN_WARNING "BUG: not creating mapping for 0x%08llx"
-		       " at 0x%08lx in user region\n",
-		       (long long)__pfn_to_phys((u64)md->pfn), md->virtual);
-		return;
-	}
-
-	if ((md->type == MT_DEVICE || md->type == MT_ROM) &&
-	    md->virtual >= PAGE_OFFSET && md->virtual < 0xffc00000 &&
-	    (md->virtual < VMALLOC_START || md->virtual >= VMALLOC_END)) {
-		printk(KERN_WARNING "BUG: mapping for 0x%08llx"
-		       " at 0x%08lx out of vmalloc space\n",
-		       (long long)__pfn_to_phys((u64)md->pfn), md->virtual);
-	}
 
 	type = &mem_types[md->type];
 
@@ -924,7 +917,7 @@ void __init create_mapping(struct map_desc *md)
 	 * Catch 36-bit addresses
 	 */
 	if (md->pfn >= 0x100000) {
-		create_36bit_mapping(md, type);
+		create_36bit_mapping(mm, md, type, ng);
 		return;
 	}
 #endif
@@ -934,22 +927,58 @@ void __init create_mapping(struct map_desc *md)
 	length = PAGE_ALIGN(md->length + (md->virtual & ~PAGE_MASK));
 
 	if (type->prot_l1 == 0 && ((addr | phys | length) & ~SECTION_MASK)) {
-		printk(KERN_WARNING "BUG: map for 0x%08llx at 0x%08lx can not "
-		       "be mapped using pages, ignoring.\n",
-		       (long long)__pfn_to_phys(md->pfn), addr);
+		pr_warn("BUG: map for 0x%08llx at 0x%08lx can not be mapped using pages, ignoring.\n",
+			(long long)__pfn_to_phys(md->pfn), addr);
 		return;
 	}
 
-	pgd = pgd_offset_k(addr);
+	pgd = pgd_offset(mm, addr);
 	end = addr + length;
 	do {
 		unsigned long next = pgd_addr_end(addr, end);
 
-		alloc_init_pud(pgd, addr, next, phys, type);
+		alloc_init_pud(pgd, addr, next, phys, type, alloc, ng);
 
 		phys += next - addr;
 		addr = next;
 	} while (pgd++, addr != end);
+}
+
+/*
+ * Create the page directory entries and any necessary
+ * page tables for the mapping specified by `md'.  We
+ * are able to cope here with varying sizes and address
+ * offsets, and we take full advantage of sections and
+ * supersections.
+ */
+static void __init create_mapping(struct map_desc *md)
+{
+	if (md->virtual != vectors_base() && md->virtual < TASK_SIZE) {
+		pr_warn("BUG: not creating mapping for 0x%08llx at 0x%08lx in user region\n",
+			(long long)__pfn_to_phys((u64)md->pfn), md->virtual);
+		return;
+	}
+
+	if ((md->type == MT_DEVICE || md->type == MT_ROM) &&
+	    md->virtual >= PAGE_OFFSET && md->virtual < FIXADDR_START &&
+	    (md->virtual < VMALLOC_START || md->virtual >= VMALLOC_END)) {
+		pr_warn("BUG: mapping for 0x%08llx at 0x%08lx out of vmalloc space\n",
+			(long long)__pfn_to_phys((u64)md->pfn), md->virtual);
+	}
+
+	__create_mapping(&init_mm, md, early_alloc, false);
+}
+
+void __init create_mapping_late(struct mm_struct *mm, struct map_desc *md,
+				bool ng)
+{
+#ifdef CONFIG_ARM_LPAE
+	pud_t *pud = pud_alloc(mm, pgd_offset(mm, md->virtual), md->virtual);
+	if (WARN_ON(!pud))
+		return;
+	pmd_alloc(mm, pud, 0);
+#endif
+	__create_mapping(mm, md, late_alloc, ng);
 }
 
 /*
@@ -1106,15 +1135,13 @@ static int __init early_vmalloc(char *arg)
 
 	if (vmalloc_reserve < SZ_16M) {
 		vmalloc_reserve = SZ_16M;
-		printk(KERN_WARNING
-			"vmalloc area too small, limiting to %luMB\n",
+		pr_warn("vmalloc area too small, limiting to %luMB\n",
 			vmalloc_reserve >> 20);
 	}
 
 	if (vmalloc_reserve > VMALLOC_END - (PAGE_OFFSET + SZ_32M)) {
 		vmalloc_reserve = VMALLOC_END - (PAGE_OFFSET + SZ_32M);
-		printk(KERN_WARNING
-			"vmalloc area is too big, limiting to %luMB\n",
+		pr_warn("vmalloc area is too big, limiting to %luMB\n",
 			vmalloc_reserve >> 20);
 	}
 
@@ -1125,63 +1152,56 @@ early_param("vmalloc", early_vmalloc);
 
 phys_addr_t arm_lowmem_limit __initdata = 0;
 
-void __init sanity_check_meminfo(void)
+void __init adjust_lowmem_bounds(void)
 {
 	phys_addr_t memblock_limit = 0;
-	int highmem = 0;
-	phys_addr_t vmalloc_limit = __pa(vmalloc_min - 1) + 1;
+	u64 vmalloc_limit;
 	struct memblock_region *reg;
+	phys_addr_t lowmem_limit = 0;
 
-#ifdef CONFIG_ENABLE_VMALLOC_SAVING
-	struct memblock_region *prev_reg = NULL;
+	/*
+	 * Let's use our own (unoptimized) equivalent of __pa() that is
+	 * not affected by wrap-arounds when sizeof(phys_addr_t) == 4.
+	 * The result is used as the upper bound on physical memory address
+	 * and may itself be outside the valid range for which phys_addr_t
+	 * and therefore __pa() is defined.
+	 */
+	vmalloc_limit = (u64)(uintptr_t)vmalloc_min - PAGE_OFFSET + PHYS_OFFSET;
 
+	/*
+	 * The first usable region must be PMD aligned. Mark its start
+	 * as MEMBLOCK_NOMAP if it isn't
+	 */
 	for_each_memblock(memory, reg) {
-		if (prev_reg == NULL) {
-			prev_reg = reg;
-			continue;
+		if (!memblock_is_nomap(reg)) {
+			if (!IS_ALIGNED(reg->base, PMD_SIZE)) {
+				phys_addr_t len;
+
+				len = round_up(reg->base, PMD_SIZE) - reg->base;
+				memblock_mark_nomap(reg->base, len);
+			}
+			break;
 		}
-		vmalloc_limit += reg->base - (prev_reg->base + prev_reg->size);
-		prev_reg = reg;
 	}
-#endif
 
 	for_each_memblock(memory, reg) {
 		phys_addr_t block_start = reg->base;
 		phys_addr_t block_end = reg->base + reg->size;
-		phys_addr_t size_limit = reg->size;
 
-		if (reg->base >= vmalloc_limit)
-			highmem = 1;
-		else
-			size_limit = vmalloc_limit - reg->base;
+		if (memblock_is_nomap(reg))
+			continue;
 
-
-		if (!IS_ENABLED(CONFIG_HIGHMEM) || cache_is_vipt_aliasing()) {
-
-			if (highmem) {
-				pr_notice("Ignoring RAM at %pa-%pa (!CONFIG_HIGHMEM)\n",
-					&block_start, &block_end);
-				memblock_remove(reg->base, reg->size);
-				continue;
-			}
-
-			if (reg->size > size_limit) {
-				phys_addr_t overlap_size = reg->size - size_limit;
-
-				pr_notice("Truncating RAM at %pa-%pa to -%pa",
-				      &block_start, &block_end, &vmalloc_limit);
-				memblock_remove(vmalloc_limit, overlap_size);
-				block_end = vmalloc_limit;
-			}
-		}
-
-		if (!highmem) {
-			if (block_end > arm_lowmem_limit) {
-				if (reg->size > size_limit)
-					arm_lowmem_limit = vmalloc_limit;
-				else
-					arm_lowmem_limit = block_end;
-			}
+		if (reg->base < vmalloc_limit) {
+			if (block_end > lowmem_limit)
+				/*
+				 * Compare as u64 to ensure vmalloc_limit does
+				 * not get truncated. block_end should always
+				 * fit in phys_addr_t so there should be no
+				 * issue with assignment.
+				 */
+				lowmem_limit = min_t(u64,
+							 vmalloc_limit,
+							 block_end);
 
 			/*
 			 * Find the first non-pmd-aligned page, and point
@@ -1200,11 +1220,13 @@ void __init sanity_check_meminfo(void)
 				if (!IS_ALIGNED(block_start, PMD_SIZE))
 					memblock_limit = block_start;
 				else if (!IS_ALIGNED(block_end, PMD_SIZE))
-					memblock_limit = arm_lowmem_limit;
+					memblock_limit = lowmem_limit;
 			}
 
 		}
 	}
+
+	arm_lowmem_limit = lowmem_limit;
 
 	high_memory = __va(arm_lowmem_limit - 1) + 1;
 
@@ -1217,6 +1239,18 @@ void __init sanity_check_meminfo(void)
 	 * last full pmd, which should be mapped.
 	 */
 	memblock_limit = round_down(memblock_limit, PMD_SIZE);
+
+	if (!IS_ENABLED(CONFIG_HIGHMEM) || cache_is_vipt_aliasing()) {
+		if (memblock_end_of_DRAM() > arm_lowmem_limit) {
+			phys_addr_t end = memblock_end_of_DRAM();
+
+			pr_notice("Ignoring RAM at %pa-%pa\n",
+				  &memblock_limit, &end);
+			pr_notice("Consider using a HIGHMEM enabled kernel.\n");
+
+			memblock_remove(memblock_limit, end - memblock_limit);
+		}
+	}
 
 	memblock_set_current_limit(memblock_limit);
 }
@@ -1234,7 +1268,7 @@ static inline void prepare_page_table(void)
 
 #ifdef CONFIG_XIP_KERNEL
 	/* The XIP kernel is mapped in the module area -- skip over it */
-	addr = ((unsigned long)_etext + PMD_SIZE - 1) & PMD_MASK;
+	addr = ((unsigned long)_exiprom + PMD_SIZE - 1) & PMD_MASK;
 #endif
 	for ( ; addr < PAGE_OFFSET; addr += PMD_SIZE)
 		pmd_clear(pmd_off_k(addr));
@@ -1285,10 +1319,10 @@ void __init arm_mm_memblock_reserve(void)
 
 /*
  * Set up the device mappings.  Since we clear out the page tables for all
- * mappings above VMALLOC_START, we will remove any debug device mappings.
- * This means you have to be careful how you debug this function, or any
- * called function.  This means you can't use any function or debugging
- * method which may touch any device, otherwise the kernel _will_ crash.
+ * mappings above VMALLOC_START, except early fixmap, we might remove debug
+ * device mappings.  This means earlycon can be used to debug this function
+ * Any other function or debugging method which may touch any device _will_
+ * crash the kernel.
  */
 static void __init devicemaps_init(const struct machine_desc *mdesc)
 {
@@ -1303,7 +1337,10 @@ static void __init devicemaps_init(const struct machine_desc *mdesc)
 
 	early_trap_init(vectors);
 
-	for (addr = VMALLOC_START; addr < FIXADDR_START; addr += PMD_SIZE)
+	/*
+	 * Clear page table except top pmd used by early fixmaps
+	 */
+	for (addr = VMALLOC_START; addr < (FIXADDR_TOP & PMD_MASK); addr += PMD_SIZE)
 		pmd_clear(pmd_off_k(addr));
 
 	/*
@@ -1313,7 +1350,7 @@ static void __init devicemaps_init(const struct machine_desc *mdesc)
 #ifdef CONFIG_XIP_KERNEL
 	map.pfn = __phys_to_pfn(CONFIG_XIP_PHYS_ADDR & SECTION_MASK);
 	map.virtual = MODULES_VADDR;
-	map.length = ((unsigned long)_etext - map.virtual + ~SECTION_MASK) & SECTION_MASK;
+	map.length = ((unsigned long)_exiprom - map.virtual + ~SECTION_MASK) & SECTION_MASK;
 	map.type = MT_ROM;
 	create_mapping(&map);
 #endif
@@ -1385,6 +1422,9 @@ static void __init devicemaps_init(const struct machine_desc *mdesc)
 	 */
 	local_flush_tlb_all();
 	flush_cache_all();
+
+	/* Enable asynchronous aborts */
+	early_abt_enable();
 }
 
 static void __init kmap_init(void)
@@ -1401,8 +1441,12 @@ static void __init kmap_init(void)
 static void __init map_lowmem(void)
 {
 	struct memblock_region *reg;
-	unsigned long kernel_x_start = round_down(__pa(_stext), SECTION_SIZE);
-	unsigned long kernel_x_end = round_up(__pa(__init_end), SECTION_SIZE);
+#ifdef CONFIG_XIP_KERNEL
+	phys_addr_t kernel_x_start = round_down(__pa(_sdata), SECTION_SIZE);
+#else
+	phys_addr_t kernel_x_start = round_down(__pa(_stext), SECTION_SIZE);
+#endif
+	phys_addr_t kernel_x_end = round_up(__pa(__init_end), SECTION_SIZE);
 	struct static_vm *svm;
 	phys_addr_t start;
 	phys_addr_t end;
@@ -1418,6 +1462,9 @@ static void __init map_lowmem(void)
 		start = reg->base;
 		end = start + reg->size;
 		nr++;
+
+		if (memblock_is_nomap(reg))
+			continue;
 
 		if (end > arm_lowmem_limit)
 			end = arm_lowmem_limit;
@@ -1505,8 +1552,7 @@ pgtables_remap lpae_pgtables_remap_asm;
  * early_paging_init() recreates boot time page table setup, allowing machines
  * to switch over to a high (>4G) address space on LPAE systems
  */
-void __init early_paging_init(const struct machine_desc *mdesc,
-			      struct proc_info_list *procinfo)
+void __init early_paging_init(const struct machine_desc *mdesc)
 {
 	pgtables_remap *lpae_pgtables_remap;
 	unsigned long pa_pgd;
@@ -1514,16 +1560,12 @@ void __init early_paging_init(const struct machine_desc *mdesc,
 	long long offset;
 	void *boot_data;
 
-	if (!(mdesc->init_meminfo))
+	if (!mdesc->pv_fixup)
 		return;
 
-	offset = mdesc->init_meminfo();
+	offset = mdesc->pv_fixup();
 	if (offset == 0)
 		return;
-
-	/* Re-set the phys pfn offset, and the pv offset */
-	__pv_offset += offset;
-	__pv_phys_pfn_offset += PFN_DOWN(offset);
 
 	/*
 	 * Get the address of the remap function in the 1:1 identity
@@ -1535,6 +1577,13 @@ void __init early_paging_init(const struct machine_desc *mdesc,
 	pa_pgd = __pa(swapper_pg_dir);
 	boot_data = __va(__atags_pointer);
 	barrier();
+
+	pr_info("Switching physical address space to 0x%08llx\n",
+		(u64)PHYS_OFFSET + offset);
+
+	/* Re-set the phys pfn offset, and the pv offset */
+	__pv_offset += offset;
+	__pv_phys_pfn_offset += PFN_DOWN(offset);
 
 	/* Run the patch stub to update the constants */
 	fixup_pv_table(&__pv_table_begin,
@@ -1571,15 +1620,14 @@ void __init early_paging_init(const struct machine_desc *mdesc,
 
 #else
 
-void __init early_paging_init(const struct machine_desc *mdesc,
-			      struct proc_info_list *procinfo)
+void __init early_paging_init(const struct machine_desc *mdesc)
 {
 	long long offset;
 
-	if (!mdesc->init_meminfo)
+	if (!mdesc->pv_fixup)
 		return;
 
-	offset = mdesc->init_meminfo();
+	offset = mdesc->pv_fixup();
 	if (offset == 0)
 		return;
 
@@ -1624,7 +1672,13 @@ static noinline void __init split_pmd(pmd_t *pmd, unsigned long addr,
 	pte = start_pte;
 
 	do {
-		set_pte_ext(pte, pfn_pte(pfn, type->prot_pte), 0);
+		if (((unsigned long)_stext <= addr) &&
+			(addr < (unsigned long)__init_end))
+			set_pte_ext(pte, pfn_pte(pfn,
+				mem_types[MT_MEMORY_RWX].prot_pte), 0);
+		else
+			set_pte_ext(pte, pfn_pte(pfn,
+				mem_types[MT_MEMORY_RW].prot_pte), 0);
 		pfn++;
 	} while (pte++, addr += PAGE_SIZE, addr != end);
 
@@ -1704,6 +1758,35 @@ static void __init remap_pages(void)
 }
 #endif
 
+static void __init early_fixmap_shutdown(void)
+{
+	int i;
+	unsigned long va = fix_to_virt(__end_of_permanent_fixed_addresses - 1);
+
+	pte_offset_fixmap = pte_offset_late_fixmap;
+	pmd_clear(fixmap_pmd(va));
+	local_flush_tlb_kernel_page(va);
+
+	for (i = 0; i < __end_of_permanent_fixed_addresses; i++) {
+		pte_t *pte;
+		struct map_desc map;
+
+		map.virtual = fix_to_virt(i);
+		pte = pte_offset_early_fixmap(pmd_off_k(map.virtual), map.virtual);
+
+		/* Only i/o device mappings are supported ATM */
+		if (pte_none(*pte) ||
+		    (pte_val(*pte) & L_PTE_MT_MASK) != L_PTE_MT_DEV_SHARED)
+			continue;
+
+		map.pfn = pte_pfn(*pte);
+		map.type = MT_DEVICE;
+		map.length = PAGE_SIZE;
+
+		create_mapping(&map);
+	}
+}
+
 /*
  * paging_init() sets up the page tables, initialises the zone memory
  * maps, and sets up the zero page, bad page and bad page tables.
@@ -1715,9 +1798,10 @@ void __init paging_init(const struct machine_desc *mdesc)
 	build_mem_type_table();
 	prepare_page_table();
 	map_lowmem();
+	memblock_set_current_limit(arm_lowmem_limit);
 	dma_contiguous_remap();
+	early_fixmap_shutdown();
 	remap_pages();
-	early_ioremap_reset();
 	devicemaps_init(mdesc);
 	kmap_init();
 	tcm_init();

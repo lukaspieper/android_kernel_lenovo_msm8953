@@ -14,16 +14,12 @@
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/vmalloc.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/user.h>
-#include <linux/delay.h>
-#include <linux/reboot.h>
 #include <linux/interrupt.h>
 #include <linux/kallsyms.h>
 #include <linux/init.h>
-#include <linux/cpu.h>
 #include <linux/elfcore.h>
 #include <linux/pm.h>
 #include <linux/tick.h>
@@ -32,11 +28,7 @@
 #include <linux/random.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/leds.h>
-#include <linux/reboot.h>
-#include <linux/console.h>
 
-#include <asm/cacheflush.h>
-#include <asm/idmap.h>
 #include <asm/processor.h>
 #include <asm/thread_notify.h>
 #include <asm/stacktrace.h>
@@ -44,7 +36,6 @@
 #include <asm/mach/time.h>
 #include <asm/tls.h>
 #include <asm/vdso.h>
-#include "reboot.h"
 
 #ifdef CONFIG_CC_STACKPROTECTOR
 #include <linux/stackprotector.h>
@@ -55,125 +46,19 @@ EXPORT_SYMBOL(__stack_chk_guard);
 static const char *processor_modes[] __maybe_unused = {
   "USER_26", "FIQ_26" , "IRQ_26" , "SVC_26" , "UK4_26" , "UK5_26" , "UK6_26" , "UK7_26" ,
   "UK8_26" , "UK9_26" , "UK10_26", "UK11_26", "UK12_26", "UK13_26", "UK14_26", "UK15_26",
-  "USER_32", "FIQ_32" , "IRQ_32" , "SVC_32" , "UK4_32" , "UK5_32" , "UK6_32" , "ABT_32" ,
-  "UK8_32" , "UK9_32" , "UK10_32", "UND_32" , "UK12_32", "UK13_32", "UK14_32", "SYS_32"
+  "USER_32", "FIQ_32" , "IRQ_32" , "SVC_32" , "UK4_32" , "UK5_32" , "MON_32" , "ABT_32" ,
+  "UK8_32" , "UK9_32" , "HYP_32", "UND_32" , "UK12_32", "UK13_32", "UK14_32", "SYS_32"
 };
 
 static const char *isa_modes[] __maybe_unused = {
   "ARM" , "Thumb" , "Jazelle", "ThumbEE"
 };
 
-#ifdef CONFIG_SMP
-void arch_trigger_all_cpu_backtrace(void)
-{
-	smp_send_all_cpu_backtrace();
-}
-#else
-void arch_trigger_all_cpu_backtrace(void)
-{
-	dump_stack();
-}
-#endif
-
-extern void call_with_stack(void (*fn)(void *), void *arg, void *sp);
-typedef void (*phys_reset_t)(unsigned long);
-
-#ifdef CONFIG_ARM_FLUSH_CONSOLE_ON_RESTART
-void arm_machine_flush_console(void)
-{
-	printk("\n");
-	pr_emerg("Restarting %s\n", linux_banner);
-	if (console_trylock()) {
-		console_unlock();
-		return;
-	}
-
-	mdelay(50);
-
-	local_irq_disable();
-	if (!console_trylock())
-		pr_emerg("arm_restart: Console was locked! Busting\n");
-	else
-		pr_emerg("arm_restart: Console was locked!\n");
-	console_unlock();
-}
-#else
-void arm_machine_flush_console(void)
-{
-}
-#endif
-
-/*
- * A temporary stack to use for CPU reset. This is static so that we
- * don't clobber it with the identity mapping. When running with this
- * stack, any references to the current task *will not work* so you
- * should really do as little as possible before jumping to your reset
- * code.
- */
-static u64 soft_restart_stack[16];
-
-static void __soft_restart(void *addr)
-{
-	phys_reset_t phys_reset;
-
-	/* Take out a flat memory mapping. */
-	setup_mm_for_reboot();
-
-	/* Clean and invalidate caches */
-	flush_cache_all();
-
-	/* Turn off caching */
-	cpu_proc_fin();
-
-	/* Push out any further dirty data, and ensure cache is empty */
-	flush_cache_all();
-
-	/* Switch to the identity mapping. */
-	phys_reset = (phys_reset_t)(unsigned long)virt_to_phys(cpu_reset);
-	phys_reset((unsigned long)addr);
-
-	/* Should never get here. */
-	BUG();
-}
-
-void _soft_restart(unsigned long addr, bool disable_l2)
-{
-	u64 *stack = soft_restart_stack + ARRAY_SIZE(soft_restart_stack);
-
-	/* Disable interrupts first */
-	raw_local_irq_disable();
-	local_fiq_disable();
-
-	/* Disable the L2 if we're the last man standing. */
-	if (disable_l2)
-		outer_disable();
-
-	/* Change to the new stack and continue with the reset. */
-	call_with_stack(__soft_restart, (void *)addr, (void *)stack);
-
-	/* Should never get here. */
-	BUG();
-}
-
-void soft_restart(unsigned long addr)
-{
-	_soft_restart(addr, num_online_cpus() == 1);
-}
-
-/*
- * Function pointers to optional machine specific functions
- */
-void (*pm_power_off)(void);
-EXPORT_SYMBOL(pm_power_off);
-
-void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
-
 /*
  * This is our default idle handler.
  */
 
-extern void arch_idle(void);
-void (*arm_pm_idle)(void) = arch_idle;
+void (*arm_pm_idle)(void);
 
 /*
  * Called from the core idle loop.
@@ -208,101 +93,6 @@ void arch_cpu_idle_exit(void)
 	idle_notifier_call_chain(IDLE_END);
 }
 
-#ifdef CONFIG_HOTPLUG_CPU
-void arch_cpu_idle_dead(void)
-{
-	cpu_die();
-}
-#endif
-
-/*
- * Called by kexec, immediately prior to machine_kexec().
- *
- * This must completely disable all secondary CPUs; simply causing those CPUs
- * to execute e.g. a RAM-based pin loop is not sufficient. This allows the
- * kexec'd kernel to use any and all RAM as it sees fit, without having to
- * avoid any code or data used by any SW CPU pin loop. The CPU hotplug
- * functionality embodied in disable_nonboot_cpus() to achieve this.
- */
-void machine_shutdown(void)
-{
-#ifdef CONFIG_SMP
-	/*
-	 * Disable preemption so we're guaranteed to
-	 * run to power off or reboot and prevent
-	 * the possibility of switching to another
-	 * thread that might wind up blocking on
-	 * one of the stopped CPUs.
-	 */
-	preempt_disable();
-#endif
-	disable_nonboot_cpus();
-}
-
-/*
- * Halting simply requires that the secondary CPUs stop performing any
- * activity (executing tasks, handling interrupts). smp_send_stop()
- * achieves this.
- */
-void machine_halt(void)
-{
-	local_irq_disable();
-	smp_send_stop();
-
-	local_irq_disable();
-	while (1);
-}
-
-/*
- * Power-off simply requires that the secondary CPUs stop performing any
- * activity (executing tasks, handling interrupts). smp_send_stop()
- * achieves this. When the system power is turned off, it will take all CPUs
- * with it.
- */
-void machine_power_off(void)
-{
-	local_irq_disable();
-	smp_send_stop();
-
-	if (pm_power_off)
-		pm_power_off();
-}
-
-/*
- * Restart requires that the secondary CPUs stop performing any activity
- * while the primary CPU resets the system. Systems with a single CPU can
- * use soft_restart() as their machine descriptor's .restart hook, since that
- * will cause the only available CPU to reset. Systems with multiple CPUs must
- * provide a HW restart implementation, to ensure that all CPUs reset at once.
- * This is required so that any code running after reset on the primary CPU
- * doesn't have to co-ordinate with other CPUs to ensure they aren't still
- * executing pre-reset code, and using RAM that the primary CPU's code wishes
- * to use. Implementing such co-ordination would be essentially impossible.
- */
-void machine_restart(char *cmd)
-{
-	local_irq_disable();
-	smp_send_stop();
-
-
-	/* Flush the console to make sure all the relevant messages make it
-	 * out to the console drivers */
-	arm_machine_flush_console();
-
-	if (arm_pm_restart)
-		arm_pm_restart(reboot_mode, cmd);
-	else
-		do_kernel_restart(cmd);
-
-	/* Give a grace period for failure to restart of 1s */
-	mdelay(1000);
-
-	/* Whoops - the platform was unable to reboot. Tell the user! */
-	printk("Reboot failed -- System halted\n");
-	local_irq_disable();
-	while (1);
-}
-
 /*
  * dump a block of kernel memory from around the given address
  */
@@ -313,12 +103,10 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 	u32	*p;
 
 	/*
-	 * don't attempt to dump non-kernel addresses, values that are probably
-	 * just small negative numbers, or vmalloc addresses that may point to
-	 * memory-mapped peripherals
+	 * don't attempt to dump non-kernel addresses or
+	 * values that are probably just small negative numbers
 	 */
-	if (addr < PAGE_OFFSET || addr > -256UL ||
-	    is_vmalloc_addr((void *)addr))
+	if (addr < PAGE_OFFSET || addr > -256UL)
 		return;
 
 	printk("\n%s: %#lx:\n", name, addr);
@@ -340,42 +128,55 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 		printk("%04lx ", (unsigned long)p & 0xffff);
 		for (j = 0; j < 8; j++) {
 			u32	data;
-			if (!virt_addr_valid(p) ||
-			    probe_kernel_address(p, data)) {
-				printk(" ********");
+			if (probe_kernel_address(p, data)) {
+				pr_cont(" ********");
 			} else {
-				printk(" %08x", data);
+				pr_cont(" %08x", data);
 			}
 			++p;
 		}
-		printk("\n");
+		pr_cont("\n");
 	}
 }
 
 static void show_extra_register_data(struct pt_regs *regs, int nbytes)
 {
+	mm_segment_t fs;
+
+	fs = get_fs();
+	set_fs(KERNEL_DS);
 	show_data(regs->ARM_pc - nbytes, nbytes * 2, "PC");
 	show_data(regs->ARM_lr - nbytes, nbytes * 2, "LR");
 	show_data(regs->ARM_sp - nbytes, nbytes * 2, "SP");
 	show_data(regs->ARM_ip - nbytes, nbytes * 2, "IP");
 	show_data(regs->ARM_fp - nbytes, nbytes * 2, "FP");
-	show_data(regs->ARM_r0 - nbytes, nbytes * 2, "R0");
-	show_data(regs->ARM_r1 - nbytes, nbytes * 2, "R1");
-	show_data(regs->ARM_r2 - nbytes, nbytes * 2, "R2");
-	show_data(regs->ARM_r3 - nbytes, nbytes * 2, "R3");
-	show_data(regs->ARM_r4 - nbytes, nbytes * 2, "R4");
-	show_data(regs->ARM_r5 - nbytes, nbytes * 2, "R5");
-	show_data(regs->ARM_r6 - nbytes, nbytes * 2, "R6");
-	show_data(regs->ARM_r7 - nbytes, nbytes * 2, "R7");
-	show_data(regs->ARM_r8 - nbytes, nbytes * 2, "R8");
-	show_data(regs->ARM_r9 - nbytes, nbytes * 2, "R9");
-	show_data(regs->ARM_r10 - nbytes, nbytes * 2, "R10");
+	set_fs(fs);
 }
 
 void __show_regs(struct pt_regs *regs)
 {
 	unsigned long flags;
 	char buf[64];
+#ifndef CONFIG_CPU_V7M
+	unsigned int domain, fs;
+#ifdef CONFIG_CPU_SW_DOMAIN_PAN
+	/*
+	 * Get the domain register for the parent context. In user
+	 * mode, we don't save the DACR, so lets use what it should
+	 * be. For other modes, we place it after the pt_regs struct.
+	 */
+	if (user_mode(regs)) {
+		domain = DACR_UACCESS_ENABLE;
+		fs = get_fs();
+	} else {
+		domain = to_svc_pt_regs(regs)->dacr;
+		fs = to_svc_pt_regs(regs)->addr_limit;
+	}
+#else
+	domain = get_domain();
+	fs = get_fs();
+#endif
+#endif
 
 	show_regs_print_info(KERN_DEFAULT);
 
@@ -404,25 +205,12 @@ void __show_regs(struct pt_regs *regs)
 
 #ifndef CONFIG_CPU_V7M
 	{
-		unsigned int domain = get_domain();
 		const char *segment;
-
-#ifdef CONFIG_CPU_SW_DOMAIN_PAN
-		/*
-		 * Get the domain register for the parent context. In user
-		 * mode, we don't save the DACR, so lets use what it should
-		 * be. For other modes, we place it after the pt_regs struct.
-		 */
-		if (user_mode(regs))
-			domain = DACR_UACCESS_ENABLE;
-		else
-			domain = *(unsigned int *)(regs + 1);
-#endif
 
 		if ((domain & domain_mask(DOMAIN_USER)) ==
 		    domain_val(DOMAIN_USER, DOMAIN_NOACCESS))
 			segment = "none";
-		else if (get_fs() == get_ds())
+		else if (fs == get_ds())
 			segment = "kernel";
 		else
 			segment = "user";
@@ -444,11 +232,11 @@ void __show_regs(struct pt_regs *regs)
 		buf[0] = '\0';
 #ifdef CONFIG_CPU_CP15_MMU
 		{
-			unsigned int transbase, dac = get_domain();
+			unsigned int transbase;
 			asm("mrc p15, 0, %0, c2, c0\n\t"
 			    : "=r" (transbase));
 			snprintf(buf, sizeof(buf), "  Table: %08x  DAC: %08x",
-			  	transbase, dac);
+				transbase, domain);
 		}
 #endif
 		asm("mrc p15, 0, %0, c1, c0\n" : "=r" (ctrl));
@@ -456,7 +244,8 @@ void __show_regs(struct pt_regs *regs)
 		printk("Control: %08x%s\n", ctrl, buf);
 	}
 #endif
-	if (get_fs() == get_ds())
+
+	if (!user_mode(regs))
 		show_extra_register_data(regs, 128);
 }
 
@@ -473,9 +262,9 @@ EXPORT_SYMBOL_GPL(thread_notify_head);
 /*
  * Free current thread data structures etc..
  */
-void exit_thread(void)
+void exit_thread(struct task_struct *tsk)
 {
-	thread_notify(THREAD_NOTIFY_EXIT, current_thread_info());
+	thread_notify(THREAD_NOTIFY_EXIT, task_thread_info(tsk));
 }
 
 void flush_thread(void)
@@ -594,8 +383,7 @@ unsigned long get_wchan(struct task_struct *p)
 
 unsigned long arch_randomize_brk(struct mm_struct *mm)
 {
-	unsigned long range_end = mm->brk + 0x02000000;
-	return randomize_range(mm->brk, range_end, 0) ? : mm->brk;
+	return randomize_page(mm->brk, 0x02000000);
 }
 
 #ifdef CONFIG_MMU
@@ -700,7 +488,8 @@ int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 	npages = 1; /* for sigpage */
 	npages += vdso_total_pages;
 
-	down_write(&mm->mmap_sem);
+	if (down_write_killable(&mm->mmap_sem))
+		return -EINTR;
 	hint = sigpage_addr(mm, npages);
 	addr = get_unmapped_area(NULL, hint, npages << PAGE_SHIFT, 0, 0);
 	if (IS_ERR_VALUE(addr)) {

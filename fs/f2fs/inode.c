@@ -44,7 +44,7 @@ void f2fs_set_inode_flags(struct inode *inode)
 		new_fl |= S_NOATIME;
 	if (flags & F2FS_DIRSYNC_FL)
 		new_fl |= S_DIRSYNC;
-	if (f2fs_encrypted_inode(inode))
+	if (file_is_encrypt(inode))
 		new_fl |= S_ENCRYPTED;
 	inode_set_flags(inode, new_fl,
 			S_SYNC|S_APPEND|S_IMMUTABLE|S_NOATIME|S_DIRSYNC|
@@ -453,7 +453,7 @@ make_now:
 		inode->i_mapping->a_ops = &f2fs_dblock_aops;
 		inode_nohighmem(inode);
 	} else if (S_ISLNK(inode->i_mode)) {
-		if (f2fs_encrypted_inode(inode))
+		if (file_is_encrypt(inode))
 			inode->i_op = &f2fs_encrypted_symlink_inode_operations;
 		else
 			inode->i_op = &f2fs_symlink_inode_operations;
@@ -641,7 +641,7 @@ void f2fs_evict_inode(struct inode *inode)
 		f2fs_drop_inmem_pages(inode);
 
 	trace_f2fs_evict_inode(inode);
-	truncate_inode_pages(&inode->i_data, 0);
+	truncate_inode_pages_final(&inode->i_data);
 
 	if (inode->i_ino == F2FS_NODE_INO(sbi) ||
 			inode->i_ino == F2FS_META_INO(sbi))
@@ -655,7 +655,11 @@ void f2fs_evict_inode(struct inode *inode)
 	if (inode->i_nlink || is_bad_inode(inode))
 		goto no_delete;
 
-	dquot_initialize(inode);
+	err = dquot_initialize(inode);
+	if (err) {
+		err = 0;
+		set_sbi_flag(sbi, SBI_QUOTA_NEED_REPAIR);
+	}
 
 	f2fs_remove_ino_entry(sbi, inode->i_ino, APPEND_INO);
 	f2fs_remove_ino_entry(sbi, inode->i_ino, UPDATE_INO);

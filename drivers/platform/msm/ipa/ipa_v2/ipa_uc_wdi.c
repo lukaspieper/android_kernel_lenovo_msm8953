@@ -12,6 +12,7 @@
 #include "ipa_i.h"
 #include <linux/dmapool.h>
 #include <linux/delay.h>
+#include "ipa_qmi_service.h"
 
 #define IPA_HOLB_TMR_DIS 0x0
 
@@ -25,15 +26,6 @@
 #define IPA_WDI_RESUMED BIT(2)
 #define IPA_UC_POLL_SLEEP_USEC 100
 
-#define IPA_WDI_RX_RING_RES 0
-#define IPA_WDI_RX_RING_RP_RES 1
-#define IPA_WDI_RX_COMP_RING_RES 2
-#define IPA_WDI_RX_COMP_RING_WP_RES 3
-#define IPA_WDI_TX_RING_RES 4
-#define IPA_WDI_CE_RING_RES 5
-#define IPA_WDI_CE_DB_RES 6
-#define IPA_WDI_MAX_RES 7
-
 struct ipa_wdi_res {
 	struct ipa_wdi_buffer_info *res;
 	unsigned int nents;
@@ -45,7 +37,8 @@ static struct ipa_wdi_res wdi_res[IPA_WDI_MAX_RES];
 static void ipa_uc_wdi_loaded_handler(void);
 
 /**
- * enum ipa_hw_2_cpu_wdi_events - Values that represent HW event to be sent to CPU.
+ * enum ipa_hw_2_cpu_wdi_events - Values that represent HW event to be sent to
+ * CPU.
  * @IPA_HW_2_CPU_EVENT_WDI_ERROR : Event to specify that HW detected an error
  * in WDI
  */
@@ -314,11 +307,11 @@ struct IpaHwEventLogInfoData_t *uc_event_top_mmio)
 
 	if (uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_WDI].
 		params.size != sizeof(struct IpaHwStatsWDIInfoData_t)) {
-			IPAERR("wdi stats sz invalid exp=%zu is=%u\n",
-				sizeof(struct IpaHwStatsWDIInfoData_t),
-				uc_event_top_mmio->statsInfo.
-				featureInfo[IPA_HW_FEATURE_WDI].params.size);
-			return;
+		IPAERR("wdi stats sz invalid exp=%zu is=%u\n",
+			sizeof(struct IpaHwStatsWDIInfoData_t),
+			uc_event_top_mmio->statsInfo.
+			featureInfo[IPA_HW_FEATURE_WDI].params.size);
+		return;
 	}
 
 	ipa_ctx->uc_wdi_ctx.wdi_uc_stats_ofst = uc_event_top_mmio->
@@ -330,9 +323,9 @@ struct IpaHwEventLogInfoData_t *uc_event_top_mmio)
 		ipa_ctx->ctrl->ipa_reg_base_ofst +
 		IPA_SRAM_DIRECT_ACCESS_N_OFST_v2_0(0) +
 		ipa_ctx->smem_sz) {
-			IPAERR("uc_wdi_stats 0x%x outside SRAM\n",
-				ipa_ctx->uc_wdi_ctx.wdi_uc_stats_ofst);
-			return;
+		IPAERR("uc_wdi_stats 0x%x outside SRAM\n",
+			ipa_ctx->uc_wdi_ctx.wdi_uc_stats_ofst);
+		return;
 	}
 
 	ipa_ctx->uc_wdi_ctx.wdi_uc_stats_mmio =
@@ -354,17 +347,17 @@ static void ipa_uc_wdi_event_handler(struct IpaHwSharedMemCommonMapping_t
 
 	if (uc_sram_mmio->eventOp ==
 		IPA_HW_2_CPU_EVENT_WDI_ERROR) {
-			wdi_evt.raw32b = uc_sram_mmio->eventParams;
-			IPADBG("uC WDI evt errType=%u pipe=%d cherrType=%u\n",
-				wdi_evt.params.wdi_error_type,
-				wdi_evt.params.ipa_pipe_number,
-				wdi_evt.params.wdi_ch_err_type);
-			wdi_sram_mmio_ext =
-				(struct IpaHwSharedMemWdiMapping_t *)
-				uc_sram_mmio;
-			IPADBG("tx_ch_state=%u rx_ch_state=%u\n",
-				wdi_sram_mmio_ext->wdi_tx_ch_0_state,
-				wdi_sram_mmio_ext->wdi_rx_ch_0_state);
+		wdi_evt.raw32b = uc_sram_mmio->eventParams;
+		IPADBG("uC WDI evt errType=%u pipe=%d cherrType=%u\n",
+			wdi_evt.params.wdi_error_type,
+			wdi_evt.params.ipa_pipe_number,
+			wdi_evt.params.wdi_ch_err_type);
+		wdi_sram_mmio_ext =
+			(struct IpaHwSharedMemWdiMapping_t *)
+			uc_sram_mmio;
+		IPADBG("tx_ch_state=%u rx_ch_state=%u\n",
+			wdi_sram_mmio_ext->wdi_tx_ch_0_state,
+			wdi_sram_mmio_ext->wdi_rx_ch_0_state);
 	}
 }
 
@@ -414,7 +407,7 @@ int ipa2_get_wdi_stats(struct IpaHwStatsWDIInfoData_t *stats)
 	TX_STATS(num_db);
 	TX_STATS(num_unexpected_db);
 	TX_STATS(num_bam_int_handled);
-	TX_STATS(num_bam_int_in_non_runnning_state);
+	TX_STATS(num_bam_int_in_non_running_state);
 	TX_STATS(num_qmb_int_handled);
 	TX_STATS(num_bam_int_handled_while_wait_for_bam);
 
@@ -446,7 +439,7 @@ int ipa2_get_wdi_stats(struct IpaHwStatsWDIInfoData_t *stats)
 	return 0;
 }
 
-int ipa_wdi_init(void)
+int ipa2_wdi_init(void)
 {
 	struct ipa_uc_hdlrs uc_wdi_cbs = { 0 };
 
@@ -478,7 +471,7 @@ static int ipa_create_uc_smmu_mapping_pa(phys_addr_t pa, size_t len,
 
 	ret = ipa_iommu_map(cb->mapping->domain, va, rounddown(pa, PAGE_SIZE),
 			true_len,
-			device ? (prot | IOMMU_DEVICE) : prot);
+			device ? (prot | IOMMU_MMIO) : prot);
 	if (ret) {
 		IPAERR("iommu map failed for pa=%pa len=%zu\n", &pa, true_len);
 		return -EINVAL;
@@ -627,7 +620,7 @@ static void ipa_save_uc_smmu_mapping_sgt(int res_idx, struct sg_table *sgt,
 	}
 }
 
-static int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
+int ipa2_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 		phys_addr_t pa, struct sg_table *sgt, size_t len, bool device,
 		unsigned long *iova)
 {
@@ -814,13 +807,12 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 
 		/* check if the VA is empty */
 		if (!in->u.ul.rdy_ring_rp_va && ipa_ctx->ipa_wdi2) {
-				IPAERR("rdy_ring_rp_va is empty, wdi2.0(%d)\n",
+			IPAERR("rdy_ring_rp_va is empty, wdi2.0(%d)\n",
 				ipa_ctx->ipa_wdi2);
 				goto dma_alloc_fail;
 		}
-		if (!in->u.ul.rdy_comp_ring_wp_va &&
-				ipa_ctx->ipa_wdi2) {
-				IPAERR("comp_ring_wp_va is empty, wdi2.0(%d)\n",
+		if (!in->u.ul.rdy_comp_ring_wp_va && ipa_ctx->ipa_wdi2) {
+			IPAERR("comp_ring_wp_va is empty, wdi2.0(%d)\n",
 				ipa_ctx->ipa_wdi2);
 				goto dma_alloc_fail;
 		}
@@ -844,7 +836,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				in->smmu_enabled,
 				in->u.dl_smmu.comp_ring_size,
 				in->u.dl.comp_ring_size);
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_TX_RING_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_TX_RING_RES,
 					in->smmu_enabled,
 					in->u.dl.comp_ring_base_pa,
 					&in->u.dl_smmu.comp_ring,
@@ -869,7 +861,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 					in->smmu_enabled,
 					in->u.dl_smmu.ce_ring_size,
 					in->u.dl.ce_ring_size);
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_CE_RING_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_CE_RING_RES,
 						in->smmu_enabled,
 						in->u.dl.ce_ring_base_pa,
 						&in->u.dl_smmu.ce_ring,
@@ -890,7 +882,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 
 			pa = in->smmu_enabled ? in->u.dl_smmu.ce_door_bell_pa :
 				in->u.dl.ce_door_bell_pa;
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_CE_DB_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_CE_DB_RES,
 						in->smmu_enabled,
 						pa,
 						NULL,
@@ -918,7 +910,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 					in->smmu_enabled,
 					in->u.dl_smmu.comp_ring_size,
 					in->u.dl.comp_ring_size);
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_TX_RING_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_TX_RING_RES,
 						in->smmu_enabled,
 						in->u.dl.comp_ring_base_pa,
 						&in->u.dl_smmu.comp_ring,
@@ -938,7 +930,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 					in->smmu_enabled,
 					in->u.dl_smmu.ce_ring_size,
 					in->u.dl.ce_ring_size);
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_CE_RING_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_CE_RING_RES,
 						in->smmu_enabled,
 						in->u.dl.ce_ring_base_pa,
 						&in->u.dl_smmu.ce_ring,
@@ -953,7 +945,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 			tx->ce_ring_size = len;
 			pa = in->smmu_enabled ? in->u.dl_smmu.ce_door_bell_pa :
 				in->u.dl.ce_door_bell_pa;
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_CE_DB_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_CE_DB_RES,
 						in->smmu_enabled,
 						pa,
 						NULL,
@@ -970,19 +962,19 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 		}
 
 		if (ipa_ctx->ipa_hw_type >= IPA_HW_v2_5) {
-				out->uc_door_bell_pa =
-				 ipa_ctx->ipa_wrapper_base +
-				   IPA_REG_BASE_OFST_v2_5 +
-				   IPA_UC_MAILBOX_m_n_OFFS_v2_5(
-				    IPA_HW_WDI_TX_MBOX_START_INDEX/32,
-				    IPA_HW_WDI_TX_MBOX_START_INDEX % 32);
+			out->uc_door_bell_pa =
+				ipa_ctx->ipa_wrapper_base +
+				IPA_REG_BASE_OFST_v2_5 +
+				IPA_UC_MAILBOX_m_n_OFFS_v2_5(
+				IPA_HW_WDI_TX_MBOX_START_INDEX/32,
+				IPA_HW_WDI_TX_MBOX_START_INDEX % 32);
 		} else {
-				out->uc_door_bell_pa =
-				 ipa_ctx->ipa_wrapper_base +
-				   IPA_REG_BASE_OFST_v2_0 +
-				   IPA_UC_MAILBOX_m_n_OFFS(
-				    IPA_HW_WDI_TX_MBOX_START_INDEX/32,
-				    IPA_HW_WDI_TX_MBOX_START_INDEX % 32);
+			out->uc_door_bell_pa =
+				ipa_ctx->ipa_wrapper_base +
+				IPA_REG_BASE_OFST_v2_0 +
+				IPA_UC_MAILBOX_m_n_OFFS(
+				IPA_HW_WDI_TX_MBOX_START_INDEX/32,
+				IPA_HW_WDI_TX_MBOX_START_INDEX % 32);
 		}
 	} else {
 		if (ipa_ctx->ipa_wdi2) {
@@ -994,7 +986,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				in->smmu_enabled,
 				in->u.ul_smmu.rdy_ring_size,
 				in->u.ul.rdy_ring_size);
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_RX_RING_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_RX_RING_RES,
 						in->smmu_enabled,
 						in->u.ul.rdy_ring_base_pa,
 						&in->u.ul_smmu.rdy_ring,
@@ -1015,7 +1007,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 
 			pa = in->smmu_enabled ? in->u.ul_smmu.rdy_ring_rp_pa :
 				in->u.ul.rdy_ring_rp_pa;
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_RX_RING_RP_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_RX_RING_RP_RES,
 						in->smmu_enabled,
 						pa,
 						NULL,
@@ -1039,7 +1031,8 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 					in->smmu_enabled,
 					in->u.ul_smmu.rdy_comp_ring_size,
 					in->u.ul.rdy_comp_ring_size);
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_RX_COMP_RING_RES,
+			if (ipa2_create_uc_smmu_mapping(
+						IPA_WDI_RX_COMP_RING_RES,
 						in->smmu_enabled,
 						in->u.ul.rdy_comp_ring_base_pa,
 						&in->u.ul_smmu.rdy_comp_ring,
@@ -1061,7 +1054,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 			pa = in->smmu_enabled ?
 				in->u.ul_smmu.rdy_comp_ring_wp_pa :
 				in->u.ul.rdy_comp_ring_wp_pa;
-			if (ipa_create_uc_smmu_mapping(
+			if (ipa2_create_uc_smmu_mapping(
 						IPA_WDI_RX_COMP_RING_WP_RES,
 						in->smmu_enabled,
 						pa,
@@ -1089,7 +1082,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 					in->smmu_enabled,
 					in->u.ul_smmu.rdy_ring_size,
 					in->u.ul.rdy_ring_size);
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_RX_RING_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_RX_RING_RES,
 						in->smmu_enabled,
 						in->u.ul.rdy_ring_base_pa,
 						&in->u.ul_smmu.rdy_ring,
@@ -1105,7 +1098,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 
 			pa = in->smmu_enabled ? in->u.ul_smmu.rdy_ring_rp_pa :
 				in->u.ul.rdy_ring_rp_pa;
-			if (ipa_create_uc_smmu_mapping(IPA_WDI_RX_RING_RP_RES,
+			if (ipa2_create_uc_smmu_mapping(IPA_WDI_RX_RING_RP_RES,
 						in->smmu_enabled,
 						pa,
 						NULL,
@@ -1121,19 +1114,19 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 		}
 
 		if (ipa_ctx->ipa_hw_type >= IPA_HW_v2_5) {
-				out->uc_door_bell_pa =
-				 ipa_ctx->ipa_wrapper_base +
-				   IPA_REG_BASE_OFST_v2_5 +
-				   IPA_UC_MAILBOX_m_n_OFFS_v2_5(
-				    IPA_HW_WDI_RX_MBOX_START_INDEX/32,
-				    IPA_HW_WDI_RX_MBOX_START_INDEX % 32);
+			out->uc_door_bell_pa =
+				ipa_ctx->ipa_wrapper_base +
+				IPA_REG_BASE_OFST_v2_5 +
+				IPA_UC_MAILBOX_m_n_OFFS_v2_5(
+				IPA_HW_WDI_RX_MBOX_START_INDEX/32,
+				IPA_HW_WDI_RX_MBOX_START_INDEX % 32);
 		} else {
-				out->uc_door_bell_pa =
-				 ipa_ctx->ipa_wrapper_base +
-				   IPA_REG_BASE_OFST_v2_0 +
-				   IPA_UC_MAILBOX_m_n_OFFS(
-				    IPA_HW_WDI_RX_MBOX_START_INDEX/32,
-				    IPA_HW_WDI_RX_MBOX_START_INDEX % 32);
+			out->uc_door_bell_pa =
+				ipa_ctx->ipa_wrapper_base +
+				IPA_REG_BASE_OFST_v2_0 +
+				IPA_UC_MAILBOX_m_n_OFFS(
+				IPA_HW_WDI_RX_MBOX_START_INDEX/32,
+				IPA_HW_WDI_RX_MBOX_START_INDEX % 32);
 		}
 	}
 
@@ -1147,7 +1140,7 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 		goto uc_timeout;
 	}
 	if (IPA_CLIENT_IS_PROD(in->sys.client)) {
-		memset(&ep_cfg_ctrl, 0 , sizeof(struct ipa_ep_cfg_ctrl));
+		memset(&ep_cfg_ctrl, 0, sizeof(struct ipa_ep_cfg_ctrl));
 		ep_cfg_ctrl.ipa_ep_delay = true;
 		ipa2_cfg_ep_ctrl(ipa_ep_idx, &ep_cfg_ctrl);
 	}
@@ -1167,6 +1160,12 @@ int ipa2_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 	ep->skip_ep_cfg = in->sys.skip_ep_cfg;
 	ep->client_notify = in->sys.notify;
 	ep->priv = in->sys.priv;
+
+	/* for AP+STA stats update */
+	if (in->wdi_notify)
+		ipa_ctx->uc_wdi_ctx.stats_notify = in->wdi_notify;
+	else
+		IPADBG("in->wdi_notify is null\n");
 
 	if (!ep->skip_ep_cfg) {
 		if (ipa2_cfg_ep(ipa_ep_idx, &in->sys.ipa_ep_cfg)) {
@@ -1265,6 +1264,12 @@ int ipa2_disconnect_wdi_pipe(u32 clnt_hdl)
 
 	IPADBG("client (ep: %d) disconnected\n", clnt_hdl);
 
+	/* for AP+STA stats update */
+	if (ipa_ctx->uc_wdi_ctx.stats_notify)
+		ipa_ctx->uc_wdi_ctx.stats_notify = NULL;
+	else
+		IPADBG("uc_wdi_ctx.stats_notify already null\n");
+
 uc_timeout:
 	return result;
 }
@@ -1322,7 +1327,7 @@ int ipa2_enable_wdi_pipe(u32 clnt_hdl)
 	}
 
 	if (IPA_CLIENT_IS_CONS(ep->client)) {
-		memset(&holb_cfg, 0 , sizeof(holb_cfg));
+		memset(&holb_cfg, 0, sizeof(holb_cfg));
 		holb_cfg.en = IPA_HOLB_TMR_DIS;
 		holb_cfg.tmr_val = 0;
 		result = ipa2_cfg_ep_holb(clnt_hdl, &holb_cfg);
@@ -1351,7 +1356,6 @@ int ipa2_disable_wdi_pipe(u32 clnt_hdl)
 	union IpaHwWdiCommonChCmdData_t disable;
 	struct ipa_ep_cfg_ctrl ep_cfg_ctrl;
 	u32 prod_hdl;
-	int i;
 
 	if (unlikely(!ipa_ctx)) {
 		IPAERR("IPA driver was not initialized\n");
@@ -1367,28 +1371,6 @@ int ipa2_disable_wdi_pipe(u32 clnt_hdl)
 	result = ipa2_uc_state_check();
 	if (result)
 		return result;
-
-	/* checking rdy_ring_rp_pa matches the rdy_comp_ring_wp_pa on WDI2.0 */
-	if (ipa_ctx->ipa_wdi2) {
-		for (i = 0; i < IPA_UC_FINISH_MAX; i++) {
-			IPADBG("(%d) rp_value(%u), comp_wp_value(%u)\n",
-					i,
-					*ipa_ctx->uc_ctx.rdy_ring_rp_va,
-					*ipa_ctx->uc_ctx.rdy_comp_ring_wp_va);
-			if (*ipa_ctx->uc_ctx.rdy_ring_rp_va !=
-				*ipa_ctx->uc_ctx.rdy_comp_ring_wp_va) {
-				usleep_range(IPA_UC_WAIT_MIN_SLEEP,
-					IPA_UC_WAII_MAX_SLEEP);
-			} else {
-				break;
-			}
-		}
-		/* In case ipa_uc still haven't processed all
-		* pending descriptors, we have to assert
-		*/
-		if (i == IPA_UC_FINISH_MAX)
-			BUG();
-	}
 
 	IPADBG("ep=%d\n", clnt_hdl);
 
@@ -1415,7 +1397,13 @@ int ipa2_disable_wdi_pipe(u32 clnt_hdl)
 	 * holb on IPA Producer pipe
 	 */
 	if (IPA_CLIENT_IS_PROD(ep->client)) {
-		memset(&ep_cfg_ctrl, 0 , sizeof(struct ipa_ep_cfg_ctrl));
+
+		IPADBG("Stopping PROD channel - hdl=%d clnt=%d\n",
+			clnt_hdl, ep->client);
+
+		/* remove delay on wlan-prod pipe*/
+		memset(&ep_cfg_ctrl, 0, sizeof(struct ipa_ep_cfg_ctrl));
+
 		ipa2_cfg_ep_ctrl(clnt_hdl, &ep_cfg_ctrl);
 
 		prod_hdl = ipa2_get_ep_mapping(IPA_CLIENT_WLAN1_CONS);
@@ -1512,7 +1500,7 @@ int ipa2_resume_wdi_pipe(u32 clnt_hdl)
 		goto uc_timeout;
 	}
 
-	memset(&ep_cfg_ctrl, 0 , sizeof(struct ipa_ep_cfg_ctrl));
+	memset(&ep_cfg_ctrl, 0, sizeof(struct ipa_ep_cfg_ctrl));
 	result = ipa2_cfg_ep_ctrl(clnt_hdl, &ep_cfg_ctrl);
 	if (result)
 		IPAERR("client (ep: %d) fail un-susp/delay result=%d\n",
@@ -1541,6 +1529,8 @@ int ipa2_suspend_wdi_pipe(u32 clnt_hdl)
 	struct ipa_ep_context *ep;
 	union IpaHwWdiCommonChCmdData_t suspend;
 	struct ipa_ep_cfg_ctrl ep_cfg_ctrl;
+	u32 source_pipe_bitmask = 0;
+	bool disable_force_clear = false;
 
 	if (unlikely(!ipa_ctx)) {
 		IPAERR("IPA driver was not initialized\n");
@@ -1570,6 +1560,31 @@ int ipa2_suspend_wdi_pipe(u32 clnt_hdl)
 	suspend.params.ipa_pipe_number = clnt_hdl;
 
 	if (IPA_CLIENT_IS_PROD(ep->client)) {
+		/*
+		 * For WDI 2.0 need to ensure pipe will be empty before suspend
+		 * as IPA uC will fail to suspend the pipe otherwise.
+		 */
+		if (ipa_ctx->ipa_wdi2) {
+			source_pipe_bitmask = 1 <<
+				ipa_get_ep_mapping(ep->client);
+			result = ipa2_enable_force_clear(clnt_hdl,
+				false, source_pipe_bitmask);
+			if (result) {
+				/*
+				 * assuming here modem SSR, AP can remove
+				 * the delay in this case
+				 */
+				IPAERR("failed to force clear %d\n", result);
+				IPAERR("remove delay from SCND reg\n");
+				memset(&ep_cfg_ctrl, 0,
+					sizeof(struct ipa_ep_cfg_ctrl));
+				ep_cfg_ctrl.ipa_ep_delay = false;
+				ep_cfg_ctrl.ipa_ep_suspend = false;
+				ipa2_cfg_ep_ctrl(clnt_hdl, &ep_cfg_ctrl);
+			} else {
+				disable_force_clear = true;
+			}
+		}
 		IPADBG("Post suspend event first for IPA Producer\n");
 		IPADBG("Client: %d clnt_hdl: %d\n", ep->client, clnt_hdl);
 		result = ipa_uc_send_cmd(suspend.raw32b,
@@ -1583,7 +1598,7 @@ int ipa2_suspend_wdi_pipe(u32 clnt_hdl)
 		}
 	}
 
-	memset(&ep_cfg_ctrl, 0 , sizeof(struct ipa_ep_cfg_ctrl));
+	memset(&ep_cfg_ctrl, 0, sizeof(struct ipa_ep_cfg_ctrl));
 	if (IPA_CLIENT_IS_CONS(ep->client)) {
 		ep_cfg_ctrl.ipa_ep_suspend = true;
 		result = ipa2_cfg_ep_ctrl(clnt_hdl, &ep_cfg_ctrl);
@@ -1614,6 +1629,9 @@ int ipa2_suspend_wdi_pipe(u32 clnt_hdl)
 		}
 	}
 
+	if (disable_force_clear)
+		ipa2_disable_force_clear(clnt_hdl);
+
 	ipa_ctx->tag_process_before_gating = true;
 	IPA_ACTIVE_CLIENTS_DEC_EP(ipa2_get_client_mapping(clnt_hdl));
 	ep->uc_offload_state &= ~IPA_WDI_RESUMED;
@@ -1621,6 +1639,23 @@ int ipa2_suspend_wdi_pipe(u32 clnt_hdl)
 
 uc_timeout:
 	return result;
+}
+
+/**
+ * ipa_broadcast_wdi_quota_reach_ind() - quota reach
+ * @uint32_t fid: [in] input netdev ID
+ * @uint64_t num_bytes: [in] used bytes
+ *
+ * Returns:	0 on success, negative on failure
+ */
+int ipa2_broadcast_wdi_quota_reach_ind(uint32_t fid,
+	uint64_t num_bytes)
+{
+	IPAERR("Quota reached indication on fis(%d) Mbytes(%lu)\n",
+			  fid,
+			  (unsigned long int) num_bytes);
+	ipa_broadcast_quota_reach_ind(0, IPA_UPSTEAM_WLAN);
+	return 0;
 }
 
 int ipa_write_qmapid_wdi_pipe(u32 clnt_hdl, u8 qmap_id)
@@ -1747,35 +1782,35 @@ int ipa2_uc_wdi_get_dbpa(
 
 	if (IPA_CLIENT_IS_CONS(param->client)) {
 		if (ipa_ctx->ipa_hw_type >= IPA_HW_v2_5) {
-				param->uc_door_bell_pa =
-				 ipa_ctx->ipa_wrapper_base +
-					IPA_REG_BASE_OFST_v2_5 +
-				   IPA_UC_MAILBOX_m_n_OFFS_v2_5(
-				    IPA_HW_WDI_TX_MBOX_START_INDEX/32,
-				    IPA_HW_WDI_TX_MBOX_START_INDEX % 32);
+			param->uc_door_bell_pa =
+				ipa_ctx->ipa_wrapper_base +
+				IPA_REG_BASE_OFST_v2_5 +
+				IPA_UC_MAILBOX_m_n_OFFS_v2_5(
+				IPA_HW_WDI_TX_MBOX_START_INDEX/32,
+				IPA_HW_WDI_TX_MBOX_START_INDEX % 32);
 		} else {
-				param->uc_door_bell_pa =
-				 ipa_ctx->ipa_wrapper_base +
-					IPA_REG_BASE_OFST_v2_0 +
-				   IPA_UC_MAILBOX_m_n_OFFS(
-				    IPA_HW_WDI_TX_MBOX_START_INDEX/32,
-				    IPA_HW_WDI_TX_MBOX_START_INDEX % 32);
+			param->uc_door_bell_pa =
+				ipa_ctx->ipa_wrapper_base +
+				IPA_REG_BASE_OFST_v2_0 +
+				IPA_UC_MAILBOX_m_n_OFFS(
+				IPA_HW_WDI_TX_MBOX_START_INDEX/32,
+				IPA_HW_WDI_TX_MBOX_START_INDEX % 32);
 		}
 	} else {
 		if (ipa_ctx->ipa_hw_type >= IPA_HW_v2_5) {
-				param->uc_door_bell_pa =
-				 ipa_ctx->ipa_wrapper_base +
-					IPA_REG_BASE_OFST_v2_5 +
-				   IPA_UC_MAILBOX_m_n_OFFS_v2_5(
-				    IPA_HW_WDI_RX_MBOX_START_INDEX/32,
-				    IPA_HW_WDI_RX_MBOX_START_INDEX % 32);
+			param->uc_door_bell_pa =
+				ipa_ctx->ipa_wrapper_base +
+				IPA_REG_BASE_OFST_v2_5 +
+				IPA_UC_MAILBOX_m_n_OFFS_v2_5(
+				IPA_HW_WDI_RX_MBOX_START_INDEX/32,
+				IPA_HW_WDI_RX_MBOX_START_INDEX % 32);
 		} else {
-				param->uc_door_bell_pa =
-				 ipa_ctx->ipa_wrapper_base +
-					IPA_REG_BASE_OFST_v2_0 +
-				   IPA_UC_MAILBOX_m_n_OFFS(
-				    IPA_HW_WDI_RX_MBOX_START_INDEX/32,
-				    IPA_HW_WDI_RX_MBOX_START_INDEX % 32);
+			param->uc_door_bell_pa =
+				ipa_ctx->ipa_wrapper_base +
+				IPA_REG_BASE_OFST_v2_0 +
+				IPA_UC_MAILBOX_m_n_OFFS(
+				IPA_HW_WDI_RX_MBOX_START_INDEX/32,
+				IPA_HW_WDI_RX_MBOX_START_INDEX % 32);
 		}
 	}
 
@@ -1797,8 +1832,6 @@ static void ipa_uc_wdi_loaded_handler(void)
 			NULL;
 		ipa_ctx->uc_wdi_ctx.priv = NULL;
 	}
-
-	return;
 }
 
 int ipa2_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)

@@ -23,7 +23,7 @@
  * @req_wait: signal availability of request from clink
  * @req_fifo_lock: serialize access to req fifo
  * @evt_fito: fifo for clink events
- * @evt_wait: signal availablity of clink event
+ * @evt_wait: signal availability of clink event
  * @evt_fifo_lock: serialize access to event fifo
  * @list: entry in esoc dev list.
  * @clink: reference to contorl link
@@ -117,7 +117,7 @@ static void return_esoc_udev(struct esoc_udev *esoc_udev)
 	kfree(esoc_udev);
 }
 
-static struct esoc_udev *esoc_udev_get_by_minor(unsigned index)
+static struct esoc_udev *esoc_udev_get_by_minor(unsigned int index)
 {
 	struct esoc_udev *esoc_udev;
 
@@ -158,6 +158,7 @@ void esoc_udev_handle_clink_evt(enum esoc_evt evt, struct esoc_eng *eng)
 	u32 clink_evt;
 	struct esoc_clink *esoc_clink = eng->esoc_clink;
 	struct esoc_udev *esoc_udev = esoc_udev_get_by_minor(esoc_clink->id);
+
 	if (!esoc_udev)
 		return;
 	clink_evt = (u32)evt;
@@ -175,11 +176,11 @@ static long esoc_dev_ioctl(struct file *file, unsigned int cmd,
 						unsigned long arg)
 {
 	int err;
-	u32 esoc_cmd , status, req, evt;
+	u32 esoc_cmd, status, req, evt;
 	struct esoc_uhandle *uhandle = file->private_data;
 	struct esoc_udev *esoc_udev = uhandle->esoc_udev;
 	struct esoc_clink *esoc_clink = uhandle->esoc_clink;
-	const struct esoc_clink_ops *clink_ops = esoc_clink->clink_ops;
+	const struct esoc_clink_ops * const clink_ops = esoc_clink->clink_ops;
 	void __user *uarg = (void __user *)arg;
 
 	switch (cmd) {
@@ -218,7 +219,6 @@ static long esoc_dev_ioctl(struct file *file, unsigned int cmd,
 
 		}
 		return err;
-		break;
 	case ESOC_NOTIFY:
 		get_user(esoc_cmd, (u32 __user *)arg);
 		clink_ops->notify(esoc_cmd, esoc_clink);
@@ -246,7 +246,6 @@ static long esoc_dev_ioctl(struct file *file, unsigned int cmd,
 			put_user(evt, (unsigned int __user *)uarg);
 		}
 		return err;
-		break;
 	default:
 		return -EINVAL;
 	};
@@ -262,11 +261,19 @@ static int esoc_dev_open(struct inode *inode, struct file *file)
 	unsigned int minor = iminor(inode);
 
 	esoc_udev = esoc_udev_get_by_minor(minor);
+	if (!esoc_udev) {
+		pr_err("failed to get udev\n");
+		return -ENOMEM;
+	}
+
 	esoc_clink = get_esoc_clink(esoc_udev->clink->id);
+	if (!esoc_clink) {
+		pr_err("failed to get clink\n");
+		return -ENOMEM;
+	}
 
 	uhandle = kzalloc(sizeof(*uhandle), GFP_KERNEL);
 	if (!uhandle) {
-		pr_err("failed to allocate memory for uhandle\n");
 		put_esoc_clink(esoc_clink);
 		return -ENOMEM;
 	}
@@ -308,12 +315,12 @@ int esoc_clink_add_device(struct device *dev, void *dummy)
 	struct esoc_clink *esoc_clink = to_esoc_clink(dev);
 
 	esoc_udev = get_free_esoc_udev(esoc_clink);
-	if (IS_ERR(esoc_udev))
+	if (IS_ERR_OR_NULL(esoc_udev))
 		return PTR_ERR(esoc_udev);
 	esoc_udev->dev = device_create(esoc_class, &esoc_clink->dev,
 					MKDEV(esoc_major, esoc_clink->id),
 					esoc_clink, "esoc-%d", esoc_clink->id);
-	if (IS_ERR(esoc_udev->dev)) {
+	if (IS_ERR_OR_NULL(esoc_udev->dev)) {
 		pr_err("failed to create user device\n");
 		goto dev_err;
 	}
@@ -331,7 +338,6 @@ int esoc_clink_del_device(struct device *dev, void *dummy)
 	esoc_udev = esoc_udev_get_by_minor(esoc_clink->id);
 	if (!esoc_udev)
 		return 0;
-	return_esoc_udev(esoc_udev);
 	device_destroy(esoc_class, MKDEV(esoc_major, esoc_clink->id));
 	return_esoc_udev(esoc_udev);
 	return 0;
@@ -359,8 +365,9 @@ static struct notifier_block esoc_dev_notifier = {
 int __init esoc_dev_init(void)
 {
 	int ret = 0;
+
 	esoc_class = class_create(THIS_MODULE, "esoc-dev");
-	if (IS_ERR(esoc_class)) {
+	if (IS_ERR_OR_NULL(esoc_class)) {
 		pr_err("coudn't create class");
 		return PTR_ERR(esoc_class);
 	}
@@ -389,6 +396,6 @@ void __exit esoc_dev_exit(void)
 	unregister_chrdev(esoc_major, "esoc-dev");
 }
 
-MODULE_LICENSE("GPLv2");
+MODULE_LICENSE("GPL v2");
 module_init(esoc_dev_init);
 module_exit(esoc_dev_exit);

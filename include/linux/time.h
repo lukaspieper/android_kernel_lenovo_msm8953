@@ -39,9 +39,20 @@ static inline int timeval_compare(const struct timeval *lhs, const struct timeva
 	return lhs->tv_usec - rhs->tv_usec;
 }
 
-extern unsigned long mktime(const unsigned int year, const unsigned int mon,
-			    const unsigned int day, const unsigned int hour,
-			    const unsigned int min, const unsigned int sec);
+extern time64_t mktime64(const unsigned int year, const unsigned int mon,
+			const unsigned int day, const unsigned int hour,
+			const unsigned int min, const unsigned int sec);
+
+/**
+ * Deprecated. Use mktime64().
+ */
+static inline unsigned long mktime(const unsigned int year,
+			const unsigned int mon, const unsigned int day,
+			const unsigned int hour, const unsigned int min,
+			const unsigned int sec)
+{
+	return mktime64(year, mon, day, hour, min, sec);
+}
 
 extern void set_normalized_timespec(struct timespec *ts, time_t sec, s64 nsec);
 
@@ -194,7 +205,20 @@ struct tm {
 	int tm_yday;
 };
 
-void time_to_tm(time_t totalsecs, int offset, struct tm *result);
+void time64_to_tm(time64_t totalsecs, int offset, struct tm *result);
+
+/**
+ * time_to_tm - converts the calendar time to local broken-down time
+ *
+ * @totalsecs	the number of seconds elapsed since 00:00:00 on January 1, 1970,
+ *		Coordinated Universal Time (UTC).
+ * @offset	offset seconds adding to totalsecs.
+ * @result	pointer to struct tm variable to receive broken-down time
+ */
+static inline void time_to_tm(time_t totalsecs, int offset, struct tm *result)
+{
+	time64_to_tm(totalsecs, offset, result);
+}
 
 /**
  * timespec_to_ns - Convert timespec to nanoseconds
@@ -251,4 +275,16 @@ static __always_inline void timespec_add_ns(struct timespec *a, u64 ns)
 	a->tv_nsec = ns;
 }
 
+/**
+ * time_between32 - check if a 32-bit timestamp is within a given time range
+ * @t:	the time which may be within [l,h]
+ * @l:	the lower bound of the range
+ * @h:	the higher bound of the range
+ *
+ * time_before32(t, l, h) returns true if @l <= @t <= @h. All operands are
+ * treated as 32-bit integers.
+ *
+ * Equivalent to !(time_before32(@t, @l) || time_after32(@t, @h)).
+ */
+#define time_between32(t, l, h) ((u32)(h) - (u32)(l) >= (u32)(t) - (u32)(l))
 #endif

@@ -27,11 +27,10 @@
 #include <linux/io.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
+#include <linux/gpio.h>
 
 #include <linux/libata.h>
 #include <scsi/scsi_host.h>
-
-#include <asm/gpio.h>
 
 #include <asm/mach-rc32434/rb.h>
 
@@ -202,7 +201,6 @@ static struct platform_driver rb532_pata_platform_driver = {
 	.remove		= rb532_pata_driver_remove,
 	.driver	 = {
 		.name   = DRV_NAME,
-		.owner  = THIS_MODULE,
 	},
 };
 

@@ -1,4 +1,4 @@
-Qualcomm SMSM Point-to-Point (SMP2P)
+Qualcomm Technologies, Inc. SMSM Point-to-Point (SMP2P)
 
 Required properties:
 -compatible : should be "qcom,smp2p"

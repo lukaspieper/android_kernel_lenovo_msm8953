@@ -1,7 +1,7 @@
 /* arch/arm/mach-msm/smem_debug.c
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2013,2016-2017 The Linux Foundation. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -30,7 +30,7 @@
 
 static void debug_read_mem(struct seq_file *s)
 {
-	unsigned n;
+	unsigned int n;
 	struct smem_heap_info *heap_info;
 	struct smem_heap_entry *toc;
 
@@ -53,7 +53,7 @@ static void debug_read_mem(struct seq_file *s)
 		       heap_info->free_offset,
 		       heap_info->heap_remaining);
 
-	for (n = 0; n < SMEM_NUM_ITEMS; n++) {
+	for (n = 0; n < smem_max_items; n++) {
 		if (toc[n].allocated == 0)
 			continue;
 		seq_printf(s, "%04d: offset %08x size %08x\n",
@@ -67,15 +67,14 @@ static void debug_read_smem_version(struct seq_file *s)
 
 	for (n = 0; n < 32; n++) {
 		version = smem_get_version(n);
-		seq_printf(s, "entry %d: smem = %d  proc_comm = %d\n", n,
-			       version >> 16,
-			       version & 0xffff);
+		seq_printf(s, "entry %d:%x smem = %d  proc_comm = %d\n",
+				n, version, version >> 16, version & 0xffff);
 	}
 }
 
 static void debug_read_build_id(struct seq_file *s)
 {
-	unsigned size;
+	unsigned int size;
 	void *data;
 
 	data = smem_get_entry(SMEM_HW_SW_BUILD_ID, &size, 0,

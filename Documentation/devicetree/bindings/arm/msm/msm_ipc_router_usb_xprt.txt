@@ -1,7 +1,7 @@
 Qualcomm Technologies, Inc. IPC Router USB Transport
 
 Required properties:
--compatible:		should be "qcom,ipc-router-usb-xprt"
+-compatible:		should be "qcom,ipc_router_usb_xprt"
 -qcom,ch-name:		the USB channel name used by the USB transport
 -qcom,xprt-remote:	string that defines the edge of the transport (PIL Name)
 -qcom,xprt-linkid:	unique integer to identify the tier to which the link

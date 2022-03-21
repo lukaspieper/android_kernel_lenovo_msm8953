@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -116,7 +116,7 @@ struct msm_ipc_port {
 	struct msm_ipc_port_addr this_port;
 	struct msm_ipc_port_name port_name;
 	uint32_t type;
-	unsigned flags;
+	unsigned int flags;
 	struct mutex port_lock_lhc3;
 	struct comm_mode_info mode_info;
 
@@ -136,7 +136,7 @@ struct msm_ipc_port {
 
 	void *rport_info;
 	void *endpoint;
-	void (*notify)(unsigned event, void *oob_data,
+	void (*notify)(unsigned int event, void *oob_data,
 		       size_t oob_data_len, void *priv);
 	int (*check_send_permissions)(void *data);
 
@@ -144,6 +144,7 @@ struct msm_ipc_port {
 	uint32_t num_rx;
 	unsigned long num_tx_bytes;
 	unsigned long num_rx_bytes;
+	uint32_t last_served_svc_id;
 	void *priv;
 };
 
@@ -160,7 +161,7 @@ struct msm_ipc_port {
  * @return: Pointer to the port on success, NULL on error.
  */
 struct msm_ipc_port *msm_ipc_router_create_port(
-	void (*notify)(unsigned event, void *oob_data,
+	void (*notify)(unsigned int event, void *oob_data,
 		       size_t oob_data_len, void *priv),
 	void *priv);
 
@@ -269,10 +270,18 @@ int register_ipcrtr_af_init_notifier(struct notifier_block *nb);
  */
 int unregister_ipcrtr_af_init_notifier(struct notifier_block *nb);
 
+/**
+ * msm_ipc_router_set_ws_allowed() - To Enable/disable the wakeup source allowed
+ *					flag
+ * @flag: Flag to set/clear the wakeup soruce allowed
+ *
+ */
+void msm_ipc_router_set_ws_allowed(bool flag);
+
 #else
 
 struct msm_ipc_port *msm_ipc_router_create_port(
-	void (*notify)(unsigned event, void *oob_data,
+	void (*notify)(unsigned int event, void *oob_data,
 		       size_t oob_data_len, void *priv),
 	void *priv)
 {
@@ -331,15 +340,17 @@ static inline int msm_ipc_router_unregister_server(
 	return -ENODEV;
 }
 
-int register_ipcrtr_af_notifier(struct notifier_block *nb)
+int register_ipcrtr_af_init_notifier(struct notifier_block *nb)
 {
 	return -ENODEV;
 }
 
-int register_ipcrtr_af_notifier(struct notifier_block *nb)
+int unregister_ipcrtr_af_init_notifier(struct notifier_block *nb)
 {
 	return -ENODEV;
 }
+
+void msm_ipc_router_set_ws_allowed(bool flag) { }
 
 #endif
 

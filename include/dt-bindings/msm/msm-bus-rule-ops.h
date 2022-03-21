@@ -21,9 +21,7 @@
 #define OP_LT	1
 #define OP_GE	2
 #define OP_GT	3
-#define OP_NOOP 4
-#define OP_AND	5
-#define OP_OR	6
+#define OP_NOOP	4
 
 #define RULE_STATE_NOT_APPLIED	0
 #define RULE_STATE_APPLIED	1

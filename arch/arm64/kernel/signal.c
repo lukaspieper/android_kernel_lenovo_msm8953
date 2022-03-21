@@ -288,17 +288,10 @@ static void setup_restart_syscall(struct pt_regs *regs)
  */
 static void handle_signal(struct ksignal *ksig, struct pt_regs *regs)
 {
-	struct thread_info *thread = current_thread_info();
 	struct task_struct *tsk = current;
 	sigset_t *oldset = sigmask_to_save();
 	int usig = ksig->sig;
 	int ret;
-
-	/*
-	 * translate the signal
-	 */
-	if (usig < 32 && thread->exec_domain && thread->exec_domain->signal_invmap)
-		usig = thread->exec_domain->signal_invmap[usig];
 
 	/*
 	 * Set up the stack frame
@@ -410,18 +403,35 @@ static void do_signal(struct pt_regs *regs)
 asmlinkage void do_notify_resume(struct pt_regs *regs,
 				 unsigned int thread_flags)
 {
-	/* Check valid user FS if needed */
-	addr_limit_user_check();
+	/*
+	 * The assembly code enters us with IRQs off, but it hasn't
+	 * informed the tracing code of that for efficiency reasons.
+	 * Update the trace code with the current status.
+	 */
+	trace_hardirqs_off();
 
-	if (thread_flags & _TIF_SIGPENDING)
-		do_signal(regs);
+	do {
+		/* Check valid user FS if needed */
+		addr_limit_user_check();
 
-	if (thread_flags & _TIF_NOTIFY_RESUME) {
-		clear_thread_flag(TIF_NOTIFY_RESUME);
-		tracehook_notify_resume(regs);
-	}
+		if (thread_flags & _TIF_NEED_RESCHED) {
+			schedule();
+		} else {
+			local_irq_enable();
 
-	if (thread_flags & _TIF_FOREIGN_FPSTATE)
-		fpsimd_restore_current_state();
+			if (thread_flags & _TIF_SIGPENDING)
+				do_signal(regs);
 
+			if (thread_flags & _TIF_NOTIFY_RESUME) {
+				clear_thread_flag(TIF_NOTIFY_RESUME);
+				tracehook_notify_resume(regs);
+			}
+
+			if (thread_flags & _TIF_FOREIGN_FPSTATE)
+				fpsimd_restore_current_state();
+		}
+
+		local_irq_disable();
+		thread_flags = READ_ONCE(current_thread_info()->flags);
+	} while (thread_flags & _TIF_WORK_MASK);
 }

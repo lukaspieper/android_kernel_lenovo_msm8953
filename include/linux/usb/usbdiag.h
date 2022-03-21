@@ -44,22 +44,23 @@ struct diag_request {
 struct usb_diag_ch {
 	const char *name;
 	struct list_head list;
-	void (*notify)(void *priv, unsigned event, struct diag_request *d_req);
+	void (*notify)(void *priv, unsigned int event,
+			struct diag_request *d_req);
 	void *priv;
 	void *priv_usb;
 };
 
-#ifdef CONFIG_USB_G_ANDROID
+#if IS_ENABLED(CONFIG_USB_F_DIAG)
 int usb_diag_request_size(struct usb_diag_ch *ch);
 struct usb_diag_ch *usb_diag_open(const char *name, void *priv,
-		void (*notify)(void *, unsigned, struct diag_request *));
+		void (*notify)(void *, unsigned int, struct diag_request *));
 void usb_diag_close(struct usb_diag_ch *ch);
 int usb_diag_alloc_req(struct usb_diag_ch *ch, int n_write, int n_read);
 int usb_diag_read(struct usb_diag_ch *ch, struct diag_request *d_req);
 int usb_diag_write(struct usb_diag_ch *ch, struct diag_request *d_req);
 #else
 static inline struct usb_diag_ch *usb_diag_open(const char *name, void *priv,
-		void (*notify)(void *, unsigned, struct diag_request *))
+		void (*notify)(void *, unsigned int, struct diag_request *))
 {
 	return ERR_PTR(-ENODEV);
 }
@@ -81,5 +82,5 @@ int usb_diag_write(struct usb_diag_ch *ch, struct diag_request *d_req)
 {
 	return -ENODEV;
 }
-#endif /* CONFIG_USB_G_ANDROID */
+#endif /* CONFIG_USB_F_DIAG */
 #endif /* _DRIVERS_USB_DIAG_H_ */

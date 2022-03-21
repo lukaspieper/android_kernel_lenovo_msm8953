@@ -15,6 +15,7 @@
 
 #include <linux/compiler.h>
 #include <linux/sched.h>
+#include <linux/preempt.h>
 #include <asm/cacheflush.h>
 #include <asm/cachetype.h>
 #include <asm/proc-fns.h>
@@ -23,10 +24,27 @@
 
 void __check_vmalloc_seq(struct mm_struct *mm);
 
+#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
+void arm_init_bp_hardening(void);
+void arm_apply_bp_hardening(void);
+#else
+static inline void arm_init_bp_hardening(void)
+{
+}
+static inline void arm_apply_bp_hardening(void)
+{
+}
+#endif
+
 #ifdef CONFIG_CPU_HAS_ASID
 
 void check_and_switch_context(struct mm_struct *mm, struct task_struct *tsk);
-#define init_new_context(tsk,mm)	({ atomic64_set(&mm->context.id, 0); 0; })
+static inline int
+init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+{
+	atomic64_set(&mm->context.id, 0);
+	return 0;
+}
 
 #ifdef CONFIG_ARM_ERRATA_798181
 void a15_erratum_get_cpumask(int this_cpu, struct mm_struct *mm,
@@ -57,10 +75,13 @@ static inline void check_and_switch_context(struct mm_struct *mm,
 		 * finish_arch_post_lock_switch() call.
 		 */
 		mm->context.switch_pending = 1;
-	else
+	else {
+		arm_apply_bp_hardening();
 		cpu_switch_mm(mm->pgd, mm);
+	}
 }
 
+#ifndef MODULE
 #define finish_arch_post_lock_switch \
 	finish_arch_post_lock_switch
 static inline void finish_arch_post_lock_switch(void)
@@ -82,10 +103,16 @@ static inline void finish_arch_post_lock_switch(void)
 		preempt_enable_no_resched();
 	}
 }
+#endif /* !MODULE */
 
 #endif	/* CONFIG_MMU */
 
-#define init_new_context(tsk,mm)	0
+static inline int
+init_new_context(struct task_struct *tsk, struct mm_struct *mm)
+{
+	return 0;
+}
+
 
 #endif	/* CONFIG_CPU_HAS_ASID */
 

@@ -16,9 +16,15 @@
 #ifndef __ASM_PERCPU_H
 #define __ASM_PERCPU_H
 
+#include <asm/stack_pointer.h>
+#include <asm/alternative.h>
+
 static inline void set_my_cpu_offset(unsigned long off)
 {
-	asm volatile("msr tpidr_el1, %0" :: "r" (off) : "memory");
+	asm volatile(ALTERNATIVE("msr tpidr_el1, %0",
+				 "msr tpidr_el2, %0",
+				 ARM64_HAS_VIRT_HOST_EXTN)
+			:: "r" (off) : "memory");
 }
 
 static inline unsigned long __my_cpu_offset(void)
@@ -29,7 +35,10 @@ static inline unsigned long __my_cpu_offset(void)
 	 * We want to allow caching the value, so avoid using volatile and
 	 * instead use a fake stack read to hazard against barrier().
 	 */
-	asm("mrs %0, tpidr_el1" : "=r" (off) :
+	asm(ALTERNATIVE("mrs %0, tpidr_el1",
+			"mrs %0, tpidr_el2",
+			ARM64_HAS_VIRT_HOST_EXTN)
+		: "=r" (off) :
 		"Q" (*(const unsigned long *)current_stack_pointer));
 
 	return off;
@@ -44,50 +53,47 @@ static inline unsigned long __percpu_##op(void *ptr,			\
 									\
 	switch (size) {							\
 	case 1:								\
-		do {							\
-			asm ("//__per_cpu_" #op "_1\n"			\
-			"ldxrb	  %w[ret], %[ptr]\n"			\
+		asm ("//__per_cpu_" #op "_1\n"				\
+		"1:	ldxrb	  %w[ret], %[ptr]\n"			\
 			#asm_op " %w[ret], %w[ret], %w[val]\n"		\
-			"stxrb	  %w[loop], %w[ret], %[ptr]\n"		\
-			: [loop] "=&r" (loop), [ret] "=&r" (ret),	\
-			  [ptr] "+Q"(*(u8 *)ptr)			\
-			: [val] "Ir" (val));				\
-		} while (loop);						\
+		"	stxrb	  %w[loop], %w[ret], %[ptr]\n"		\
+		"	cbnz	  %w[loop], 1b"				\
+		: [loop] "=&r" (loop), [ret] "=&r" (ret),		\
+		  [ptr] "+Q"(*(u8 *)ptr)				\
+		: [val] "Ir" (val));					\
 		break;							\
 	case 2:								\
-		do {							\
-			asm ("//__per_cpu_" #op "_2\n"			\
-			"ldxrh	  %w[ret], %[ptr]\n"			\
+		asm ("//__per_cpu_" #op "_2\n"				\
+		"1:	ldxrh	  %w[ret], %[ptr]\n"			\
 			#asm_op " %w[ret], %w[ret], %w[val]\n"		\
-			"stxrh	  %w[loop], %w[ret], %[ptr]\n"		\
-			: [loop] "=&r" (loop), [ret] "=&r" (ret),	\
-			  [ptr]  "+Q"(*(u16 *)ptr)			\
-			: [val] "Ir" (val));				\
-		} while (loop);						\
+		"	stxrh	  %w[loop], %w[ret], %[ptr]\n"		\
+		"	cbnz	  %w[loop], 1b"				\
+		: [loop] "=&r" (loop), [ret] "=&r" (ret),		\
+		  [ptr]  "+Q"(*(u16 *)ptr)				\
+		: [val] "Ir" (val));					\
 		break;							\
 	case 4:								\
-		do {							\
-			asm ("//__per_cpu_" #op "_4\n"			\
-			"ldxr	  %w[ret], %[ptr]\n"			\
+		asm ("//__per_cpu_" #op "_4\n"				\
+		"1:	ldxr	  %w[ret], %[ptr]\n"			\
 			#asm_op " %w[ret], %w[ret], %w[val]\n"		\
-			"stxr	  %w[loop], %w[ret], %[ptr]\n"		\
-			: [loop] "=&r" (loop), [ret] "=&r" (ret),	\
-			  [ptr] "+Q"(*(u32 *)ptr)			\
-			: [val] "Ir" (val));				\
-		} while (loop);						\
+		"	stxr	  %w[loop], %w[ret], %[ptr]\n"		\
+		"	cbnz	  %w[loop], 1b"				\
+		: [loop] "=&r" (loop), [ret] "=&r" (ret),		\
+		  [ptr] "+Q"(*(u32 *)ptr)				\
+		: [val] "Ir" (val));					\
 		break;							\
 	case 8:								\
-		do {							\
-			asm ("//__per_cpu_" #op "_8\n"			\
-			"ldxr	  %[ret], %[ptr]\n"			\
+		asm ("//__per_cpu_" #op "_8\n"				\
+		"1:	ldxr	  %[ret], %[ptr]\n"			\
 			#asm_op " %[ret], %[ret], %[val]\n"		\
-			"stxr	  %w[loop], %[ret], %[ptr]\n"		\
-			: [loop] "=&r" (loop), [ret] "=&r" (ret),	\
-			  [ptr] "+Q"(*(u64 *)ptr)			\
-			: [val] "Ir" (val));				\
-		} while (loop);						\
+		"	stxr	  %w[loop], %[ret], %[ptr]\n"		\
+		"	cbnz	  %w[loop], 1b"				\
+		: [loop] "=&r" (loop), [ret] "=&r" (ret),		\
+		  [ptr] "+Q"(*(u64 *)ptr)				\
+		: [val] "Ir" (val));					\
 		break;							\
 	default:							\
+		ret = 0;						\
 		BUILD_BUG();						\
 	}								\
 									\
@@ -117,6 +123,7 @@ static inline unsigned long __percpu_read(void *ptr, int size)
 		ret = ACCESS_ONCE(*(u64 *)ptr);
 		break;
 	default:
+		ret = 0;
 		BUILD_BUG();
 	}
 
@@ -150,46 +157,43 @@ static inline unsigned long __percpu_xchg(void *ptr, unsigned long val,
 
 	switch (size) {
 	case 1:
-		do {
-			asm ("//__percpu_xchg_1\n"
-			"ldxrb %w[ret], %[ptr]\n"
-			"stxrb %w[loop], %w[val], %[ptr]\n"
-			: [loop] "=&r"(loop), [ret] "=&r"(ret),
-			  [ptr] "+Q"(*(u8 *)ptr)
-			: [val] "r" (val));
-		} while (loop);
+		asm ("//__percpu_xchg_1\n"
+		"1:	ldxrb	%w[ret], %[ptr]\n"
+		"	stxrb	%w[loop], %w[val], %[ptr]\n"
+		"	cbnz	%w[loop], 1b"
+		: [loop] "=&r"(loop), [ret] "=&r"(ret),
+		  [ptr] "+Q"(*(u8 *)ptr)
+		: [val] "r" (val));
 		break;
 	case 2:
-		do {
-			asm ("//__percpu_xchg_2\n"
-			"ldxrh %w[ret], %[ptr]\n"
-			"stxrh %w[loop], %w[val], %[ptr]\n"
-			: [loop] "=&r"(loop), [ret] "=&r"(ret),
-			  [ptr] "+Q"(*(u16 *)ptr)
-			: [val] "r" (val));
-		} while (loop);
+		asm ("//__percpu_xchg_2\n"
+		"1:	ldxrh	%w[ret], %[ptr]\n"
+		"	stxrh	%w[loop], %w[val], %[ptr]\n"
+		"	cbnz	%w[loop], 1b"
+		: [loop] "=&r"(loop), [ret] "=&r"(ret),
+		  [ptr] "+Q"(*(u16 *)ptr)
+		: [val] "r" (val));
 		break;
 	case 4:
-		do {
-			asm ("//__percpu_xchg_4\n"
-			"ldxr %w[ret], %[ptr]\n"
-			"stxr %w[loop], %w[val], %[ptr]\n"
-			: [loop] "=&r"(loop), [ret] "=&r"(ret),
-			  [ptr] "+Q"(*(u32 *)ptr)
-			: [val] "r" (val));
-		} while (loop);
+		asm ("//__percpu_xchg_4\n"
+		"1:	ldxr	%w[ret], %[ptr]\n"
+		"	stxr	%w[loop], %w[val], %[ptr]\n"
+		"	cbnz	%w[loop], 1b"
+		: [loop] "=&r"(loop), [ret] "=&r"(ret),
+		  [ptr] "+Q"(*(u32 *)ptr)
+		: [val] "r" (val));
 		break;
 	case 8:
-		do {
-			asm ("//__percpu_xchg_8\n"
-			"ldxr %[ret], %[ptr]\n"
-			"stxr %w[loop], %[val], %[ptr]\n"
-			: [loop] "=&r"(loop), [ret] "=&r"(ret),
-			  [ptr] "+Q"(*(u64 *)ptr)
-			: [val] "r" (val));
-		} while (loop);
+		asm ("//__percpu_xchg_8\n"
+		"1:	ldxr	%[ret], %[ptr]\n"
+		"	stxr	%w[loop], %[val], %[ptr]\n"
+		"	cbnz	%w[loop], 1b"
+		: [loop] "=&r"(loop), [ret] "=&r"(ret),
+		  [ptr] "+Q"(*(u64 *)ptr)
+		: [val] "r" (val));
 		break;
 	default:
+		ret = 0;
 		BUILD_BUG();
 	}
 
@@ -199,19 +203,19 @@ static inline unsigned long __percpu_xchg(void *ptr, unsigned long val,
 #define _percpu_read(pcp)						\
 ({									\
 	typeof(pcp) __retval;						\
-	preempt_disable();						\
+	preempt_disable_notrace();					\
 	__retval = (typeof(pcp))__percpu_read(raw_cpu_ptr(&(pcp)), 	\
 					      sizeof(pcp));		\
-	preempt_enable();						\
+	preempt_enable_notrace();					\
 	__retval;							\
 })
 
 #define _percpu_write(pcp, val)						\
 do {									\
-	preempt_disable();						\
+	preempt_disable_notrace();					\
 	__percpu_write(raw_cpu_ptr(&(pcp)), (unsigned long)(val), 	\
 				sizeof(pcp));				\
-	preempt_enable();						\
+	preempt_enable_notrace();					\
 } while(0)								\
 
 #define _pcp_protect(operation, pcp, val)			\

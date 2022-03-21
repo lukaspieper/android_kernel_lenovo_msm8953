@@ -46,11 +46,8 @@
 
 static const struct drm_info_list drm_debugfs_list[] = {
 	{"name", drm_name_info, 0},
-	{"vm", drm_vm_info, 0},
 	{"clients", drm_clients_info, 0},
-	{"bufs", drm_bufs_info, 0},
 	{"gem_names", drm_gem_name_info, DRIVER_GEM},
-	{"vma", drm_vma_info, 0},
 };
 #define DRM_DEBUGFS_ENTRIES ARRAY_SIZE(drm_debugfs_list)
 
@@ -107,8 +104,8 @@ int drm_debugfs_create_files(const struct drm_info_list *files, int count,
 		ent = debugfs_create_file(files[i].name, S_IFREG | S_IRUGO,
 					  root, tmp, &drm_debugfs_fops);
 		if (!ent) {
-			DRM_ERROR("Cannot create /sys/kernel/debug/dri/%s/%s\n",
-				  root->d_name.name, files[i].name);
+			DRM_ERROR("Cannot create /sys/kernel/debug/dri/%pd/%s\n",
+				  root, files[i].name);
 			kfree(tmp);
 			ret = -1;
 			goto fail;
@@ -290,13 +287,13 @@ static ssize_t connector_write(struct file *file, const char __user *ubuf,
 
 	buf[len] = '\0';
 
-	if (sysfs_streq(buf, "on"))
+	if (!strcmp(buf, "on"))
 		connector->force = DRM_FORCE_ON;
-	else if (sysfs_streq(buf, "digital"))
+	else if (!strcmp(buf, "digital"))
 		connector->force = DRM_FORCE_ON_DIGITAL;
-	else if (sysfs_streq(buf, "off"))
+	else if (!strcmp(buf, "off"))
 		connector->force = DRM_FORCE_OFF;
-	else if (sysfs_streq(buf, "unspecified"))
+	else if (!strcmp(buf, "unspecified"))
 		connector->force = DRM_FORCE_UNSPECIFIED;
 	else
 		return -EINVAL;

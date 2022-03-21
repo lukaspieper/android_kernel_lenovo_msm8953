@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014, 2016-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -86,6 +86,7 @@ static int generic_vdd_parse_regulators(struct device *dev,
 
 	for (i = 0; i < num_regulators; i++) {
 		phandle p;
+
 		rc = of_property_read_phandle_index(np, name, i, &p);
 		if (rc) {
 			dt_prop_err(np, name, "unable to read phandle\n");
@@ -152,10 +153,8 @@ static int generic_vdd_parse_levels(struct device *dev,
 
 	vdd->vdd_ua = devm_kzalloc(dev, len * sizeof(*vdd->vdd_ua),
 						GFP_KERNEL);
-	if (!vdd->vdd_ua) {
-		dt_err(np, "memory alloc failure\n");
+	if (!vdd->vdd_ua)
 		return -ENOMEM;
-	}
 
 	rc = of_property_read_u32_array(np, name, vdd->vdd_ua,
 					vdd->num_levels * vdd->num_regulators);
@@ -174,10 +173,8 @@ static void *simple_vdd_class_dt_parser(struct device *dev,
 	int rc = 0;
 
 	vdd = devm_kzalloc(dev, sizeof(*vdd), GFP_KERNEL);
-	if (!vdd) {
-		dev_err(dev, "memory alloc failure\n");
+	if (!vdd)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	mutex_init(&vdd->lock);
 	vdd->class_name = np->name;
@@ -295,13 +292,12 @@ static int generic_clk_parse_fmax(struct device *dev, struct clk *c,
 	}
 
 	c->fmax = devm_kzalloc(dev, sizeof(*c->fmax) * c->num_fmax, GFP_KERNEL);
-	if (!c->fmax) {
-		dev_err(dev, "memory alloc failure\n");
+	if (!c->fmax)
 		return -ENOMEM;
-	}
 
 	for (i = 0; i < prop_len; i += 2) {
 		u32 level, value;
+
 		rc = of_property_read_u32_index(np, name, i, &level);
 		if (rc) {
 			dt_prop_err(np, name, "unable to read u32\n");
@@ -422,6 +418,7 @@ void *msmclk_generic_clk_init(struct device *dev, struct device_node *np,
 static struct msmclk_parser *msmclk_parser_lookup(struct device_node *np)
 {
 	struct msmclk_parser *item;
+
 	list_for_each_entry(item, &msmclk_parser_list, list) {
 		if (of_device_is_compatible(np, item->compatible))
 			return item;
@@ -529,16 +526,15 @@ static int msmclk_htable_add(struct device *dev, void *data, phandle key)
 
 	if (!IS_ERR(msmclk_lookup_phandle(dev, key))) {
 		struct device_node *np = of_find_node_by_phandle(key);
+
 		dev_err(dev, "attempt to add duplicate entry for %s\n",
 				np ? np->name : "NULL");
 		return -EINVAL;
 	}
 
 	item = devm_kzalloc(dev, sizeof(*item), GFP_KERNEL);
-	if (!item) {
-		dev_err(dev, "memory alloc failure\n");
+	if (!item)
 		return -ENOMEM;
-	}
 
 	INIT_HLIST_NODE(&item->list);
 	item->key = key;
@@ -551,7 +547,7 @@ static int msmclk_htable_add(struct device *dev, void *data, phandle key)
 /*
  * Currently, regulators are the only elements capable of probe deferral.
  * Check them first to handle probe deferal efficiently.
-*/
+ */
 static int get_ext_regulators(struct device *dev)
 {
 	int num_strings, i, rc;
@@ -630,10 +626,9 @@ static struct msmclk_data *msmclk_drv_init(struct device *dev)
 	size_t size;
 
 	drv = devm_kzalloc(dev, sizeof(*drv), GFP_KERNEL);
-	if (!drv) {
-		dev_err(dev, "memory alloc failure\n");
+	if (!drv)
 		return ERR_PTR(-ENOMEM);
-	}
+
 	dev_set_drvdata(dev, drv);
 
 	drv->dev = dev;
@@ -643,11 +638,8 @@ static struct msmclk_data *msmclk_drv_init(struct device *dev)
 	drv->max_clk_tbl_size = of_get_child_count(dev->of_node);
 	size = sizeof(*drv->clk_tbl) * drv->max_clk_tbl_size;
 	drv->clk_tbl = devm_kzalloc(dev, size, GFP_KERNEL);
-	if (!drv->clk_tbl) {
-		dev_err(dev, "memory alloc failure clock table size %zu\n",
-				size);
+	if (!drv->clk_tbl)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	hash_init(drv->htable);
 	return drv;
@@ -725,7 +717,7 @@ static int msmclk_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msmclk_match_table[] = {
+static const struct of_device_id msmclk_match_table[] = {
 	{.compatible = "qcom,msm-clock-controller"},
 	{}
 };
@@ -743,6 +735,7 @@ static bool initialized;
 int __init msmclk_init(void)
 {
 	int rc;
+
 	if (initialized)
 		return 0;
 

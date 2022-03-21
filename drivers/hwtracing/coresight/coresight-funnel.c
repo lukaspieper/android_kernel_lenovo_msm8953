@@ -1,4 +1,6 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2012, 2017, The Linux Foundation. All rights reserved.
+ *
+ * Description: CoreSight Funnel driver
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,7 +13,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/device.h>
@@ -22,6 +23,7 @@
 #include <linux/coresight.h>
 #include <linux/amba/bus.h>
 #include <linux/clk.h>
+#include <linux/of_address.h>
 
 #include "coresight-priv.h"
 
@@ -69,7 +71,6 @@ static int funnel_enable(struct coresight_device *csdev, int inport,
 {
 	struct funnel_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 
-	pm_runtime_get_sync(drvdata->dev);
 	funnel_enable_hw(drvdata, inport);
 
 	dev_info(drvdata->dev, "FUNNEL inport %d enabled\n", inport);
@@ -95,7 +96,6 @@ static void funnel_disable(struct coresight_device *csdev, int inport,
 	struct funnel_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 
 	funnel_disable_hw(drvdata, inport);
-	pm_runtime_put(drvdata->dev);
 
 	dev_info(drvdata->dev, "FUNNEL inport %d disabled\n", inport);
 }
@@ -169,6 +169,29 @@ static struct attribute *coresight_funnel_attrs[] = {
 };
 ATTRIBUTE_GROUPS(coresight_funnel);
 
+static int funnel_get_resource_byname(struct device_node *np,
+				   char *ch_base, struct resource *res)
+{
+	const char *name = NULL;
+	int index = 0, found = 0;
+
+	while (!of_property_read_string_index(np, "reg-names", index, &name)) {
+		if (strcmp(ch_base, name)) {
+			index++;
+			continue;
+		}
+
+		/* We have a match and @index is where it's at */
+		found = 1;
+		break;
+	}
+
+	if (!found)
+		return -EINVAL;
+
+	return of_address_to_resource(np, index, res);
+}
+
 static int funnel_probe(struct amba_device *adev, const struct amba_id *id)
 {
 	int ret;
@@ -176,8 +199,9 @@ static int funnel_probe(struct amba_device *adev, const struct amba_id *id)
 	struct device *dev = &adev->dev;
 	struct coresight_platform_data *pdata = NULL;
 	struct funnel_drvdata *drvdata;
-	struct resource *res = &adev->res;
-	struct coresight_desc *desc;
+	struct resource *res;
+	struct resource res_real;
+	struct coresight_desc desc = { 0 };
 	struct device_node *np = adev->dev.of_node;
 
 	if (np) {
@@ -200,37 +224,35 @@ static int funnel_probe(struct amba_device *adev, const struct amba_id *id)
 	}
 	dev_set_drvdata(dev, drvdata);
 
-	/* Validity for the resource is already checked by the AMBA core */
-	base = devm_ioremap_resource(dev, res);
+	if (of_property_read_bool(np, "qcom,duplicate-funnel")) {
+		ret = funnel_get_resource_byname(np, "funnel-base-real",
+						 &res_real);
+		if (ret)
+			return ret;
+
+		res = &res_real;
+		base = devm_ioremap(dev, res->start, resource_size(res));
+	} else {
+		/* Validity of resource is already checked by the AMBA core */
+		res = &adev->res;
+		base = devm_ioremap_resource(dev, res);
+	}
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
 	drvdata->base = base;
 	pm_runtime_put(&adev->dev);
 
-	desc = devm_kzalloc(dev, sizeof(*desc), GFP_KERNEL);
-	if (!desc)
-		return -ENOMEM;
-
-	desc->type = CORESIGHT_DEV_TYPE_LINK;
-	desc->subtype.link_subtype = CORESIGHT_DEV_SUBTYPE_LINK_MERG;
-	desc->ops = &funnel_cs_ops;
-	desc->pdata = pdata;
-	desc->dev = dev;
-	desc->groups = coresight_funnel_groups;
-	drvdata->csdev = coresight_register(desc);
+	desc.type = CORESIGHT_DEV_TYPE_LINK;
+	desc.subtype.link_subtype = CORESIGHT_DEV_SUBTYPE_LINK_MERG;
+	desc.ops = &funnel_cs_ops;
+	desc.pdata = pdata;
+	desc.dev = dev;
+	desc.groups = coresight_funnel_groups;
+	drvdata->csdev = coresight_register(&desc);
 	if (IS_ERR(drvdata->csdev))
 		return PTR_ERR(drvdata->csdev);
 
-	dev_info(dev, "FUNNEL initialized\n");
-	return 0;
-}
-
-static int funnel_remove(struct amba_device *adev)
-{
-	struct funnel_drvdata *drvdata = amba_get_drvdata(adev);
-
-	coresight_unregister(drvdata->csdev);
 	return 0;
 }
 
@@ -273,13 +295,9 @@ static struct amba_driver funnel_driver = {
 		.name	= "coresight-funnel",
 		.owner	= THIS_MODULE,
 		.pm	= &funnel_dev_pm_ops,
+		.suppress_bind_attrs = true,
 	},
 	.probe		= funnel_probe,
-	.remove		= funnel_remove,
 	.id_table	= funnel_ids,
 };
-
-module_amba_driver(funnel_driver);
-
-MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION("CoreSight Funnel driver");
+builtin_amba_driver(funnel_driver);

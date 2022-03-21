@@ -100,7 +100,6 @@ repeat:
 		return ERR_PTR(-EIO);
 	}
 out:
-	mark_page_accessed(page);
 	return page;
 }
 
@@ -244,8 +243,6 @@ int f2fs_ra_meta_pages(struct f2fs_sb_info *sbi, block_t start, int nrpages,
 					blkno * NAT_ENTRY_PER_BLOCK);
 			break;
 		case META_SIT:
-			if (unlikely(blkno >= TOTAL_SEGS(sbi)))
-				goto out;
 			/* get sit block addr */
 			fio.new_blkaddr = current_sit_addr(sbi,
 					blkno * SIT_ENTRY_PER_BLOCK);
@@ -636,7 +633,12 @@ static int recover_orphan_inode(struct f2fs_sb_info *sbi, nid_t ino)
 		return PTR_ERR(inode);
 	}
 
-	dquot_initialize(inode);
+	err = dquot_initialize(inode);
+	if (err) {
+		iput(inode);
+		goto err_out;
+	}
+
 	clear_nlink(inode);
 
 	/* truncate all the data during iput */

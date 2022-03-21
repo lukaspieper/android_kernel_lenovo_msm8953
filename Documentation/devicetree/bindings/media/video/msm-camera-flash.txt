@@ -1,62 +1,115 @@
-* Qualcomm MSM CAMERA FLASH
+* Qualcomm Technologies, Inc. MSM FLASH
 
-Required properties:
-- cell-index : Should contain flash source index to diffentiate
-    between different flash devices. These indexes represent flash devices
-    for multiple flashes.
-    - 0, 1, 2, 3
-- compatible :
-    - "qcom,camera-led-flash"
-    - "qcom,camera-flash"
-    - "qcom,led-flash"
-    - "qcom,led-flash1"
-    - "qcom,leds-gpio-flash"
-- qcom,flash-type : Should contain type flash device
-    - 1 for LED flash
-    - 2 for strobe flash
-    - 3 for simple led flash controlled by one gpio
-      This is a low cost led used for camera flash, the led is driven by
-      system power, and use a transistor controlled by external pin to
-      gate its on/off state.
-- qcom,flash-source : Should contain array of phandles to flash source nodes.
-    - pm8941_flash0 pm8941_flash1
+The MSM camera Flash driver provides the definitions for
+enabling and disabling LED Torch/Flash by requesting it to
+PMIC/I2C/GPIO based hardware. It provides the functions for
+the Client to control the Flash hardware.
 
-Optional properties:
--qcom,torch-source : Should contain phandle to torch source node.
-    -pm8941_torch
-- qcom,slave-id : should contain i2c slave address, device id address
-    and expected id read value.
-- qcom,max-current: Max current in mA supported by flash
-- qcom,max-duration: Max duration in milliseconds the flash can glow.
--qcom,switch-source : Should contain phandle to switch source node.
-      This is used to trigger dual led at same time to avoid sync issues.
-- qcom,cci-master : should contain i2c master id to be used for this flash.
-    - 0 -> MASTER 0
-    - 1 -> MASTER 1
-- reg : offset and length of the register set for the device.
-    for the flash operating in compatible mode.
-- gpios : should contain phandle to gpio controller node and array of
-    #gpio-cells specifying specific gpio (controller specific)
-- qcom,gpio-req-tbl-num : should contain index to gpios specific to this flash
-- qcom,gpio-req-tbl-flags : should contain direction of gpios present in
-    qcom,gpio-req-tbl-num property (in the same order)
-- qcom,gpio-req-tbl-label : should contain name of gpios present in
-    qcom,gpio-req-tbl-num property (in the same order)
-- qcom,gpio-flash-reset : should contain index to gpio used by flash's "flash reset" pin.
-- qcom,gpio-flash-en : should contain index to gpio used by flash's "flash enable" pin.
-- qcom,gpio-flash-now : should contain index to gpio used by flash's "flash now" pin.
-- label : should contain unique flash name to differentiate from other flash
-    - "adp1660"
-    - "bd7710"
+=======================================================
+Required Node Structure
+=======================================================
+The Flash device is described in one level of the device node.
+
+======================================
+First Level Node - CAM FLASH device
+======================================
+- compatible
+  Usage: required
+  Value type: <string>
+  Definition: Should be "qcom,camera-flash".
+
+- cell-index
+  Usage: required
+  Value type: <u32>
+  Definition: Should specify the hardware index id.
+
+- reg
+  Usage: required
+  Value type: <u32>
+  Definition: Register values.
+
+- flash-source
+  Usage: required
+  Value type: <phandle>
+  Definition: Should contain array of phandles to Flash source nodes.
+
+- torch-source
+  Usage: required
+  Value type: <phandle>
+  Definition: Should contain array of phandles to torch source nodes.
+
+- switch-source
+  Usage: Optional
+  Value type: <phandle>
+  Definition: Should contain phandle to switch source nodes.
+
+- slave-id
+  Usage: optional
+  Value type: <u32>
+  Definition: should contain i2c slave address, device id address
+		      and expected id read value.
+
+- cci-master
+  Usage: optional
+  Value type: <u32>
+  Definition: should contain i2c master id to be used for this camera
+              flash.
+
+- max-current
+  Usage: optional
+  Value type: <u32>
+  Definition: Max current in mA supported by flash
+
+- max-duration
+  Usage: optional
+  Value type: <u32>
+  Definition: Max duration in ms flash can glow.
+
+- gpios
+  Usage: optional
+  Value type: <u32>
+  Definition: should specify the gpios to be used for the flash.
+
+- gpio-req-tbl-num
+  Usage: optional
+  Value type: <u32>
+  Definition: should specify the gpio table index.
+
+- gpio-req-tbl-flags
+  Usage: optional
+  Value type: <u32>
+  Definition: should specify the gpio functions.
+
+- gpio-req-tbl-label
+  Usage: optional
+  Value type: <u32>
+  Definition: should specify the gpio labels.
+
+- gpio-flash-reset
+  Usage: optional
+  Value type: <u32>
+  Definition: should contain index to gpio used by flash's "flash reset" pin.
+
+- gpio-flash-en
+  Usage: optional
+  Value type: <u32>
+  Definition: should contain index to gpio used by flash's "flash enable" pin.
+
+- gpio-flash-now
+  Usage: optional
+  Value type: <u32>
+  Definition: should contain index to gpio used by flash's "flash now" pin.
+
 Example:
 
-qcom,led-flash@60 {
-		reg = <0x60>;
+led_flash_rear: qcom,camera-flash@0 {
+		reg = <0x00 0x00>;
 		cell-index = <0>;
-		qcom,slave-id = <0x60 0x00 0x0011>;
-		compatible = "qcom,led-flash";
-		label = "adp1660";
-		qcom,flash-type = <1>;
+		compatible = "qcom,camera-flash";
+		flash-source = <&pmi8998_flash0 &pmi8998_flash1>;
+		torch-source = <&pmi8998_torch0 &pmi8998_torch1>;
+		switch-source = <&pmi8998_switch0>;
+        qcom,slave-id = <0x00 0x00 0x0011>;
 		qcom,cci-master = <0>;
 		gpios = <&msmgpio 23 0>,
 			<&msmgpio 24 0>;
@@ -68,6 +121,32 @@ qcom,led-flash@60 {
 		qcom,gpio-req-tbl-flags = <0 0>;
 		qcom,gpio-req-tbl-label = "FLASH_EN",
 			"FLASH_NOW";
-		qcom,max-current = <750>;
-		qcom,max-duration = <1600>;
+		qcom,max-current = <1500>;
+		qcom,max-duration = <1200>;
+	};
+
+
+Example:
+
+flash0: qcom,camera-flash {
+		cell-index = <0>;
+		compatible = "qcom,qm215-gpio-flash";
+		qcom,flash-type = <2>;
+		gpios = <&tlmm 34 0>;
+			<&tlmm 33 0>;
+		qcom,gpio-req-tbl-num = <0 1>;
+		qcom,gpio-req-tbl-flags = <1 0>;
+		qcom,gpio-flash-en = <0>;
+		qcom,gpio-flash-now = <1>;
+		qcom,gpio-req-tbl-label = "CAM_FLASH",
+			"CAM_TORCH";
+		status = "ok";
+	};
+
+led_flash0: qcom,camera-led-flash {
+		cell-index = <0>;
+		compatible = "qcom,camera-led-flash";
+		qcom,flash-type = <3>;
+		qcom,flash-source = <&flash_BC847>;
+		qcom,torch-source = <&flash_BC847>;
 	};

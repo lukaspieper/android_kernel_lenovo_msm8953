@@ -60,6 +60,7 @@ void *kmap_atomic(struct page *page)
 	void *kmap;
 	int type;
 
+	preempt_disable();
 	pagefault_disable();
 	if (!PageHighMem(page))
 		return page_address(page);
@@ -122,6 +123,7 @@ void __kunmap_atomic(void *kvaddr)
 		kunmap_high(pte_page(pkmap_page_table[PKMAP_NR(vaddr)]));
 	}
 	pagefault_enable();
+	preempt_enable();
 }
 EXPORT_SYMBOL(__kunmap_atomic);
 
@@ -131,6 +133,7 @@ void *kmap_atomic_pfn(unsigned long pfn)
 	int idx, type;
 	struct page *page = pfn_to_page(pfn);
 
+	preempt_disable();
 	pagefault_disable();
 	if (!PageHighMem(page))
 		return page_address(page);
@@ -146,24 +149,14 @@ void *kmap_atomic_pfn(unsigned long pfn)
 	return (void *)vaddr;
 }
 
-struct page *kmap_atomic_to_page(const void *ptr)
-{
-	unsigned long vaddr = (unsigned long)ptr;
-
-	if (vaddr < FIXADDR_START)
-		return virt_to_page(ptr);
-
-	return pte_page(get_fixmap_pte(vaddr));
-}
-
 #ifdef CONFIG_ARCH_WANT_KMAP_ATOMIC_FLUSH
-static void kmap_remove_unused_cpu(int cpu)
+int kmap_remove_unused_cpu(unsigned int cpu)
 {
 	int start_idx, idx, type;
 
 	pagefault_disable();
 	type = kmap_atomic_idx();
-	start_idx = FIX_KMAP_BEGIN + type + 1 + KM_TYPE_NR * cpu;
+	start_idx = type + 1 + KM_TYPE_NR * cpu;
 
 	for (idx = start_idx; idx < KM_TYPE_NR + KM_TYPE_NR * cpu; idx++) {
 		unsigned long vaddr = __fix_to_virt(FIX_KMAP_BEGIN + idx);
@@ -174,6 +167,7 @@ static void kmap_remove_unused_cpu(int cpu)
 			set_top_pte(vaddr, __pte(0));
 	}
 	pagefault_enable();
+	return 0;
 }
 
 static void kmap_remove_unused(void *unused)
@@ -186,27 +180,4 @@ void kmap_atomic_flush_unused(void)
 	on_each_cpu(kmap_remove_unused, NULL, 1);
 }
 
-static int hotplug_kmap_atomic_callback(struct notifier_block *nfb,
-					unsigned long action, void *hcpu)
-{
-	switch (action & (~CPU_TASKS_FROZEN)) {
-	case CPU_DYING:
-		kmap_remove_unused_cpu((int)hcpu);
-		break;
-	default:
-		break;
-	}
-
-	return NOTIFY_OK;
-}
-
-static struct notifier_block hotplug_kmap_atomic_notifier = {
-	.notifier_call = hotplug_kmap_atomic_callback,
-};
-
-static int __init init_kmap_atomic(void)
-{
-	return register_hotcpu_notifier(&hotplug_kmap_atomic_notifier);
-}
-early_initcall(init_kmap_atomic);
 #endif

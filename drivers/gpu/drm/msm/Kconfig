@@ -2,13 +2,18 @@
 config DRM_MSM
 	tristate "MSM DRM"
 	depends on DRM
-	depends on ARCH_MSM || (ARM && COMPILE_TEST)
+	depends on ARCH_QCOM || (ARM && COMPILE_TEST)
 	depends on OF
 	select REGULATOR
 	select DRM_KMS_HELPER
 	select DRM_PANEL
 	select SHMEM
 	select TMPFS
+	select QCOM_SCM
+	select SND_SOC_HDMI_CODEC if SND_SOC
+	select SYNC_FILE
+	select HDCP_QSEECOM
+	select MSM_EXT_DISPLAY
 	default y
 	help
 	  DRM/KMS driver for MSM/snapdragon.
@@ -21,6 +26,26 @@ config DRM_MSM_REGISTER_LOGGING
 	  Compile in support for logging register reads/writes in a format
 	  that can be parsed by envytools demsm tool.  If enabled, register
 	  logging can be switched on via msm.reglog=y module param.
+
+config DRM_MSM_HDMI_HDCP
+	bool "Enable HDMI HDCP support in MSM DRM driver"
+	depends on DRM_MSM && QCOM_SCM
+	default n
+	help
+	  Compile in support for logging register reads/writes in a format
+	  that can be parsed by envytools demsm tool.  If enabled, register
+	  logging can be switched on via msm.reglog=y module param.
+
+config DRM_MSM_HDMI
+	bool "Enable HDMI support in MSM DRM driver"
+	depends on DRM_MSM
+	depends on COMMON_CLK
+	default n
+	help
+	  Compile in support for HDMI driver in msm drm
+	  driver. HDMI external display support is enabled
+	  through this config option. It can be primary or
+	  secondary display on device.
 
 config DRM_MSM_DSI
 	bool "Enable DSI support in MSM DRM driver"
@@ -66,6 +91,24 @@ config DRM_MSM_DSI_20NM_PHY
 	help
 	  Choose this option if the 20nm DSI PHY is used on the platform.
 
+config DRM_MSM_DSI_28NM_8960_PHY
+	bool "Enable DSI 28nm 8960 PHY driver in MSM DRM"
+	depends on DRM_MSM_DSI
+	default y
+	help
+	  Choose this option if the 28nm DSI PHY 8960 variant is used on the
+	  platform.
+
+config DRM_MSM_MDP5
+	tristate "MSM MDP5 DRM driver"
+	depends on DRM_MSM
+	default n
+	help
+	  Choose this option if MSM MDP5 revision support is
+	  needed in DRM/KMS. This is not required if sde/mdp4
+	  only target enabled. MDP5 supports DSI and HDMI
+	  displays.
+
 config DRM_MSM_MDP4
 	tristate "MSM MDP4 DRM driver"
 	depends on DRM_MSM
@@ -87,9 +130,22 @@ config DRM_SDE_WB
 	help
 	  Choose this option for writeback connector support.
 
-config DRM_SDE_HDMI
-	bool "Enable new HDMI driver support in DRM SDE driver"
+config DRM_SDE_EVTLOG_DEBUG
+	bool "Enable event logging in MSM DRM"
 	depends on DRM_MSM
-	default y
 	help
-	  Choose this option if HDMI connector support is needed in SDE driver.
+          The SDE DRM debugging provides support to enable display debugging
+          features to: dump SDE registers during driver errors, panic
+          driver during fatal errors and enable some display-driver logging
+          into an internal buffer (this avoids logging overhead).
+
+config DRM_SDE_RSC
+	bool "Enable sde resource state coordinator(rsc) driver"
+	depends on DRM_MSM
+	help
+          The SDE DRM RSC provides display Resource State Coordinator support
+          to vote the ab/ib bandwidth for primary display. Each rsc client
+          can vote their active state. Any active request from any client
+          avoids the display core power collapse. A client can also register
+          for display core power collapse events on rsc.
+

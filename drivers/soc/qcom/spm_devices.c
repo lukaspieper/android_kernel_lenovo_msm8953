@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -33,10 +33,6 @@
 #define EVENT_SYNC_BIT 24
 #define ISAR_BIT 3
 #define SPM_EN_BIT 0
-#define PWR_STATE_IDX_BITS 20
-#define PWR_STATE_IDX_MASK 0x07
-#define WAKE_CONFIG_BITS 1
-#define WAKE_CONFIG_MASK 0x03
 
 struct msm_spm_power_modes {
 	uint32_t mode;
@@ -190,7 +186,7 @@ static void msm_spm_config_q2s(struct msm_spm_device *dev, unsigned int mode)
 
 	val = spm_legacy_mode << 2 | qchannel_ignore << 1;
 	__raw_writel(val, dev->q2s_reg);
-	mb();
+	mb(); /* Ensure flush */
 }
 
 static void msm_spm_config_hw_flush(struct msm_spm_device *dev,
@@ -349,7 +345,7 @@ int msm_spm_turn_on_cpu_rail(struct device_node *vctl_node,
 		 * bit[2] = spm_legacy_mode = 0
 		 */
 		writel_relaxed(0x2, base);
-		mb();
+		mb(); /* Ensure flush */
 		iounmap(base);
 	}
 
@@ -363,13 +359,13 @@ int msm_spm_turn_on_cpu_rail(struct device_node *vctl_node,
 	/* Set the CPU supply regulator voltage */
 	val = (val & 0xFF);
 	writel_relaxed(val, base + vctl_offset);
-	mb();
+	mb(); /* Ensure flush */
 	udelay(timeout);
 
 	/* Enable the CPU supply regulator*/
 	val = 0x30080;
 	writel_relaxed(val, base + vctl_offset);
-	mb();
+	mb(); /* Ensure flush */
 	udelay(timeout);
 
 	iounmap(base);
@@ -381,6 +377,7 @@ EXPORT_SYMBOL(msm_spm_turn_on_cpu_rail);
 void msm_spm_reinit(void)
 {
 	unsigned int cpu;
+
 	for_each_possible_cpu(cpu)
 		msm_spm_drv_reinit(
 			&per_cpu(msm_cpu_spm_device.reg_data, cpu), true);
@@ -394,7 +391,7 @@ EXPORT_SYMBOL(msm_spm_reinit);
  */
 bool msm_spm_is_mode_avail(unsigned int mode)
 {
-	struct msm_spm_device *dev = &__get_cpu_var(msm_cpu_spm_device);
+	struct msm_spm_device *dev = this_cpu_ptr(&msm_cpu_spm_device);
 	int i;
 
 	for (i = 0; i < dev->num_modes; i++) {
@@ -542,14 +539,15 @@ EXPORT_SYMBOL(msm_spm_avs_clear_irq);
  */
 int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm)
 {
-	struct msm_spm_device *dev = &__get_cpu_var(msm_cpu_spm_device);
+	struct msm_spm_device *dev = this_cpu_ptr(&msm_cpu_spm_device);
+
 	return msm_spm_dev_set_low_power_mode(dev, mode, notify_rpm, true);
 }
 EXPORT_SYMBOL(msm_spm_set_low_power_mode);
 
 void msm_spm_set_rpm_hs(bool allow_rpm_hs)
 {
-	struct msm_spm_device *dev = &__get_cpu_var(msm_cpu_spm_device);
+	struct msm_spm_device *dev = this_cpu_ptr(&msm_cpu_spm_device);
 
 	dev->allow_rpm_hs = allow_rpm_hs;
 }
@@ -571,10 +569,12 @@ int __init msm_spm_init(struct msm_spm_platform_data *data, int nr_devs)
 	unsigned int cpu;
 	int ret = 0;
 
-	BUG_ON((nr_devs < num_possible_cpus()) || !data);
+	if ((nr_devs < num_possible_cpus()) || !data)
+		return -EINVAL;
 
 	for_each_possible_cpu(cpu) {
 		struct msm_spm_device *dev = &per_cpu(msm_cpu_spm_device, cpu);
+
 		ret = msm_spm_dev_init(dev, &data[cpu]);
 		if (ret < 0) {
 			pr_warn("%s():failed CPU:%u ret:%d\n", __func__,
@@ -689,7 +689,7 @@ static struct msm_spm_device *msm_spm_get_device(struct platform_device *pdev)
 
 static void get_cpumask(struct device_node *node, struct cpumask *mask)
 {
-	unsigned c;
+	unsigned int c;
 	int idx = 0;
 	struct device_node *cpu_node;
 	char *key = "qcom,cpu-vctl-list";
@@ -882,7 +882,6 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 	for_each_child_of_node(node, n) {
 		const char *name;
 		bool bit_set;
-		u8 field_val;
 		int sync;
 
 		if (!n->name)
@@ -894,7 +893,7 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 
 		for (i = 0; i < ARRAY_SIZE(mode_of_data); i++)
 			if (!strcmp(name, mode_of_data[i].key))
-					break;
+				break;
 
 		if (i == ARRAY_SIZE(mode_of_data)) {
 			pr_err("Mode name invalid %s\n", name);
@@ -923,16 +922,6 @@ static int msm_spm_dev_probe(struct platform_device *pdev)
 
 		bit_set = of_property_read_bool(n, "qcom,spm_en");
 		modes[mode_count].ctl |= bit_set ? BIT(SPM_EN_BIT) : 0;
-
-		ret  = of_property_read_u8(n, "qcom,pwr-state-idx", &field_val);
-		if (!ret)
-			modes[mode_count].ctl |= (field_val &
-				PWR_STATE_IDX_MASK) << PWR_STATE_IDX_BITS;
-
-		ret = of_property_read_u8(n, "qcom,wake-config", &field_val);
-		if (!ret)
-			modes[mode_count].ctl |= (field_val & WAKE_CONFIG_MASK)
-				<< WAKE_CONFIG_BITS;
 
 		ret = of_property_read_u32(n, "qcom,event_sync", &sync);
 		if (!ret)
@@ -987,11 +976,12 @@ fail:
 static int msm_spm_dev_remove(struct platform_device *pdev)
 {
 	struct msm_spm_device *dev = platform_get_drvdata(pdev);
+
 	list_del(&dev->list);
 	return 0;
 }
 
-static struct of_device_id msm_spm_match_table[] = {
+static const struct of_device_id msm_spm_match_table[] = {
 	{.compatible = "qcom,spm-v2"},
 	{},
 };
@@ -1012,6 +1002,7 @@ static struct platform_driver msm_spm_device_driver = {
 int __init msm_spm_device_init(void)
 {
 	static bool registered;
+
 	if (registered)
 		return 0;
 	registered = true;

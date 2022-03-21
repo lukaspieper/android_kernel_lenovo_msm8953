@@ -23,6 +23,7 @@ Required Properties:
 - compatible: "qcom,iris_fm"
 
 Example:
-	qcom,iris-fm {
-		compatible = "qcom,iris_fm";
-	};
+        qcom,iris-fm {
+                compatible = "qcom,iris_fm";
+        };
+

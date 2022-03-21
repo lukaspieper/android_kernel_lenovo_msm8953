@@ -52,6 +52,7 @@ static inline void decode_ctrl_reg(u32 reg,
 #define ARM_DEBUG_ARCH_V7_MM	4
 #define ARM_DEBUG_ARCH_V7_1	5
 #define ARM_DEBUG_ARCH_V8	6
+#define ARM_DEBUG_ARCH_V8_8	8
 
 /* Breakpoint */
 #define ARM_BREAKPOINT_EXECUTE	0
@@ -114,7 +115,6 @@ struct notifier_block;
 struct perf_event;
 struct pmu;
 
-extern struct pmu perf_ops_bp;
 extern int arch_bp_generic_fields(struct arch_hw_breakpoint_ctrl ctrl,
 				  int *gen_len, int *gen_type);
 extern int arch_check_bp_in_kernelspace(struct perf_event *bp);

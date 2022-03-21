@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -34,6 +34,9 @@ struct ipa_api_controller {
 
 	int (*ipa_cfg_ep_nat)(u32 clnt_hdl,
 		const struct ipa_ep_cfg_nat *ipa_ep_cfg);
+
+	int (*ipa_cfg_ep_conn_track)(u32 clnt_hdl,
+		const struct ipa_ep_cfg_conn_track *ipa_ep_cfg);
 
 	int (*ipa_cfg_ep_hdr)(u32 clnt_hdl,
 		const struct ipa_ep_cfg_hdr *ipa_ep_cfg);
@@ -121,13 +124,29 @@ struct ipa_api_controller {
 
 	int (*ipa_reset_flt)(enum ipa_ip_type ip, bool user_only);
 
-	int (*allocate_nat_device)(struct ipa_ioc_nat_alloc_mem *mem);
+	int (*ipa_allocate_nat_device)(struct ipa_ioc_nat_alloc_mem *mem);
+
+	int (*ipa_allocate_nat_table)(
+		struct ipa_ioc_nat_ipv6ct_table_alloc *table_alloc);
+
+	int (*ipa_allocate_ipv6ct_table)(
+		struct ipa_ioc_nat_ipv6ct_table_alloc *table_alloc);
 
 	int (*ipa_nat_init_cmd)(struct ipa_ioc_v4_nat_init *init);
 
+	int (*ipa_ipv6ct_init_cmd)(struct ipa_ioc_ipv6ct_init *init);
+
 	int (*ipa_nat_dma_cmd)(struct ipa_ioc_nat_dma_cmd *dma);
 
+	int (*ipa_table_dma_cmd)(struct ipa_ioc_nat_dma_cmd *dma);
+
 	int (*ipa_nat_del_cmd)(struct ipa_ioc_v4_nat_del *del);
+
+	int (*ipa_del_nat_table)(struct ipa_ioc_nat_ipv6ct_table_del *del);
+
+	int (*ipa_del_ipv6ct_table)(struct ipa_ioc_nat_ipv6ct_table_del *del);
+
+	int (*ipa_nat_mdfy_pdn)(struct ipa_ioc_nat_pdn_entry *mdfy_pdn);
 
 	int (*ipa_send_msg)(struct ipa_msg_meta *meta, void *buff,
 		ipa_msg_free_fn callback);
@@ -192,6 +211,9 @@ struct ipa_api_controller {
 	int (*ipa_get_wdi_stats)(struct IpaHwStatsWDIInfoData_t *stats);
 
 	u16 (*ipa_get_smem_restr_bytes)(void);
+
+	int (*ipa_broadcast_wdi_quota_reach_ind)(uint32_t fid,
+		uint64_t num_bytes);
 
 	int (*ipa_uc_wdi_get_dbpa)(struct ipa_wdi_db_params *out);
 
@@ -372,15 +394,16 @@ struct ipa_api_controller {
 
 	void *(*ipa_get_ipc_logbuf_low)(void);
 
+	int (*ipa_rx_poll)(u32 clnt_hdl, int budget);
+
+	void (*ipa_recycle_wan_skb)(struct sk_buff *skb);
+
 	int (*ipa_setup_uc_ntn_pipes)(struct ipa_ntn_conn_in_params *in,
 		ipa_notify_cb notify, void *priv, u8 hdr_len,
 		struct ipa_ntn_conn_out_params *);
 
 	int (*ipa_tear_down_uc_offload_pipes)(int ipa_ep_idx_ul,
-		int ipa_ep_idx_dl);
-
-	int (*ipa_tz_unlock_reg)(struct ipa_tz_unlock_reg_info *reg_info,
-		u16 num_regs);
+		int ipa_ep_idx_dl, struct ipa_ntn_conn_in_params *params);
 
 	struct device *(*ipa_get_pdev)(void);
 
@@ -389,25 +412,45 @@ struct ipa_api_controller {
 
 	void (*ipa_ntn_uc_dereg_rdyCB)(void);
 
-	int (*ipa_conn_wdi3_pipes)(struct ipa_wdi3_conn_in_params *in,
-		struct ipa_wdi3_conn_out_params *out);
+	int (*ipa_conn_wdi_pipes)(struct ipa_wdi_conn_in_params *in,
+		struct ipa_wdi_conn_out_params *out,
+		ipa_wdi_meter_notifier_cb wdi_notify);
 
-	int (*ipa_disconn_wdi3_pipes)(int ipa_ep_idx_tx,
+	int (*ipa_disconn_wdi_pipes)(int ipa_ep_idx_tx,
 		int ipa_ep_idx_rx);
 
-	int (*ipa_enable_wdi3_pipes)(int ipa_ep_idx_tx,
+	int (*ipa_enable_wdi_pipes)(int ipa_ep_idx_tx,
 		int ipa_ep_idx_rx);
 
-	int (*ipa_disable_wdi3_pipes)(int ipa_ep_idx_tx,
+	int (*ipa_disable_wdi_pipes)(int ipa_ep_idx_tx,
 		int ipa_ep_idx_rx);
+
+	int (*ipa_tz_unlock_reg)(struct ipa_tz_unlock_reg_info *reg_info,
+		u16 num_regs);
+
+	int (*ipa_get_smmu_params)(struct ipa_smmu_in_params *in,
+		struct ipa_smmu_out_params *out);
+	int (*ipa_is_vlan_mode)(enum ipa_vlan_ifaces iface, bool *res);
+
+	bool (*ipa_pm_is_used)(void);
+
+	bool (*ipa_get_lan_rx_napi)(void);
+
+	void (*ipa_register_client_callback)(
+		int (*client_cb)(bool is_lock),
+		bool (*teth_port_state)(void), enum ipa_client_type client);
+
+	void (*ipa_deregister_client_callback)(enum ipa_client_type client);
 };
 
 #ifdef CONFIG_IPA
 int ipa_plat_drv_probe(struct platform_device *pdev_p,
-	struct ipa_api_controller *api_ctrl, struct of_device_id *pdrv_match);
+	struct ipa_api_controller *api_ctrl,
+	const struct of_device_id *pdrv_match);
 #else
 static inline int ipa_plat_drv_probe(struct platform_device *pdev_p,
-	struct ipa_api_controller *api_ctrl, struct of_device_id *pdrv_match)
+	struct ipa_api_controller *api_ctrl,
+	const struct of_device_id *pdrv_match)
 {
 	return -ENODEV;
 }
@@ -415,10 +458,23 @@ static inline int ipa_plat_drv_probe(struct platform_device *pdev_p,
 
 #ifdef CONFIG_IPA3
 int ipa3_plat_drv_probe(struct platform_device *pdev_p,
-	struct ipa_api_controller *api_ctrl, struct of_device_id *pdrv_match);
+	struct ipa_api_controller *api_ctrl,
+	const struct of_device_id *pdrv_match);
+int ipa3_pci_drv_probe(
+	struct pci_dev            *pci_dev,
+	struct ipa_api_controller *api_ctrl,
+	const struct of_device_id *pdrv_match);
 #else
 static inline int ipa3_plat_drv_probe(struct platform_device *pdev_p,
-	struct ipa_api_controller *api_ctrl, struct of_device_id *pdrv_match)
+	struct ipa_api_controller *api_ctrl,
+	const struct of_device_id *pdrv_match)
+{
+	return -ENODEV;
+}
+static inline int ipa3_pci_drv_probe(
+	struct pci_dev            *pci_dev,
+	struct ipa_api_controller *api_ctrl,
+	const struct of_device_id *pdrv_match)
 {
 	return -ENODEV;
 }

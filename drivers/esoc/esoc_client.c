@@ -21,6 +21,7 @@ static ATOMIC_NOTIFIER_HEAD(client_notify);
 static void devm_esoc_desc_release(struct device *dev, void *res)
 {
 	struct esoc_desc *esoc_desc = res;
+
 	kfree(esoc_desc->name);
 	kfree(esoc_desc->link);
 	put_esoc_clink(esoc_desc->priv);

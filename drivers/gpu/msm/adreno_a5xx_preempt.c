@@ -44,7 +44,7 @@ static void _update_wptr(struct adreno_device *adreno_dev, bool reset_timer)
 
 	if (reset_timer)
 		rb->dispatch_q.expires = jiffies +
-			msecs_to_jiffies(adreno_cmdbatch_timeout);
+			msecs_to_jiffies(adreno_drawobj_timeout);
 
 	spin_unlock_irqrestore(&rb->preempt_lock, flags);
 }
@@ -88,7 +88,7 @@ static void _a5xx_preemption_done(struct adreno_device *adreno_dev)
 
 	del_timer_sync(&adreno_dev->preempt.timer);
 
-	trace_adreno_preempt_done(adreno_dev->cur_rb, adreno_dev->next_rb);
+	trace_adreno_preempt_done(adreno_dev->cur_rb, adreno_dev->next_rb, 0);
 
 	/* Clean up all the bits */
 	adreno_dev->prev_rb = adreno_dev->cur_rb;
@@ -239,7 +239,12 @@ void a5xx_preemption_trigger(struct adreno_device *adreno_dev)
 
 	spin_lock_irqsave(&next->preempt_lock, flags);
 
-	/* Get the pagetable from the pagetable info */
+	/*
+	 * Get the pagetable from the pagetable info.
+	 * The pagetable_desc is allocated and mapped at probe time, and
+	 * preemption_desc at init time, so no need to check if
+	 * sharedmem accesses to these memdescs succeed.
+	 */
 	kgsl_sharedmem_readq(&next->pagetable_desc, &ttbr0,
 		PT_INFO_OFFSET(ttbr0));
 	kgsl_sharedmem_readl(&next->pagetable_desc, &contextidr,
@@ -267,7 +272,8 @@ void a5xx_preemption_trigger(struct adreno_device *adreno_dev)
 	mod_timer(&adreno_dev->preempt.timer,
 		jiffies + msecs_to_jiffies(ADRENO_PREEMPT_TIMEOUT));
 
-	trace_adreno_preempt_trigger(adreno_dev->cur_rb, adreno_dev->next_rb);
+	trace_adreno_preempt_trigger(adreno_dev->cur_rb, adreno_dev->next_rb,
+		1);
 
 	adreno_set_preempt_state(adreno_dev, ADRENO_PREEMPT_TRIGGERED);
 
@@ -302,8 +308,7 @@ void a5xx_preempt_callback(struct adreno_device *adreno_dev, int bit)
 
 	del_timer(&adreno_dev->preempt.timer);
 
-	trace_adreno_preempt_done(adreno_dev->cur_rb,
-		adreno_dev->next_rb);
+	trace_adreno_preempt_done(adreno_dev->cur_rb, adreno_dev->next_rb, 0);
 
 	adreno_dev->prev_rb = adreno_dev->cur_rb;
 	adreno_dev->cur_rb = adreno_dev->next_rb;
@@ -462,6 +467,7 @@ void a5xx_preemption_start(struct adreno_device *adreno_dev)
 	/* Force the state to be clear */
 	adreno_set_preempt_state(adreno_dev, ADRENO_PREEMPT_NONE);
 
+	/* smmu_info is allocated and mapped in a5xx_preemption_iommu_init */
 	kgsl_sharedmem_writel(device, &iommu->smmu_info,
 		PREEMPT_SMMU_RECORD(magic), A5XX_CP_SMMU_INFO_MAGIC_REF);
 	kgsl_sharedmem_writeq(device, &iommu->smmu_info,
@@ -480,6 +486,10 @@ void a5xx_preemption_start(struct adreno_device *adreno_dev)
 			iommu->smmu_info.gpuaddr);
 
 	FOR_EACH_RINGBUFFER(adreno_dev, rb, i) {
+		/*
+		 * preemption_desc is allocated and mapped at init time,
+		 * so no need to check sharedmem_writel return value
+		 */
 		kgsl_sharedmem_writel(device, &rb->preemption_desc,
 			PREEMPT_RECORD(rptr), 0);
 		kgsl_sharedmem_writel(device, &rb->preemption_desc,
@@ -526,7 +536,7 @@ static int a5xx_preemption_ringbuffer_init(struct adreno_device *adreno_dev,
 	return 0;
 }
 
-#ifdef CONFIG_MSM_KGSL_IOMMU
+#ifdef CONFIG_QCOM_KGSL_IOMMU
 static int a5xx_preemption_iommu_init(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);

@@ -362,22 +362,32 @@ int paste_selection(struct tty_struct *tty)
 	unsigned int count;
 	struct  tty_ldisc *ld;
 	DECLARE_WAITQUEUE(wait, current);
+	int ret = 0;
 
 	console_lock();
 	poke_blanked_console();
 	console_unlock();
 
 	ld = tty_ldisc_ref_wait(tty);
+	if (!ld)
+		return -EIO;	/* ldisc was hung up */
 	tty_buffer_lock_exclusive(&vc->port);
 
 	add_wait_queue(&vc->paste_wait, &wait);
 	mutex_lock(&sel_lock);
 	while (sel_buffer && sel_buffer_lth > pasted) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (test_bit(TTY_THROTTLED, &tty->flags)) {
+		if (signal_pending(current)) {
+			ret = -EINTR;
+			break;
+		}
+		if (tty_throttled(tty)) {
+			mutex_unlock(&sel_lock);
 			schedule();
+			mutex_lock(&sel_lock);
 			continue;
 		}
+		__set_current_state(TASK_RUNNING);
 		count = sel_buffer_lth - pasted;
 		count = tty_ldisc_receive_buf(ld, sel_buffer + pasted, NULL,
 					      count);
@@ -389,5 +399,5 @@ int paste_selection(struct tty_struct *tty)
 
 	tty_buffer_unlock_exclusive(&vc->port);
 	tty_ldisc_deref(ld);
-	return 0;
+	return ret;
 }

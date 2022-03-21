@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -123,6 +123,8 @@ enum cnss_runtime_request {
 	CNSS_PM_GET_NORESUME,
 };
 
+extern struct dma_iommu_mapping *cnss_smmu_get_mapping(void);
+extern int cnss_smmu_map(phys_addr_t paddr, uint32_t *iova_addr, size_t size);
 extern int cnss_get_fw_image(struct image_desc_info *image_desc_info);
 extern void cnss_runtime_init(struct device *dev, int auto_delay);
 extern void cnss_runtime_exit(struct device *dev);
@@ -202,13 +204,6 @@ enum {
 	CNSS_RESET_SUBSYS_COUPLED,
 	CNSS_RESET_LEVEL_MAX
 };
-
-enum cnss_sleep_power_mode {
-	CNSS_SLEEP_POWER_MODE_NONE,
-	CNSS_SLEEP_POWER_MODE_RESET,
-	CNSS_SLEEP_POWER_MODE_CUT_PWR,
-};
-
 extern int cnss_get_restart_level(void);
 
 struct cnss_sdio_wlan_driver {
@@ -273,6 +268,4 @@ extern int cnss_common_register_tsf_captured_handler(struct device *dev,
 						     void *ctx);
 extern int cnss_common_unregister_tsf_captured_handler(struct device *dev,
 						       void *ctx);
-extern int cnss_common_set_sleep_power_mode(struct device *dev,
-					    enum cnss_sleep_power_mode mode);
 #endif /* _NET_CNSS_H_ */

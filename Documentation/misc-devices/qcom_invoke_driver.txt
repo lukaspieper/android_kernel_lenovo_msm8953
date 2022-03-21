@@ -52,5 +52,3 @@ TBD
 Dependencies
 ============
 Invoke driver depends on SCM driver to communicate with TZ.
-
-

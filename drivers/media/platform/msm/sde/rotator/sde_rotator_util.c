@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,6 +35,7 @@
 
 #include "sde_rotator_util.h"
 #include "sde_rotator_smmu.h"
+#include "sde_rotator_debug.h"
 
 #define Y_TILEWIDTH     48
 #define Y_TILEHEIGHT    4
@@ -179,22 +180,27 @@ int sde_mdp_get_rau_strides(u32 w, u32 h,
 	return 0;
 }
 
-static int sde_mdp_get_ubwc_plane_size(struct sde_mdp_format_params *fmt,
+static int sde_mdp_get_a5x_plane_size(struct sde_mdp_format_params *fmt,
 	u32 width, u32 height, struct sde_mdp_plane_sizes *ps)
 {
 	int rc = 0;
 
-	if (fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_UBWC) {
-		ps->num_planes = 4;
+	if (sde_mdp_is_nv12_8b_format(fmt)) {
+		ps->num_planes = 2;
 		/* Y bitstream stride and plane size */
 		ps->ystride[0] = ALIGN(width, 128);
 		ps->plane_size[0] = ALIGN(ps->ystride[0] * ALIGN(height, 32),
 					4096);
 
 		/* CbCr bitstream stride and plane size */
-		ps->ystride[1] = ALIGN(width, 64);
+		ps->ystride[1] = ALIGN(width, 128);
 		ps->plane_size[1] = ALIGN(ps->ystride[1] *
 			ALIGN(height / 2, 32), 4096);
+
+		if (!sde_mdp_is_ubwc_format(fmt))
+			goto done;
+
+		ps->num_planes += 2;
 
 		/* Y meta data stride and plane size */
 		ps->ystride[2] = ALIGN(DIV_ROUND_UP(width, 32), 64);
@@ -205,13 +211,39 @@ static int sde_mdp_get_ubwc_plane_size(struct sde_mdp_format_params *fmt,
 		ps->ystride[3] = ALIGN(DIV_ROUND_UP(width / 2, 16), 64);
 		ps->plane_size[3] = ALIGN(ps->ystride[3] *
 			ALIGN(DIV_ROUND_UP(height / 2, 8), 16), 4096);
-	} else if (fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_TP10_UBWC) {
+	} else if (sde_mdp_is_p010_format(fmt)) {
+		ps->num_planes = 2;
+		/* Y bitstream stride and plane size */
+		ps->ystride[0] = ALIGN(width * 2, 256);
+		ps->plane_size[0] = ALIGN(ps->ystride[0] * ALIGN(height, 16),
+					4096);
+
+		/* CbCr bitstream stride and plane size */
+		ps->ystride[1] = ALIGN(width * 2, 256);
+		ps->plane_size[1] = ALIGN(ps->ystride[1] *
+			ALIGN(height / 2, 16), 4096);
+
+		if (!sde_mdp_is_ubwc_format(fmt))
+			goto done;
+
+		ps->num_planes += 2;
+
+		/* Y meta data stride and plane size */
+		ps->ystride[2] = ALIGN(DIV_ROUND_UP(width, 32), 64);
+		ps->plane_size[2] = ALIGN(ps->ystride[2] *
+			ALIGN(DIV_ROUND_UP(height, 4), 16), 4096);
+
+		/* CbCr meta data stride and plane size */
+		ps->ystride[3] = ALIGN(DIV_ROUND_UP(width / 2, 16), 64);
+		ps->plane_size[3] = ALIGN(ps->ystride[3] *
+			ALIGN(DIV_ROUND_UP(height / 2, 4), 16), 4096);
+	} else if (sde_mdp_is_tp10_format(fmt)) {
 		u32 yWidth   = sde_mdp_general_align(width, 192);
 		u32 yHeight  = ALIGN(height, 16);
 		u32 uvWidth  = sde_mdp_general_align(width, 192);
 		u32 uvHeight = ALIGN(height, 32);
 
-		ps->num_planes = 4;
+		ps->num_planes = 2;
 
 		/* Y bitstream stride and plane size */
 		ps->ystride[0]    = yWidth * TILEWIDTH_SIZE / Y_TILEWIDTH;
@@ -225,6 +257,11 @@ static int sde_mdp_get_ubwc_plane_size(struct sde_mdp_format_params *fmt,
 				(uvHeight * TILEHEIGHT_SIZE / UV_TILEHEIGHT),
 				4096);
 
+		if (!sde_mdp_is_ubwc_format(fmt))
+			goto done;
+
+		ps->num_planes += 2;
+
 		/* Y meta data stride and plane size */
 		ps->ystride[2]    = ALIGN(yWidth / Y_TILEWIDTH, 64);
 		ps->plane_size[2] = ALIGN(ps->ystride[2] *
@@ -234,11 +271,7 @@ static int sde_mdp_get_ubwc_plane_size(struct sde_mdp_format_params *fmt,
 		ps->ystride[3]    = ALIGN(uvWidth / UV_TILEWIDTH, 64);
 		ps->plane_size[3] = ALIGN(ps->ystride[3] *
 				ALIGN((uvHeight / UV_TILEHEIGHT), 16), 4096);
-	} else if (fmt->format == SDE_PIX_FMT_RGBA_8888_UBWC ||
-		fmt->format == SDE_PIX_FMT_RGBX_8888_UBWC    ||
-		fmt->format == SDE_PIX_FMT_RGBA_1010102_UBWC ||
-		fmt->format == SDE_PIX_FMT_RGBX_1010102_UBWC ||
-		fmt->format == SDE_PIX_FMT_RGB_565_UBWC) {
+	} else if (sde_mdp_is_rgb_format(fmt)) {
 		uint32_t stride_alignment, bpp, aligned_bitstream_width;
 
 		if (fmt->format == SDE_PIX_FMT_RGB_565_UBWC) {
@@ -248,13 +281,19 @@ static int sde_mdp_get_ubwc_plane_size(struct sde_mdp_format_params *fmt,
 			stride_alignment = 64;
 			bpp = 4;
 		}
-		ps->num_planes = 2;
+
+		ps->num_planes = 1;
 
 		/* RGB bitstream stride and plane size */
 		aligned_bitstream_width = ALIGN(width, stride_alignment);
 		ps->ystride[0] = aligned_bitstream_width * bpp;
 		ps->plane_size[0] = ALIGN(bpp * aligned_bitstream_width *
 			ALIGN(height, 16), 4096);
+
+		if (!sde_mdp_is_ubwc_format(fmt))
+			goto done;
+
+		ps->num_planes += 1;
 
 		/* RGB meta data stride and plane size */
 		ps->ystride[2] = ALIGN(DIV_ROUND_UP(aligned_bitstream_width,
@@ -266,7 +305,7 @@ static int sde_mdp_get_ubwc_plane_size(struct sde_mdp_format_params *fmt,
 			__func__, fmt->format);
 		rc = -EINVAL;
 	}
-
+done:
 	return rc;
 }
 
@@ -285,8 +324,8 @@ int sde_mdp_get_plane_sizes(struct sde_mdp_format_params *fmt, u32 w, u32 h,
 	bpp = fmt->bpp;
 	memset(ps, 0, sizeof(struct sde_mdp_plane_sizes));
 
-	if (sde_mdp_is_ubwc_format(fmt)) {
-		rc = sde_mdp_get_ubwc_plane_size(fmt, w, h, ps);
+	if (sde_mdp_is_tilea5x_format(fmt)) {
+		rc = sde_mdp_get_a5x_plane_size(fmt, w, h, ps);
 	} else if (bwc_mode) {
 		u32 height, meta_size;
 
@@ -311,10 +350,27 @@ int sde_mdp_get_plane_sizes(struct sde_mdp_format_params *fmt, u32 w, u32 h,
 			ps->plane_size[0] = w * h * bpp;
 			ps->ystride[0] = w * bpp;
 		} else if (fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_VENUS ||
-				fmt->format == SDE_PIX_FMT_Y_CRCB_H2V2_VENUS) {
+			fmt->format == SDE_PIX_FMT_Y_CRCB_H2V2_VENUS ||
+			fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_P010_VENUS) {
 
-			int cf = (fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_VENUS)
-					? COLOR_FMT_NV12 : COLOR_FMT_NV21;
+			int cf;
+
+			switch (fmt->format) {
+			case SDE_PIX_FMT_Y_CBCR_H2V2_VENUS:
+				cf = COLOR_FMT_NV12;
+				break;
+			case SDE_PIX_FMT_Y_CRCB_H2V2_VENUS:
+				cf = COLOR_FMT_NV21;
+				break;
+			case SDE_PIX_FMT_Y_CBCR_H2V2_P010_VENUS:
+				cf = COLOR_FMT_P010;
+				break;
+			default:
+				SDEROT_ERR("unknown color format %d\n",
+						fmt->format);
+				return -EINVAL;
+			}
+
 			ps->num_planes = 2;
 			ps->ystride[0] = VENUS_Y_STRIDE(cf, w);
 			ps->ystride[1] = VENUS_UV_STRIDE(cf, w);
@@ -355,13 +411,6 @@ int sde_mdp_get_plane_sizes(struct sde_mdp_format_params *fmt, u32 w, u32 h,
 
 			chroma_samp = fmt->chroma_sample;
 
-			if (rotation) {
-				if (chroma_samp == SDE_MDP_CHROMA_H2V1)
-					chroma_samp = SDE_MDP_CHROMA_H1V2;
-				else if (chroma_samp == SDE_MDP_CHROMA_H1V2)
-					chroma_samp = SDE_MDP_CHROMA_H2V1;
-			}
-
 			sde_mdp_get_v_h_subsample_rate(chroma_samp,
 				&v_subsample, &h_subsample);
 
@@ -401,7 +450,7 @@ int sde_mdp_get_plane_sizes(struct sde_mdp_format_params *fmt, u32 w, u32 h,
 	return rc;
 }
 
-static int sde_mdp_ubwc_data_check(struct sde_mdp_data *data,
+static int sde_mdp_a5x_data_check(struct sde_mdp_data *data,
 			struct sde_mdp_plane_sizes *ps,
 			struct sde_mdp_format_params *fmt)
 {
@@ -423,8 +472,7 @@ static int sde_mdp_ubwc_data_check(struct sde_mdp_data *data,
 
 	base_addr = data->p[0].addr;
 
-	if ((fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_UBWC) ||
-		(fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_TP10_UBWC)) {
+	if (sde_mdp_is_yuv_format(fmt)) {
 		/************************************************/
 		/*      UBWC            **                      */
 		/*      buffer          **      MDP PLANE       */
@@ -453,6 +501,9 @@ static int sde_mdp_ubwc_data_check(struct sde_mdp_data *data,
 		data->p[1].addr = base_addr + ps->plane_size[0]
 			+ ps->plane_size[2] + ps->plane_size[3];
 		data->p[1].len = ps->plane_size[1];
+
+		if (!sde_mdp_is_ubwc_format(fmt))
+			goto done;
 
 		/* configure Y metadata plane */
 		data->p[2].addr = base_addr;
@@ -484,10 +535,14 @@ static int sde_mdp_ubwc_data_check(struct sde_mdp_data *data,
 		data->p[0].addr = base_addr + ps->plane_size[2];
 		data->p[0].len = ps->plane_size[0];
 
+		if (!sde_mdp_is_ubwc_format(fmt))
+			goto done;
+
 		/* configure RGB metadata plane */
 		data->p[2].addr = base_addr;
 		data->p[2].len = ps->plane_size[2];
 	}
+done:
 	data->num_planes = ps->num_planes;
 
 end:
@@ -497,7 +552,7 @@ end:
 		return -EINVAL;
 	}
 
-	inc = ((fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_UBWC) ? 1 : 2);
+	inc = (sde_mdp_is_yuv_format(fmt) ? 1 : 2);
 	for (i = 0; i < SDE_ROT_MAX_PLANES; i += inc) {
 		if (data->p[i].len != ps->plane_size[i]) {
 			SDEROT_ERR(
@@ -524,8 +579,8 @@ int sde_mdp_data_check(struct sde_mdp_data *data,
 	if (!data || data->num_planes == 0)
 		return -ENOMEM;
 
-	if (sde_mdp_is_ubwc_format(fmt))
-		return sde_mdp_ubwc_data_check(data, ps, fmt);
+	if (sde_mdp_is_tilea5x_format(fmt))
+		return sde_mdp_a5x_data_check(data, ps, fmt);
 
 	SDEROT_DBG("srcp0=%pa len=%lu frame_size=%u\n", &data->p[0].addr,
 		data->p[0].len, ps->total_size);
@@ -581,12 +636,12 @@ int sde_validate_offset_for_ubwc_format(
 	return ret;
 }
 
-/* x and y are assumednt to be valid, expected to line up with start of tiles */
+/* x and y are assumed to be valid, expected to line up with start of tiles */
 void sde_rot_ubwc_data_calc_offset(struct sde_mdp_data *data, u16 x, u16 y,
 	struct sde_mdp_plane_sizes *ps, struct sde_mdp_format_params *fmt)
 {
 	u16 macro_w, micro_w, micro_h;
-	u32 offset;
+	u32 offset = 0;
 	int ret;
 
 	ret = sde_rot_get_ubwc_micro_dim(fmt->format, &micro_w, &micro_h);
@@ -596,7 +651,7 @@ void sde_rot_ubwc_data_calc_offset(struct sde_mdp_data *data, u16 x, u16 y,
 	}
 	macro_w = 4 * micro_w;
 
-	if (fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_UBWC) {
+	if (sde_mdp_is_nv12_8b_format(fmt)) {
 		u16 chroma_macro_w = macro_w / 2;
 		u16 chroma_micro_w = micro_w / 2;
 
@@ -638,9 +693,11 @@ void sde_rot_ubwc_data_calc_offset(struct sde_mdp_data *data, u16 x, u16 y,
 			ret = 4;
 			goto done;
 		}
-	} else if (fmt->format == SDE_PIX_FMT_Y_CBCR_H2V2_TP10_UBWC) {
+	} else if (sde_mdp_is_nv12_10b_format(fmt)) {
 		/* TODO: */
-		SDEROT_ERR("UBWC TP10 format not implemented yet");
+		SDEROT_ERR("%c%c%c%c format not implemented yet",
+				fmt->format >> 0, fmt->format >> 8,
+				fmt->format >> 16, fmt->format >> 24);
 		ret = 1;
 		goto done;
 	} else {
@@ -677,7 +734,7 @@ void sde_rot_data_calc_offset(struct sde_mdp_data *data, u16 x, u16 y,
 	if ((x == 0) && (y == 0))
 		return;
 
-	if (sde_mdp_is_ubwc_format(fmt)) {
+	if (sde_mdp_is_tilea5x_format(fmt)) {
 		sde_rot_ubwc_data_calc_offset(data, x, y, ps, fmt);
 		return;
 	}
@@ -722,6 +779,12 @@ static int sde_mdp_put_img(struct sde_mdp_img_data *data, bool rotator,
 {
 	u32 domain;
 
+	if (data->flags & SDE_ROT_EXT_IOVA) {
+		SDEROT_DBG("buffer %pad/%lx is client mapped\n",
+				&data->addr, data->len);
+		return 0;
+	}
+
 	if (!IS_ERR_OR_NULL(data->srcp_dma_buf)) {
 		SDEROT_DBG("ion hdl=%p buf=0x%pa\n", data->srcp_dma_buf,
 							&data->addr);
@@ -752,6 +815,13 @@ static int sde_mdp_put_img(struct sde_mdp_img_data *data, bool rotator,
 	return 0;
 }
 
+static int sde_mdp_is_map_needed(struct sde_mdp_img_data *data)
+{
+	if (data->flags & SDE_SECURE_CAMERA_SESSION)
+		return false;
+	return true;
+}
+
 static int sde_mdp_get_img(struct sde_fb_data *img,
 		struct sde_mdp_img_data *data, struct device *dev,
 		bool rotator, int dir)
@@ -760,47 +830,98 @@ static int sde_mdp_get_img(struct sde_fb_data *img,
 	unsigned long *len;
 	u32 domain;
 	dma_addr_t *start;
+	struct sde_rot_data_type *mdata = sde_rot_get_mdata();
+	struct ion_client *iclient = mdata->iclient;
 
 	start = &data->addr;
 	len = &data->len;
 	data->flags |= img->flags;
 	data->offset = img->offset;
-	if (data->flags & SDE_ROT_EXT_DMA_BUF)
+	if (data->flags & SDE_ROT_EXT_DMA_BUF) {
 		data->srcp_dma_buf = img->buffer;
-	else if (IS_ERR(data->srcp_dma_buf)) {
+	} else if (data->flags & SDE_ROT_EXT_IOVA) {
+		data->addr = img->addr;
+		data->len = img->len;
+		SDEROT_DBG("use client %pad/%lx\n", &data->addr, data->len);
+		return 0;
+	} else if (IS_ERR(data->srcp_dma_buf)) {
 		SDEROT_ERR("error on ion_import_fd\n");
 		ret = PTR_ERR(data->srcp_dma_buf);
 		data->srcp_dma_buf = NULL;
 		return ret;
 	}
-	domain = sde_smmu_get_domain_type(data->flags, rotator);
 
-	SDEROT_DBG("%d domain=%d ihndl=%p\n",
-			__LINE__, domain, data->srcp_dma_buf);
-	data->srcp_attachment =
-		sde_smmu_dma_buf_attach(data->srcp_dma_buf, dev,
-				domain);
-	if (IS_ERR(data->srcp_attachment)) {
-		SDEROT_ERR("%d Failed to attach dma buf\n", __LINE__);
-		ret = PTR_ERR(data->srcp_attachment);
-		goto err_put;
+	if (sde_mdp_is_map_needed(data)) {
+		domain = sde_smmu_get_domain_type(data->flags, rotator);
+
+		SDEROT_DBG("%d domain=%d ihndl=%p\n",
+				__LINE__, domain, data->srcp_dma_buf);
+		data->srcp_attachment =
+			sde_smmu_dma_buf_attach(data->srcp_dma_buf, dev,
+					domain);
+		if (IS_ERR(data->srcp_attachment)) {
+			SDEROT_ERR("%d Failed to attach dma buf\n", __LINE__);
+			ret = PTR_ERR(data->srcp_attachment);
+			goto err_put;
+		}
+
+		SDEROT_DBG("%d attach=%p\n", __LINE__, data->srcp_attachment);
+		data->srcp_table =
+			dma_buf_map_attachment(data->srcp_attachment, dir);
+		if (IS_ERR(data->srcp_table)) {
+			SDEROT_ERR("%d Failed to map attachment\n", __LINE__);
+			ret = PTR_ERR(data->srcp_table);
+			goto err_detach;
+		}
+
+		SDEROT_DBG("%d table=%p\n", __LINE__, data->srcp_table);
+		data->addr = 0;
+		data->len = 0;
+		data->mapped = false;
+		data->skip_detach = false;
+		/* return early, mapping will be done later */
+	} else {
+		struct ion_handle *ihandle = NULL;
+		struct sg_table *sg_ptr = NULL;
+
+		do {
+			ihandle = img->handle;
+			if (IS_ERR_OR_NULL(ihandle)) {
+				ret = -EINVAL;
+				SDEROT_ERR("invalid ion handle\n");
+				break;
+			}
+
+			sg_ptr = ion_sg_table(iclient, ihandle);
+			if (sg_ptr == NULL) {
+				SDEROT_ERR("ion sg table get failed\n");
+				ret = -EINVAL;
+				break;
+			}
+
+			if (sg_ptr->nents != 1) {
+				SDEROT_ERR("ion buffer mapping failed\n");
+				ret = -EINVAL;
+				break;
+			}
+
+			if (((uint64_t)sg_dma_address(sg_ptr->sgl) >=
+					PHY_ADDR_4G - sg_ptr->sgl->length)) {
+				SDEROT_ERR("ion buffer mapped size invalid\n");
+				ret = -EINVAL;
+				break;
+			}
+
+			data->addr = sg_dma_address(sg_ptr->sgl);
+			data->len = sg_ptr->sgl->length;
+			data->mapped = true;
+			ret = 0;
+		} while (0);
+
+		if (!IS_ERR_OR_NULL(ihandle))
+			ion_free(iclient, ihandle);
+		return ret;
 	}
-
-	SDEROT_DBG("%d attach=%p\n", __LINE__, data->srcp_attachment);
-	data->srcp_table =
-		dma_buf_map_attachment(data->srcp_attachment, dir);
-	if (IS_ERR(data->srcp_table)) {
-		SDEROT_ERR("%d Failed to map attachment\n", __LINE__);
-		ret = PTR_ERR(data->srcp_table);
-		goto err_detach;
-	}
-
-	SDEROT_DBG("%d table=%p\n", __LINE__, data->srcp_table);
-	data->addr = 0;
-	data->len = 0;
-	data->mapped = false;
-	data->skip_detach = false;
-	/* return early, mapping will be done later */
 
 	return 0;
 err_detach:
@@ -818,23 +939,45 @@ static int sde_mdp_map_buffer(struct sde_mdp_img_data *data, bool rotator,
 {
 	int ret = -EINVAL;
 	int domain;
+	struct scatterlist *sg;
+	unsigned int i;
+	struct sg_table *table;
 
 	if (data->addr && data->len)
 		return 0;
 
+	if (data->flags & SDE_ROT_EXT_IOVA) {
+		SDEROT_DBG("buffer %pad/%lx is client mapped\n",
+				&data->addr, data->len);
+		return 0;
+	}
+
 	if (!IS_ERR_OR_NULL(data->srcp_dma_buf)) {
-		domain = sde_smmu_get_domain_type(data->flags,
-				rotator);
-		ret = sde_smmu_map_dma_buf(data->srcp_dma_buf,
-				data->srcp_table, domain,
-				&data->addr, &data->len, dir);
-		if (IS_ERR_VALUE(ret)) {
-			SDEROT_ERR("smmu map dma buf failed: (%d)\n", ret);
-			goto err_unmap;
+		if (sde_mdp_is_map_needed(data)) {
+			domain = sde_smmu_get_domain_type(data->flags,
+					rotator);
+			ret = sde_smmu_map_dma_buf(data->srcp_dma_buf,
+					data->srcp_table, domain,
+					&data->addr, &data->len, dir);
+			if (ret < 0) {
+				SDEROT_ERR("smmu map buf failed:(%d)\n", ret);
+				goto err_unmap;
+			}
+			SDEROT_DBG("map %pad/%lx d:%u f:%x\n",
+					&data->addr,
+					data->len,
+					domain,
+					data->flags);
+			data->mapped = true;
+		} else {
+			data->addr = sg_phys(data->srcp_table->sgl);
+			data->len = 0;
+			table = data->srcp_table;
+			for_each_sg(table->sgl, sg, table->nents, i) {
+				data->len += sg->length;
+			}
+			ret = 0;
 		}
-		SDEROT_DBG("map %pad/%lx d:%u f:%x\n", &data->addr, data->len,
-				domain, data->flags);
-		data->mapped = true;
 	}
 
 	if (!data->addr) {
@@ -913,6 +1056,8 @@ int sde_mdp_data_map(struct sde_mdp_data *data, bool rotator, int dir)
 			break;
 		}
 	}
+	SDEROT_EVTLOG(data->num_planes, dir, data->p[0].addr, data->p[0].len,
+			data->p[0].mapped);
 
 	return rc;
 }

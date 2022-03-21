@@ -79,7 +79,8 @@ union bgcom_event_data_type {
 /* Client specific data */
 struct bgcom_open_config_type {
 	/** Private data pointer for client to maintain context.
-	* This data is passed back to client in the notification callbacks */
+	 * This data is passed back to client in the notification callbacks.
+	 */
 	void		*priv;
 
 	/* Notification callbacks to notify the BG events */
@@ -196,14 +197,14 @@ int bgcom_ahb_write(void *handle, uint32_t ahb_start_addr,
  * bgcom_suspend() - Suspends the channel.
  * @handle: BGCOM handle associated with the channel
  * Return 0 on success or -Ve on error
-*/
+ */
 int bgcom_suspend(void *handle);
 
 /**
  * bgcom_resume() - Resumes the channel.
  * @handle: BGCOM handle associated with the channel
  * Return 0 on success or -Ve on error
-*/
+ */
 int bgcom_resume(void *handle);
 
 int bgcom_set_spi_state(enum bgcom_spi_state state);

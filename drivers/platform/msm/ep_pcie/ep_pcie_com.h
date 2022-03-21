@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -53,6 +53,11 @@
 #define PCIE20_PARF_DBI_BASE_ADDR_HI   0x354
 #define PCIE20_PARF_SLV_ADDR_SPACE_SIZE        0x358
 #define PCIE20_PARF_SLV_ADDR_SPACE_SIZE_HI     0x35C
+#define PCIE20_PARF_ATU_BASE_ADDR      0x634
+#define PCIE20_PARF_ATU_BASE_ADDR_HI   0x638
+#define PCIE20_PARF_BUS_DISCONNECT_CTRL          0x648
+#define PCIE20_PARF_BUS_DISCONNECT_STATUS        0x64c
+
 #define PCIE20_PARF_DEVICE_TYPE        0x1000
 
 #define PCIE20_ELBI_VERSION            0x00
@@ -61,6 +66,8 @@
 #define PCIE20_ELBI_CS2_ENABLE         0xA4
 
 #define PCIE20_DEVICE_ID_VENDOR_ID     0x00
+#define PCIE20_MASK_DEVICE_ID          GENMASK(31, 16)
+#define PCIE20_MASK_VENDOR_ID          GENMASK(15, 0)
 #define PCIE20_COMMAND_STATUS          0x04
 #define PCIE20_CLASS_CODE_REVISION_ID  0x08
 #define PCIE20_BIST_HDR_TYPE           0x0C
@@ -83,8 +90,8 @@
 #define PCIE20_CAP_LINKCTRLSTATUS      0x80
 #define PCIE20_DEVICE_CONTROL2_STATUS2 0x98
 #define PCIE20_LINK_CONTROL2_LINK_STATUS2 0xA0
-#define PCIE20_L1SUB_CAPABILITY        0x154
-#define PCIE20_L1SUB_CONTROL1          0x158
+#define PCIE20_L1SUB_CAPABILITY        0x1E0
+#define PCIE20_L1SUB_CONTROL1          0x1E4
 #define PCIE20_ACK_F_ASPM_CTRL_REG     0x70C
 #define PCIE20_MASK_ACK_N_FTS          0xff00
 #define PCIE20_MISC_CONTROL_1          0x8BC
@@ -97,6 +104,24 @@
 #define PCIE20_PLR_IATU_LAR            0x914
 #define PCIE20_PLR_IATU_LTAR           0x918
 #define PCIE20_PLR_IATU_UTAR           0x91c
+
+#define PCIE20_IATU_BASE(n)            (n * 0x200)
+
+#define PCIE20_IATU_O_CTRL1(n)         (PCIE20_IATU_BASE(n) + 0x00)
+#define PCIE20_IATU_O_CTRL2(n)         (PCIE20_IATU_BASE(n) + 0x04)
+#define PCIE20_IATU_O_LBAR(n)          (PCIE20_IATU_BASE(n) + 0x08)
+#define PCIE20_IATU_O_UBAR(n)          (PCIE20_IATU_BASE(n) + 0x0c)
+#define PCIE20_IATU_O_LAR(n)           (PCIE20_IATU_BASE(n) + 0x10)
+#define PCIE20_IATU_O_LTAR(n)          (PCIE20_IATU_BASE(n) + 0x14)
+#define PCIE20_IATU_O_UTAR(n)          (PCIE20_IATU_BASE(n) + 0x18)
+
+#define PCIE20_IATU_I_CTRL1(n)         (PCIE20_IATU_BASE(n) + 0x100)
+#define PCIE20_IATU_I_CTRL2(n)         (PCIE20_IATU_BASE(n) + 0x104)
+#define PCIE20_IATU_I_LBAR(n)          (PCIE20_IATU_BASE(n) + 0x108)
+#define PCIE20_IATU_I_UBAR(n)          (PCIE20_IATU_BASE(n) + 0x10c)
+#define PCIE20_IATU_I_LAR(n)           (PCIE20_IATU_BASE(n) + 0x110)
+#define PCIE20_IATU_I_LTAR(n)          (PCIE20_IATU_BASE(n) + 0x114)
+#define PCIE20_IATU_I_UTAR(n)          (PCIE20_IATU_BASE(n) + 0x118)
 
 #define PCIE20_MHICFG                  0x110
 #define PCIE20_BHI_EXECENV             0x228
@@ -135,8 +160,9 @@
 
 #define EP_PCIE_LOG_PAGES 50
 #define EP_PCIE_MAX_VREG 2
-#define EP_PCIE_MAX_CLK 6
+#define EP_PCIE_MAX_CLK 7
 #define EP_PCIE_MAX_PIPE_CLK 1
+#define EP_PCIE_MAX_RESET 2
 
 #define EP_PCIE_ERROR -30655
 #define EP_PCIE_LINK_DOWN 0xFFFFFFFF
@@ -207,6 +233,8 @@ enum ep_pcie_res {
 	EP_PCIE_RES_MSI,
 	EP_PCIE_RES_DM_CORE,
 	EP_PCIE_RES_ELBI,
+	EP_PCIE_RES_IATU,
+	EP_PCIE_RES_TCSR_PERST,
 	EP_PCIE_MAX_RES,
 };
 
@@ -254,6 +282,12 @@ struct ep_pcie_clk_info_t {
 	bool        required;
 };
 
+struct ep_pcie_reset_info_t {
+	struct reset_control *hdl;
+	char *name;
+	bool required;
+};
+
 struct ep_pcie_res_info_t {
 	char            *name;
 	struct resource *resource;
@@ -281,6 +315,7 @@ struct ep_pcie_dev_t {
 	struct ep_pcie_gpio_info_t   gpio[EP_PCIE_MAX_GPIO];
 	struct ep_pcie_clk_info_t    clk[EP_PCIE_MAX_CLK];
 	struct ep_pcie_clk_info_t    pipeclk[EP_PCIE_MAX_PIPE_CLK];
+	struct ep_pcie_reset_info_t  reset[EP_PCIE_MAX_RESET];
 	struct ep_pcie_irq_info_t    irq[EP_PCIE_MAX_IRQ];
 	struct ep_pcie_res_info_t    res[EP_PCIE_MAX_RES];
 
@@ -290,10 +325,16 @@ struct ep_pcie_dev_t {
 	void __iomem                 *msi;
 	void __iomem                 *dm_core;
 	void __iomem                 *elbi;
+	void __iomem                 *iatu;
+	void __iomem		     *tcsr_perst_en;
 
 	struct msm_bus_scale_pdata   *bus_scale_table;
 	u32                          bus_client;
-	u32                          link_speed;
+	u16                          vendor_id;
+	u16                          device_id;
+	u32                          subsystem_id;
+	u32                          max_link_speed;
+	u32                          curr_link_speed;
 	bool                         active_config;
 	bool                         aggregated_irq;
 	bool                         mhi_a7_irq;

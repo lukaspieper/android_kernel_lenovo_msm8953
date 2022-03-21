@@ -9,20 +9,25 @@
 #include <linux/dma-debug.h>
 #include <linux/kmemcheck.h>
 #include <linux/kref.h>
+#include <linux/dma-mapping-fast.h>
 
 struct dma_iommu_mapping {
 	/* iommu specific data */
 	struct iommu_domain	*domain;
+	bool			init;
+	struct kref		kref;
+	const struct dma_map_ops *ops;
 
+	/* Protects bitmap */
+	spinlock_t		lock;
 	void			*bitmap;
 	size_t			bits;
 	dma_addr_t		base;
+	u32			min_iova_align;
+	struct page		*guard_page;
+	u32			force_guard_page_len;
 
-	spinlock_t		lock;
-	struct kref		kref;
-#ifdef CONFIG_IOMMU_IO_PGTABLE_FAST
 	struct dma_fast_smmu_mapping *fast;
-#endif
 };
 
 #ifdef CONFIG_ARM64_DMA_USE_IOMMU
@@ -41,7 +46,7 @@ void arm_iommu_detach_device(struct device *dev);
 static inline struct dma_iommu_mapping *
 arm_iommu_create_mapping(struct bus_type *bus, dma_addr_t base, size_t size)
 {
-	return ERR_PTR(-ENOMEM);
+	return NULL;
 }
 
 static inline void arm_iommu_release_mapping(struct dma_iommu_mapping *mapping)

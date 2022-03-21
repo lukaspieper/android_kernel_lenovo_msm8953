@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -181,8 +181,10 @@ static void ipa_process_interrupts(bool isr_context)
 				continue;
 			}
 			uc_irq = is_uc_irq(i);
-			/* Clear uC interrupt before processing to avoid
-					clearing unhandled interrupts */
+			/*
+			 * Clear uC interrupt before processing to avoid
+			 * clearing unhandled interrupts
+			 */
 			if (uc_irq)
 				ipa_write_reg(ipa_ctx->mmio,
 					IPA_IRQ_CLR_EE_n_ADDR(ipa_ee), bmsk);
@@ -190,16 +192,20 @@ static void ipa_process_interrupts(bool isr_context)
 			/* Process the interrupts */
 			handle_interrupt(i, isr_context);
 
-			/* Clear non uC interrupt after processing
-			   to avoid clearing interrupt data */
+			/*
+			 * Clear non uC interrupt after processing
+			 * to avoid clearing interrupt data
+			 */
 			if (!uc_irq)
 				ipa_write_reg(ipa_ctx->mmio,
 				   IPA_IRQ_CLR_EE_n_ADDR(ipa_ee), bmsk);
 
 			bmsk = bmsk << 1;
 		}
-		/* Check pending interrupts that may have
-		   been raised since last read */
+		/*
+		 * Check pending interrupts that may have
+		 * been raised since last read
+		 */
 		reg = ipa_read_reg(ipa_ctx->mmio,
 				IPA_IRQ_STTS_EE_n_ADDR(ipa_ee));
 	}

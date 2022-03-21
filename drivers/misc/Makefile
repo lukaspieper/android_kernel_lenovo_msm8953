@@ -9,16 +9,13 @@ obj-$(CONFIG_AD525X_DPOT_SPI)	+= ad525x_dpot-spi.o
 obj-$(CONFIG_INTEL_MID_PTI)	+= pti.o
 obj-$(CONFIG_ATMEL_SSC)		+= atmel-ssc.o
 obj-$(CONFIG_ATMEL_TCLIB)	+= atmel_tclib.o
-obj-$(CONFIG_BMP085)		+= bmp085.o
-obj-$(CONFIG_BMP085_I2C)	+= bmp085-i2c.o
-obj-$(CONFIG_BMP085_SPI)	+= bmp085-spi.o
 obj-$(CONFIG_DUMMY_IRQ)		+= dummy-irq.o
 obj-$(CONFIG_ICS932S401)	+= ics932s401.o
 obj-$(CONFIG_LKDTM)		+= lkdtm.o
 obj-$(CONFIG_TIFM_CORE)       	+= tifm_core.o
 obj-$(CONFIG_TIFM_7XX1)       	+= tifm_7xx1.o
 obj-$(CONFIG_PHANTOM)		+= phantom.o
-obj-$(CONFIG_SENSORS_BH1780)	+= bh1780gli.o
+obj-$(CONFIG_QCOM_COINCELL)	+= qcom-coincell.o
 obj-$(CONFIG_SENSORS_BH1770)	+= bh1770glc.o
 obj-$(CONFIG_SENSORS_APDS990X)	+= apds990x.o
 obj-$(CONFIG_SGI_IOC4)		+= ioc4.o
@@ -34,7 +31,6 @@ obj-$(CONFIG_ISL29020)		+= isl29020.o
 obj-$(CONFIG_SENSORS_TSL2550)	+= tsl2550.o
 obj-$(CONFIG_DS1682)		+= ds1682.o
 obj-$(CONFIG_TI_DAC7512)	+= ti_dac7512.o
-obj-$(CONFIG_UID_STAT)		+= uid_stat.o
 obj-$(CONFIG_C2PORT)		+= c2port/
 obj-$(CONFIG_HMC6352)		+= hmc6352.o
 obj-y				+= eeprom/
@@ -45,7 +41,6 @@ obj-$(CONFIG_ARM_CHARLCD)	+= arm-charlcd.o
 obj-$(CONFIG_PCH_PHUB)		+= pch_phub.o
 obj-y				+= ti-st/
 obj-y				+= lis3lv02d/
-obj-y				+= carma/
 obj-$(CONFIG_USB_SWITCH_FSA9480) += fsa9480.o
 obj-$(CONFIG_ALTERA_STAPL)	+=altera-stapl/
 obj-$(CONFIG_INTEL_MEI)		+= mei/
@@ -54,21 +49,40 @@ obj-$(CONFIG_LATTICE_ECP3_CONFIG)	+= lattice-ecp3-config.o
 obj-$(CONFIG_SRAM)		+= sram.o
 obj-y				+= mic/
 obj-$(CONFIG_GENWQE)		+= genwqe/
-obj-$(CONFIG_QSEECOM) += qseecom.o
-obj-$(CONFIG_PROFILER) += profiler.o
-obj-$(CONFIG_HDCP_QSEECOM) += hdcp.o
-ifdef CONFIG_COMPAT
-obj-$(CONFIG_QSEECOM) += compat_qseecom.o
-endif
+obj-$(CONFIG_HDCP_QSEECOM)	+= hdcp_qseecom.o
+obj-$(CONFIG_HDCP_QSEECOM)	+= msm_hdcp.o
+obj-$(CONFIG_QSEECOM)		+= qseecom.o
 obj-$(CONFIG_ECHO)		+= echo/
 obj-$(CONFIG_VEXPRESS_SYSCFG)	+= vexpress-syscfg.o
 obj-$(CONFIG_CXL_BASE)		+= cxl/
-obj-y				+= qcom/
-obj-$(CONFIG_TI_DRV2667) += ti_drv2667.o
-obj-$(CONFIG_USB_EXT_TYPE_C_PERICOM)	+= type-c-pericom.o
-obj-$(CONFIG_USB_EXT_TYPE_C_TI)		+= type-c-ti.o
+obj-$(CONFIG_PANEL)             += panel.o
 obj-$(CONFIG_QPNP_MISC) 	+= qpnp-misc.o
-obj-$(CONFIG_UID_SYS_STATS) += uid_sys_stats.o
-obj-$(CONFIG_MEMORY_STATE_TIME) += memory_state_time.o
-obj-$(CONFIG_APDS9930)		+= apds993x.o
-obj-$(CONFIG_VIB_GPIO)		+= vibrator_gpio.o #for vibrator
+obj-$(CONFIG_FPR_FPC) 	+= fpr_FingerprintCard/
+obj-$(CONFIG_MEMORY_STATE_TIME)	+= memory_state_time.o
+
+obj-$(CONFIG_UID_SYS_STATS)	+= uid_sys_stats.o
+obj-$(CONFIG_MEMORY_STATE_TIME)	+= memory_state_time.o
+obj-$(CONFIG_QCOM_XR_SMRTVWR_MISC) += qcom-xr-smrtvwr-misc.o
+obj-$(CONFIG_TUSB1064_XR_MISC) += tusb1064.o
+obj-$(CONFIG_VXR200_XR_MISC) += vxr7200.o
+
+
+lkdtm-$(CONFIG_LKDTM)		+= lkdtm_core.o
+lkdtm-$(CONFIG_LKDTM)		+= lkdtm_bugs.o
+lkdtm-$(CONFIG_LKDTM)		+= lkdtm_heap.o
+lkdtm-$(CONFIG_LKDTM)		+= lkdtm_perms.o
+lkdtm-$(CONFIG_LKDTM)		+= lkdtm_rodata_objcopy.o
+lkdtm-$(CONFIG_LKDTM)		+= lkdtm_usercopy.o
+
+CFLAGS_lkdtm_rodata.o		+= $(DISABLE_LTO)
+KCOV_INSTRUMENT_lkdtm_rodata.o	:= n
+
+OBJCOPYFLAGS :=
+OBJCOPYFLAGS_lkdtm_rodata_objcopy.o := \
+			--set-section-flags .text=alloc,readonly \
+			--rename-section .text=.rodata
+targets += lkdtm_rodata.o lkdtm_rodata_objcopy.o
+$(obj)/lkdtm_rodata_objcopy.o: $(obj)/lkdtm_rodata.o FORCE
+	$(call if_changed,objcopy)
+
+obj-$(CONFIG_OKL4_LINK_SHBUF)    += okl4-link-shbuf.o

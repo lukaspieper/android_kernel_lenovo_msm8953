@@ -24,21 +24,12 @@
 #define __ASM_ASSEMBLER_H
 
 #include <asm/asm-offsets.h>
+#include <asm/cpufeature.h>
+#include <asm/cputype.h>
+#include <asm/page.h>
 #include <asm/pgtable-hwdef.h>
 #include <asm/ptrace.h>
 #include <asm/thread_info.h>
-
-/*
- * Stack pushing/popping (register pairs only). Equivalent to store decrement
- * before, load increment after.
- */
-	.macro	push, xreg1, xreg2
-	stp	\xreg1, \xreg2, [sp, #-16]!
-	.endm
-
-	.macro	pop, xreg1, xreg2
-	ldp	\xreg1, \xreg2, [sp], #16
-	.endm
 
 /*
  * Enable and disable interrupts.
@@ -118,6 +109,24 @@
 	.endm
 
 /*
+ * Value prediction barrier
+ */
+	.macro	csdb
+	hint	#20
+	.endm
+
+/*
+ * Sanitise a 64-bit bounded index wrt speculation, returning zero if out
+ * of bounds.
+ */
+	.macro	mask_nospec64, idx, limit, tmp
+	sub	\tmp, \idx, \limit
+	bic	\tmp, \tmp, \idx
+	and	\idx, \idx, \tmp, asr #63
+	csdb
+	.endm
+
+/*
  * NOP sequence
  */
 	.macro	nops, num
@@ -126,12 +135,19 @@
 	.endr
 	.endm
 
+/*
+ * Emit an entry into the exception table
+ */
+	.macro		_asm_extable, from, to
+	.pushsection	__ex_table, "a"
+	.align		3
+	.long		(\from - .), (\to - .)
+	.popsection
+	.endm
+
 #define USER(l, x...)				\
 9999:	x;					\
-	.section __ex_table,"a";		\
-	.align	3;				\
-	.quad	9999b,l;			\
-	.previous
+	_asm_extable	9999b, l
 
 /*
  * Register aliases.
@@ -179,22 +195,25 @@ lr	.req	x30		// link register
 
 /*
  * Pseudo-ops for PC-relative adr/ldr/str <reg>, <symbol> where
- * <symbol> is within the range +/- 4 GB of the PC.
+ * <symbol> is within the range +/- 4 GB of the PC when running
+ * in core kernel context. In module context, a movz/movk sequence
+ * is used, since modules may be loaded far away from the kernel
+ * when KASLR is in effect.
  */
 	/*
 	 * @dst: destination register (64 bit wide)
 	 * @sym: name of the symbol
-	 * @tmp: optional scratch register to be used if <dst> == sp, which
-	 *       is not allowed in an adrp instruction
 	 */
-	.macro	adr_l, dst, sym, tmp=
-	.ifb	\tmp
+	.macro	adr_l, dst, sym
+#ifndef MODULE
 	adrp	\dst, \sym
 	add	\dst, \dst, :lo12:\sym
-	.else
-	adrp	\tmp, \sym
-	add	\dst, \tmp, :lo12:\sym
-	.endif
+#else
+	movz	\dst, #:abs_g3:\sym
+	movk	\dst, #:abs_g2_nc:\sym
+	movk	\dst, #:abs_g1_nc:\sym
+	movk	\dst, #:abs_g0_nc:\sym
+#endif
 	.endm
 
 	/*
@@ -205,6 +224,7 @@ lr	.req	x30		// link register
 	 *       the address
 	 */
 	.macro	ldr_l, dst, sym, tmp=
+#ifndef MODULE
 	.ifb	\tmp
 	adrp	\dst, \sym
 	ldr	\dst, [\dst, :lo12:\sym]
@@ -212,6 +232,15 @@ lr	.req	x30		// link register
 	adrp	\tmp, \sym
 	ldr	\dst, [\tmp, :lo12:\sym]
 	.endif
+#else
+	.ifb	\tmp
+	adr_l	\dst, \sym
+	ldr	\dst, [\dst]
+	.else
+	adr_l	\tmp, \sym
+	ldr	\dst, [\tmp]
+	.endif
+#endif
 	.endm
 
 	/*
@@ -221,8 +250,43 @@ lr	.req	x30		// link register
 	 *       while <src> needs to be preserved.
 	 */
 	.macro	str_l, src, sym, tmp
+#ifndef MODULE
 	adrp	\tmp, \sym
 	str	\src, [\tmp, :lo12:\sym]
+#else
+	adr_l	\tmp, \sym
+	str	\src, [\tmp]
+#endif
+	.endm
+
+	/*
+	 * @dst: Result of per_cpu(sym, smp_processor_id())
+	 * @sym: The name of the per-cpu variable
+	 * @tmp: scratch register
+	 */
+	.macro adr_this_cpu, dst, sym, tmp
+	adr_l	\dst, \sym
+alternative_if_not ARM64_HAS_VIRT_HOST_EXTN
+	mrs	\tmp, tpidr_el1
+alternative_else
+	mrs	\tmp, tpidr_el2
+alternative_endif
+	add	\dst, \dst, \tmp
+	.endm
+
+	/*
+	 * @dst: Result of READ_ONCE(per_cpu(sym, smp_processor_id()))
+	 * @sym: The name of the per-cpu variable
+	 * @tmp: scratch register
+	 */
+	.macro ldr_this_cpu dst, sym, tmp
+	adr_l	\dst, \sym
+alternative_if_not ARM64_HAS_VIRT_HOST_EXTN
+	mrs	\tmp, tpidr_el1
+alternative_else
+	mrs	\tmp, tpidr_el2
+alternative_endif
+	ldr	\dst, [\dst, \tmp]
 	.endm
 
 /*
@@ -238,11 +302,26 @@ lr	.req	x30		// link register
 	.macro	mmid, rd, rn
 	ldr	\rd, [\rn, #MM_CONTEXT_ID]
 	.endm
+/*
+ * read_ctr - read CTR_EL0. If the system has mismatched
+ * cache line sizes, provide the system wide safe value
+ * from arm64_ftr_reg_ctrel0.sys_val
+ */
+	.macro	read_ctr, reg
+alternative_if_not ARM64_MISMATCHED_CACHE_LINE_SIZE
+	mrs	\reg, ctr_el0			// read CTR
+	nop
+alternative_else
+	ldr_l	\reg, arm64_ftr_reg_ctrel0 + ARM64_FTR_SYSVAL
+alternative_endif
+	.endm
+
 
 /*
- * dcache_line_size - get the minimum D-cache line size from the CTR register.
+ * raw_dcache_line_size - get the minimum D-cache line size on this CPU
+ * from the CTR register.
  */
-	.macro	dcache_line_size, reg, tmp
+	.macro	raw_dcache_line_size, reg, tmp
 	mrs	\tmp, ctr_el0			// read CTR
 	ubfm	\tmp, \tmp, #16, #19		// cache line size encoding
 	mov	\reg, #4			// bytes per word
@@ -250,13 +329,34 @@ lr	.req	x30		// link register
 	.endm
 
 /*
- * icache_line_size - get the minimum I-cache line size from the CTR register.
+ * dcache_line_size - get the safe D-cache line size across all CPUs
  */
-	.macro	icache_line_size, reg, tmp
+	.macro	dcache_line_size, reg, tmp
+	read_ctr	\tmp
+	ubfm		\tmp, \tmp, #16, #19	// cache line size encoding
+	mov		\reg, #4		// bytes per word
+	lsl		\reg, \reg, \tmp	// actual cache line size
+	.endm
+
+/*
+ * raw_icache_line_size - get the minimum I-cache line size on this CPU
+ * from the CTR register.
+ */
+	.macro	raw_icache_line_size, reg, tmp
 	mrs	\tmp, ctr_el0			// read CTR
 	and	\tmp, \tmp, #0xf		// cache line size encoding
 	mov	\reg, #4			// bytes per word
 	lsl	\reg, \reg, \tmp		// actual cache line size
+	.endm
+
+/*
+ * icache_line_size - get the safe I-cache line size across all CPUs
+ */
+	.macro	icache_line_size, reg, tmp
+	read_ctr	\tmp
+	and		\tmp, \tmp, #0xf	// cache line size encoding
+	mov		\reg, #4		// bytes per word
+	lsl		\reg, \reg, \tmp	// actual cache line size
 	.endm
 
 /*
@@ -284,7 +384,16 @@ lr	.req	x30		// link register
 	add	\size, \kaddr, \size
 	sub	\tmp2, \tmp1, #1
 	bic	\kaddr, \kaddr, \tmp2
-9998:	dc	\op, \kaddr
+9998:
+	.if	(\op == cvau || \op == cvac)
+alternative_if_not ARM64_WORKAROUND_CLEAN_CACHE
+	dc	\op, \kaddr
+alternative_else
+	dc	civac, \kaddr
+alternative_endif
+	.else
+	dc	\op, \kaddr
+	.endif
 	add	\kaddr, \kaddr, \tmp1
 	cmp	\kaddr, \size
 	b.lo	9998b
@@ -304,6 +413,24 @@ lr	.req	x30		// link register
 	.endm
 
 /*
+ * copy_page - copy src to dest using temp registers t1-t8
+ */
+	.macro copy_page dest:req src:req t1:req t2:req t3:req t4:req t5:req t6:req t7:req t8:req
+9998:	ldp	\t1, \t2, [\src]
+	ldp	\t3, \t4, [\src, #16]
+	ldp	\t5, \t6, [\src, #32]
+	ldp	\t7, \t8, [\src, #48]
+	add	\src, \src, #64
+	stnp	\t1, \t2, [\dest]
+	stnp	\t3, \t4, [\dest, #16]
+	stnp	\t5, \t6, [\dest, #32]
+	stnp	\t7, \t8, [\dest, #48]
+	add	\dest, \dest, #64
+	tst	\src, #(PAGE_SIZE - 1)
+	b.ne	9998b
+	.endm
+
+/*
  * Annotate a function as position independent, i.e., safe to be called before
  * the kernel virtual mapping is activated.
  */
@@ -314,11 +441,15 @@ lr	.req	x30		// link register
 	.size	__pi_##x, . - x;	\
 	ENDPROC(x)
 
-/*
- * Return the current thread_info.
- */
-	.macro	get_thread_info, rd
-	mrs	\rd, sp_el0
+	/*
+	 * Emit a 64-bit absolute little endian symbol reference in a way that
+	 * ensures that it will be resolved at build time, even when building a
+	 * PIE binary. This requires cooperation from the linker script, which
+	 * must emit the lo32/hi32 halves individually.
+	 */
+	.macro	le64sym, sym
+	.long	\sym\()_lo32
+	.long	\sym\()_hi32
 	.endm
 
 	/*
@@ -339,6 +470,56 @@ lr	.req	x30		// link register
 	movk	\reg, :abs_g1_nc:\val
 	.endif
 	movk	\reg, :abs_g0_nc:\val
+	.endm
+
+/*
+ * Return the current thread_info.
+ */
+	.macro	get_thread_info, rd
+	mrs	\rd, sp_el0
+	.endm
+
+/*
+ * Check the MIDR_EL1 of the current CPU for a given model and a range of
+ * variant/revision. See asm/cputype.h for the macros used below.
+ *
+ *	model:		MIDR_CPU_MODEL of CPU
+ *	rv_min:		Minimum of MIDR_CPU_VAR_REV()
+ *	rv_max:		Maximum of MIDR_CPU_VAR_REV()
+ *	res:		Result register.
+ *	tmp1, tmp2, tmp3: Temporary registers
+ *
+ * Corrupts: res, tmp1, tmp2, tmp3
+ * Returns:  0, if the CPU id doesn't match. Non-zero otherwise
+ */
+	.macro	cpu_midr_match model, rv_min, rv_max, res, tmp1, tmp2, tmp3
+	mrs		\res, midr_el1
+	mov_q		\tmp1, (MIDR_REVISION_MASK | MIDR_VARIANT_MASK)
+	mov_q		\tmp2, MIDR_CPU_MODEL_MASK
+	and		\tmp3, \res, \tmp2	// Extract model
+	and		\tmp1, \res, \tmp1	// rev & variant
+	mov_q		\tmp2, \model
+	cmp		\tmp3, \tmp2
+	cset		\res, eq
+	cbz		\res, .Ldone\@		// Model matches ?
+
+	.if (\rv_min != 0)			// Skip min check if rv_min == 0
+	mov_q		\tmp3, \rv_min
+	cmp		\tmp1, \tmp3
+	cset		\res, ge
+	.endif					// \rv_min != 0
+	/* Skip rv_max check if rv_min == rv_max && rv_min != 0 */
+	.if ((\rv_min != \rv_max) || \rv_min == 0)
+	mov_q		\tmp2, \rv_max
+	cmp		\tmp1, \tmp2
+	cset		\tmp2, le
+	and		\res, \res, \tmp2
+	.endif
+.Ldone\@:
+	.endm
+
+	.macro	pte_to_phys, phys, pte
+	and	\phys, \pte, #(((1 << (48 - PAGE_SHIFT)) - 1) << PAGE_SHIFT)
 	.endm
 
 #endif	/* __ASM_ASSEMBLER_H */

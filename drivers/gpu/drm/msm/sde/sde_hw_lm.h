@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,6 +15,10 @@
 
 #include "sde_hw_mdss.h"
 #include "sde_hw_util.h"
+#include "sde_hw_blk.h"
+
+#define SDE_MIXER_LAYOUT_LEFT 0x1
+#define SDE_MIXER_LAYOUT_RIGHT 0x2
 
 struct sde_hw_mixer;
 
@@ -46,15 +50,13 @@ struct sde_hw_lm_ops {
 	 * Alpha blending configuration
 	 * for the specified stage
 	 */
-	void (*setup_blend_config)(struct sde_hw_mixer *ctx,
-			int stage,
-			struct sde_hw_blend_cfg *blend);
+	void (*setup_blend_config)(struct sde_hw_mixer *ctx, uint32_t stage,
+		uint32_t fg_alpha, uint32_t bg_alpha, uint32_t blend_op);
 
 	/*
 	 * Alpha color component selection from either fg or bg
 	 */
-	void (*setup_alpha_out)(struct sde_hw_mixer *ctx,
-			struct sde_hw_color3_cfg *cfg);
+	void (*setup_alpha_out)(struct sde_hw_mixer *ctx, uint32_t mixer_op);
 
 	/**
 	 * setup_border_color : enable/disable border color
@@ -62,14 +64,36 @@ struct sde_hw_lm_ops {
 	void (*setup_border_color)(struct sde_hw_mixer *ctx,
 		struct sde_mdss_color *color,
 		u8 border_en);
-
-	void (*setup_gammcorrection)(struct sde_hw_mixer *mixer,
+	/**
+	 * setup_gc : enable/disable gamma correction feature
+	 */
+	void (*setup_gc)(struct sde_hw_mixer *mixer,
 			void *cfg);
 
+	/**
+	 * setup_dim_layer: configure dim layer settings
+	 * @ctx: Pointer to layer mixer context
+	 * @dim_layer: dim layer configs
+	 */
+	void (*setup_dim_layer)(struct sde_hw_mixer *ctx,
+			struct sde_hw_dim_layer *dim_layer);
+
+	/**
+	 * clear_dim_layer: clear dim layer settings
+	 * @ctx: Pointer to layer mixer context
+	 */
+	void (*clear_dim_layer)(struct sde_hw_mixer *ctx);
+
+	/* setup_misr: enables/disables MISR in HW register */
+	void (*setup_misr)(struct sde_hw_mixer *ctx,
+			bool enable, u32 frame_count);
+
+	/* collect_misr: reads and stores MISR data from HW register */
+	u32 (*collect_misr)(struct sde_hw_mixer *ctx);
 };
 
 struct sde_hw_mixer {
-	/* base */
+	struct sde_hw_blk base;
 	struct sde_hw_blk_reg_map hw;
 
 	/* lm */
@@ -80,7 +104,20 @@ struct sde_hw_mixer {
 
 	/* ops */
 	struct sde_hw_lm_ops ops;
+
+	/* store mixer info specific to display */
+	struct sde_hw_mixer_cfg cfg;
 };
+
+/**
+ * to_sde_hw_mixer - convert base object sde_hw_base to container
+ * @hw: Pointer to base hardware block
+ * return: Pointer to hardware block container
+ */
+static inline struct sde_hw_mixer *to_sde_hw_mixer(struct sde_hw_blk *hw)
+{
+	return container_of(hw, struct sde_hw_mixer, base);
+}
 
 /**
  * sde_hw_lm_init(): Initializes the mixer hw driver object.

@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -32,7 +32,7 @@ static int logger_state_dump_device(struct logger_device *dev, char *buf,
 
 	if (list_empty(&dev->event_list)) {
 		len += scnprintf(buf + len, buf_len - len,
-				 "No event registered!\n");
+				 "No event registered\n");
 		return len;
 	}
 
@@ -54,7 +54,7 @@ static int logger_state_dump(struct logger_context *ctx, char *buf, int buf_len)
 		len += scnprintf(buf + len, buf_len - len,
 				 "=======================\n");
 		len += scnprintf(buf + len, buf_len - len,
-				 "No driver registered!\n");
+				 "No driver registered\n");
 		return 0;
 	}
 
@@ -123,7 +123,7 @@ void logger_debugfs_init(struct logger_context *ctx)
 	if (!ctx->debugfs_entry)
 		ctx->debugfs_entry = debugfs_create_dir("cnss_logger", NULL);
 
-	debugfs_create_file("state", S_IRUSR, ctx->debugfs_entry, ctx,
+	debugfs_create_file("state", 0400, ctx->debugfs_entry, ctx,
 			    &fops_logger_state);
 }
 

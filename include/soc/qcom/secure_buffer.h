@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,8 +12,8 @@
  *
  */
 
-#ifndef __MSM_SECURE_BUFFER_H__
-#define __MSM_SECURE_BUFFER_H__
+#ifndef __QCOM_SECURE_BUFFER_H__
+#define __QCOM_SECURE_BUFFER_H__
 
 #include <linux/scatterlist.h>
 
@@ -37,6 +37,11 @@ enum vmid {
 	VMID_CP_APP = 0x12,
 	VMID_WLAN = 0x18,
 	VMID_WLAN_CE = 0x19,
+	VMID_CP_SPSS_SP = 0x1A,
+	VMID_CP_CAMERA_PREVIEW = 0x1D,
+	VMID_CP_SPSS_SP_SHARED = 0x22,
+	VMID_CP_SPSS_HLOS_SHARED = 0x24,
+	VMID_CP_CDSP = 0x2A,
 	VMID_LAST,
 	VMID_INVAL = -1
 };
@@ -45,14 +50,14 @@ enum vmid {
 #define PERM_WRITE                      0x2
 #define PERM_EXEC			0x1
 
-#ifdef CONFIG_MSM_SECURE_BUFFER
+#ifdef CONFIG_QCOM_SECURE_BUFFER
 int msm_secure_table(struct sg_table *table);
 int msm_unsecure_table(struct sg_table *table);
 int hyp_assign_table(struct sg_table *table,
 			u32 *source_vm_list, int source_nelems,
 			int *dest_vmids, int *dest_perms,
 			int dest_nelems);
-int hyp_assign_phys(phys_addr_t addr, u64 size,
+extern int hyp_assign_phys(phys_addr_t addr, u64 size,
 			u32 *source_vmlist, int source_nelems,
 			int *dest_vmids, int *dest_perms, int dest_nelems);
 bool msm_secure_v2_is_supported(void);
@@ -60,29 +65,34 @@ const char *msm_secure_vmid_to_string(int secure_vmid);
 #else
 static inline int msm_secure_table(struct sg_table *table)
 {
-	return -ENOSYS;
+	return -EINVAL;
 }
+
 static inline int msm_unsecure_table(struct sg_table *table)
 {
-	return -ENOSYS;
+	return -EINVAL;
 }
+
 static inline int hyp_assign_table(struct sg_table *table,
 			u32 *source_vm_list, int source_nelems,
 			int *dest_vmids, int *dest_perms,
 			int dest_nelems)
 {
-	return -ENOSYS;
+	return -EINVAL;
 }
+
 static inline int hyp_assign_phys(phys_addr_t addr, u64 size,
 			u32 *source_vmlist, int source_nelems,
 			int *dest_vmids, int *dest_perms, int dest_nelems)
 {
-	return -ENOSYS;
+	return -EINVAL;
 }
+
 static inline bool msm_secure_v2_is_supported(void)
 {
 	return false;
 }
+
 static inline const char *msm_secure_vmid_to_string(int secure_vmid)
 {
 	return "N/A";

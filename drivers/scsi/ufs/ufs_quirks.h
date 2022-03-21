@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,28 +17,18 @@
 /* return true if s1 is a prefix of s2 */
 #define STR_PRFX_EQUAL(s1, s2) !strncmp(s1, s2, strlen(s1))
 
-#define UFS_ANY_VENDOR 0xffff
+#define UFS_ANY_VENDOR -1
 #define UFS_ANY_MODEL  "ANY_MODEL"
 
 #define MAX_MODEL_LEN 16
 
 #define UFS_VENDOR_TOSHIBA     0x198
 #define UFS_VENDOR_SAMSUNG     0x1CE
-#define UFS_VENDOR_HYNIX       0x1AD
+#define UFS_VENDOR_SKHYNIX     0x1AD
 
 /* UFS TOSHIBA MODELS */
 #define UFS_MODEL_TOSHIBA_32GB "THGLF2G8D4KBADR"
 #define UFS_MODEL_TOSHIBA_64GB "THGLF2G9D8KBADG"
-
-/**
- * ufs_card_info - ufs device details
- * @wmanufacturerid: card details
- * @model: card model
- */
-struct ufs_card_info {
-	u16 wmanufacturerid;
-	char *model;
-};
 
 /**
  * ufs_card_fix - ufs device quirk info
@@ -46,17 +36,18 @@ struct ufs_card_info {
  * @quirk: device quirk
  */
 struct ufs_card_fix {
-	struct ufs_card_info card;
+	u16 w_manufacturer_id;
+	char *model;
 	unsigned int quirk;
 };
 
-#define END_FIX { { 0 } , 0 }
+#define END_FIX { 0 }
 
 /* add specific device quirk */
 #define UFS_FIX(_vendor, _model, _quirk) \
 		{						  \
-				.card.wmanufacturerid = (_vendor),\
-				.card.model = (_model),		  \
+				.w_manufacturer_id = (_vendor),\
+				.model = (_model),		  \
 				.quirk = (_quirk),		  \
 		}
 
@@ -139,6 +130,23 @@ struct ufs_card_fix {
  */
 #define UFS_DEVICE_QUIRK_HOST_PA_SAVECONFIGTIME	(1 << 7)
 
+/*
+ * Some UFS devices may stop responding after switching from HS-G1 to HS-G3.
+ * Also, it is found that these devices work fine if we do 2 steps switch:
+ * HS-G1 to HS-G2 followed by HS-G2 to HS-G3. Enabling this quirk for such
+ * device would apply this 2 steps gear switch workaround.
+ */
+#define UFS_DEVICE_QUIRK_HS_G1_TO_HS_G3_SWITCH (1 << 8)
+
+/*
+ * Some UFS devices need more delay after device reference clk is turned on
+ * but before initiation of the state transition to STALL from a LS-MODE or
+ * from the HIBERN8 state. Enable this quirk to give UFS devices 50us delay
+ * instead of the default delay.
+ */
+#define UFS_DEVICE_QUIRK_WAIT_AFTER_REF_CLK_UNGATE	(1 << 9)
+
 struct ufs_hba;
 void ufs_advertise_fixup_device(struct ufs_hba *hba);
+
 #endif /* UFS_QUIRKS_H_ */

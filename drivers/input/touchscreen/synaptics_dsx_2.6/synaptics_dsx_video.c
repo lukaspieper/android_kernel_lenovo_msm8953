@@ -5,6 +5,7 @@
  *
  * Copyright (C) 2012 Alexandra Chin <alexandra.chin@tw.synaptics.com>
  * Copyright (C) 2012 Scott Lin <scott.lin@tw.synaptics.com>
+ * Copyright (C) 2018 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -112,10 +113,10 @@ static struct dcs_command resume_sequence[] = {
 #endif
 
 static struct device_attribute attrs[] = {
-	__ATTR(dcs_write, S_IWUGO,
+	__ATTR(dcs_write, 0220,
 			NULL,
 			video_sysfs_dcs_write_store),
-	__ATTR(param, S_IWUGO,
+	__ATTR(param, 0220,
 			NULL,
 			video_sysfs_param_store),
 };

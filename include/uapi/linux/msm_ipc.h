@@ -49,7 +49,7 @@ struct config_sec_rules_args {
 	int num_group_info;
 	uint32_t service_id;
 	uint32_t instance_id;
-	unsigned reserved;
+	unsigned int reserved;
 	gid_t group_id[0];
 };
 

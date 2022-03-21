@@ -9,6 +9,7 @@
 
 #include <linux/workqueue.h>
 #include <linux/kthread.h>
+#include <linux/preempt.h>
 
 struct worker_pool;
 
@@ -52,6 +53,9 @@ struct worker {
 
 	/* used only by rescuers to point to the target workqueue */
 	struct workqueue_struct	*rescue_wq;	/* I: the workqueue to rescue */
+
+	/* used by the scheduler to determine a worker's last known identity */
+	work_func_t		last_func;
 };
 
 /**
@@ -59,16 +63,17 @@ struct worker {
  */
 static inline struct worker *current_wq_worker(void)
 {
-	if (current->flags & PF_WQ_WORKER)
+	if (in_task() && (current->flags & PF_WQ_WORKER))
 		return kthread_data(current);
 	return NULL;
 }
 
 /*
  * Scheduler hooks for concurrency managed workqueue.  Only to be used from
- * sched/core.c and workqueue.c.
+ * sched/ and workqueue.c.
  */
 void wq_worker_waking_up(struct task_struct *task, int cpu);
-struct task_struct *wq_worker_sleeping(struct task_struct *task, int cpu);
+struct task_struct *wq_worker_sleeping(struct task_struct *task);
+work_func_t wq_worker_last_func(struct task_struct *task);
 
 #endif /* _KERNEL_WORKQUEUE_INTERNAL_H */

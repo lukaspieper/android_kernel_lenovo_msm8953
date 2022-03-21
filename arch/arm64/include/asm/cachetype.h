@@ -22,6 +22,11 @@
 #define CTR_L1IP_MASK		3
 #define CTR_CWG_SHIFT		24
 #define CTR_CWG_MASK		15
+#define CTR_DMINLINE_SHIFT	16
+#define CTR_IMINLINE_SHIFT	0
+
+#define CTR_CACHE_MINLINE_MASK	\
+	((0xf << CTR_DMINLINE_SHIFT) | (0xf << CTR_IMINLINE_SHIFT))
 
 #define ICACHE_POLICY_RESERVED	0
 #define ICACHE_POLICY_AIVIVT	1
@@ -34,8 +39,8 @@
 
 #define CTR_L1IP(ctr)	(((ctr) >> CTR_L1IP_SHIFT) & CTR_L1IP_MASK)
 
-#define ICACHEF_ALIASING	BIT(0)
-#define ICACHEF_AIVIVT		BIT(1)
+#define ICACHEF_ALIASING	0
+#define ICACHEF_AIVIVT		1
 
 extern unsigned long __icache_flags;
 

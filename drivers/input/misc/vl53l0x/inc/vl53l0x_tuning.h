@@ -1,6 +1,6 @@
 /*
  *  vl53l0x_tuning.h - Linux kernel modules for
- *	STM VL53L0 FlightSense TOF sensor
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,9 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
-
-
 
 #ifndef _VL_TUNING_H_
 #define _VL_TUNING_H_

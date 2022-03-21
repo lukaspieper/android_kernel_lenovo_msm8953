@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -71,9 +71,11 @@
 #define VIDC_CPU_IC_SOFTINT_H2A_SHFT	0xF
 #define VIDC_CPU_IC_SOFTINTCLEAR	(VIDC_CPU_IC_BASE_OFFS + 0x1C)
 
-/*---------------------------------------------------------------------------
+/*
+ * --------------------------------------------------------------------------
  * MODULE: vidc_wrapper
- *--------------------------------------------------------------------------*/
+ * --------------------------------------------------------------------------
+ */
 #define VIDC_WRAPPER_BASE_OFFS		0x000E0000
 
 #define VIDC_WRAPPER_HW_VERSION		(VIDC_WRAPPER_BASE_OFFS + 0x00)
@@ -139,7 +141,6 @@
 #define VIDC_VBIF_AT_OLD_HIGH           (VIDC_VBIF_BASE_OFFS + 0xC08)
 #define VIDC_VBIF_AT_NEW_BASE           (VIDC_VBIF_BASE_OFFS + 0xC10)
 #define VIDC_VBIF_AT_NEW_HIGH           (VIDC_VBIF_BASE_OFFS + 0xC18)
-#define VENUS_VBIF_XIN_HALT_CTRL1   (VIDC_VBIF_BASE_OFFS + 0x204)
 #define VENUS_VBIF_AXI_HALT_CTRL0   (VIDC_VBIF_BASE_OFFS + 0x208)
 #define VENUS_VBIF_AXI_HALT_CTRL1   (VIDC_VBIF_BASE_OFFS + 0x20C)
 
@@ -147,12 +148,16 @@
 #define VENUS_VBIF_AXI_HALT_CTRL1_HALT_ACK		BIT(0)
 #define VENUS_VBIF_AXI_HALT_ACK_TIMEOUT_US		500000
 
+#define VENUS_WRAPPER_AXI_HALT 0x000E2008
+#define VENUS_WRAPPER_AXI_HALT_STATUS 0x000E200C
+
+#define BRIC_AXI_HALT BIT(16)
+#define BRIC_AXI_HALT_ACK BIT(16)
+
 #define VIDC_VENUS0_WRAPPER_VBIF_REQ_PRIORITY \
 	(VIDC_WRAPPER_BASE_OFFS + 0x20)
 #define VIDC_VENUS0_WRAPPER_VBIF_PRIORITY_LEVEL \
 	(VIDC_WRAPPER_BASE_OFFS + 0x24)
-#define VIDC_VENUS_WRAPPER_MMCC_VENUS0_POWER_STATUS \
-	(VIDC_WRAPPER_BASE_OFFS + 0x44)
 
 #define VIDC_CTRL_INIT 0x000D2048
 #define VIDC_CTRL_INIT_RESERVED_BITS31_1__M 0xFFFFFFFE
@@ -190,5 +195,26 @@
 #define VIDC_MMAP_ADDR 0x000D2060
 #define VIDC_UC_REGION_ADDR 0x000D2064
 #define VIDC_UC_REGION_SIZE 0x000D2068
+
+/*
+ * --------------------------------------------------------------------------
+ * MODULE: vcodec noc error log registers
+ * --------------------------------------------------------------------------
+ */
+#define VCODEC_CORE0_VIDEO_NOC_BASE_OFFS		0x00004000
+#define VCODEC_CORE1_VIDEO_NOC_BASE_OFFS		0x0000C000
+#define VCODEC_COREX_VIDEO_NOC_ERR_SWID_LOW_OFFS	0x0500
+#define VCODEC_COREX_VIDEO_NOC_ERR_SWID_HIGH_OFFS	0x0504
+#define VCODEC_COREX_VIDEO_NOC_ERR_MAINCTL_LOW_OFFS	0x0508
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRVLD_LOW_OFFS	0x0510
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRCLR_LOW_OFFS	0x0518
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRLOG0_LOW_OFFS	0x0520
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRLOG0_HIGH_OFFS	0x0524
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRLOG1_LOW_OFFS	0x0528
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRLOG1_HIGH_OFFS	0x052C
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRLOG2_LOW_OFFS	0x0530
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRLOG2_HIGH_OFFS	0x0534
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRLOG3_LOW_OFFS	0x0538
+#define VCODEC_COREX_VIDEO_NOC_ERR_ERRLOG3_HIGH_OFFS	0x053C
 
 #endif

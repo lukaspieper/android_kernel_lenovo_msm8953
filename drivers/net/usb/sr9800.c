@@ -473,14 +473,10 @@ static int sr_get_eeprom(struct net_device *net,
 static void sr_get_drvinfo(struct net_device *net,
 				 struct ethtool_drvinfo *info)
 {
-	struct usbnet *dev = netdev_priv(net);
-	struct sr_data *data = (struct sr_data *)&dev->data;
-
 	/* Inherit standard device info */
 	usbnet_get_drvinfo(net, info);
 	strncpy(info->driver, DRIVER_NAME, sizeof(info->driver));
 	strncpy(info->version, DRIVER_VERSION, sizeof(info->version));
-	info->eedump_len = data->eeprom_len;
 }
 
 static u32 sr_get_link(struct net_device *net)
@@ -764,7 +760,7 @@ static int sr9800_bind(struct usbnet *dev, struct usb_interface *intf)
 		netdev_dbg(dev->net, "Failed to read MAC address: %d\n", ret);
 		return ret;
 	}
-	netdev_dbg(dev->net, "mac addr : %pKM\n", dev->net->dev_addr);
+	netdev_dbg(dev->net, "mac addr : %pM\n", dev->net->dev_addr);
 
 	/* Initialize MII structure */
 	dev->mii.dev = dev->net;

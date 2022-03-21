@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -105,6 +105,7 @@ static int mux_set_rate(struct clk *c, unsigned long rate)
 	 */
 	for (i = 0; i < mux->num_parents && mux->try_get_rate; i++) {
 		struct clk *p = mux->parents[i].src;
+
 		if (p->rate == rate && clk_round_rate(p, rate) == rate) {
 			new_parent = mux->parents[i].src;
 			break;
@@ -182,6 +183,7 @@ set_rate_fail:
 static int mux_enable(struct clk *c)
 {
 	struct mux_clk *mux = to_mux_clk(c);
+
 	if (mux->ops->enable)
 		return mux->ops->enable(mux);
 	return 0;
@@ -190,6 +192,7 @@ static int mux_enable(struct clk *c)
 static void mux_disable(struct clk *c)
 {
 	struct mux_clk *mux = to_mux_clk(c);
+
 	if (mux->ops->disable)
 		return mux->ops->disable(mux);
 }
@@ -244,7 +247,7 @@ static void __iomem *mux_clk_list_registers(struct clk *c, int n,
 	return ERR_PTR(-EINVAL);
 }
 
-struct clk_ops clk_ops_gen_mux = {
+const struct clk_ops clk_ops_gen_mux = {
 	.enable = mux_enable,
 	.disable = mux_disable,
 	.set_parent = mux_set_parent,
@@ -409,6 +412,7 @@ set_rate_fail:
 static int div_enable(struct clk *c)
 {
 	struct div_clk *d = to_div_clk(c);
+
 	if (d->ops && d->ops->enable)
 		return d->ops->enable(d);
 	return 0;
@@ -417,6 +421,7 @@ static int div_enable(struct clk *c)
 static void div_disable(struct clk *c)
 {
 	struct div_clk *d = to_div_clk(c);
+
 	if (d->ops && d->ops->disable)
 		return d->ops->disable(d);
 }
@@ -463,7 +468,7 @@ static void __iomem *div_clk_list_registers(struct clk *c, int n,
 	return ERR_PTR(-EINVAL);
 }
 
-struct clk_ops clk_ops_div = {
+const struct clk_ops clk_ops_div = {
 	.enable = div_enable,
 	.disable = div_disable,
 	.round_rate = div_round_rate,
@@ -530,12 +535,13 @@ static int slave_div_set_rate(struct clk *c, unsigned long rate)
 static unsigned long slave_div_get_rate(struct clk *c)
 {
 	struct div_clk *d = to_div_clk(c);
+
 	if (!d->data.div)
 		return 0;
 	return clk_get_rate(c->parent) / d->data.div;
 }
 
-struct clk_ops clk_ops_slave_div = {
+const struct clk_ops clk_ops_slave_div = {
 	.enable = div_enable,
 	.disable = div_disable,
 	.round_rate = slave_div_round_rate,
@@ -593,7 +599,7 @@ static enum handoff ext_handoff(struct clk *c)
 	return HANDOFF_DISABLED_CLK;
 }
 
-struct clk_ops clk_ops_ext = {
+const struct clk_ops clk_ops_ext = {
 	.handoff = ext_handoff,
 	.round_rate = parent_round_rate,
 	.set_rate = parent_set_rate,
@@ -609,10 +615,8 @@ static void *ext_clk_dt_parser(struct device *dev, struct device_node *np)
 	int rc;
 
 	ext = devm_kzalloc(dev, sizeof(*ext), GFP_KERNEL);
-	if (!ext) {
-		dev_err(dev, "memory allocation failure\n");
+	if (!ext)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	ext->dev = dev;
 	rc = of_property_read_string(np, "qcom,clock-names", &str);
@@ -901,12 +905,12 @@ static void __iomem *mux_div_clk_list_registers(struct clk *c, int n,
 	struct mux_div_clk *md = to_mux_div_clk(c);
 
 	if (md->ops && md->ops->list_registers)
-		return md->ops->list_registers(md, n , regs, size);
+		return md->ops->list_registers(md, n, regs, size);
 
 	return ERR_PTR(-EINVAL);
 }
 
-struct clk_ops clk_ops_mux_div_clk = {
+const struct clk_ops clk_ops_mux_div_clk = {
 	.enable = mux_div_clk_enable,
 	.disable = mux_div_clk_disable,
 	.set_rate = mux_div_clk_set_rate,

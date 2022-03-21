@@ -1,6 +1,6 @@
 /*
  *  vl53l0x_types.h - Linux kernel modules for
- *	STM VL53L0 FlightSense TOF sensor
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,7 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
 
 #ifndef VL_TYPES_H_
 #define VL_TYPES_H_
@@ -34,10 +33,10 @@
 "Review type definition of STDINT define for your platform and add to above")
 
 /*
-*  target platform do not provide stdint or use a different #define than above
-*  to avoid seeing the message below addapt the #define list above or implement
-*  all type and delete these pragma
-*/
+ *  target platform do not provide stdint or use a different #define than above
+ *  to avoid seeing the message below addapt the #define list above or implement
+ *  all type and delete these pragma
+ */
 
 unsigned int uint32_t;
 int int32_t;

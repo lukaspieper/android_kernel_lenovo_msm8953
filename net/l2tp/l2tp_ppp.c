@@ -185,30 +185,10 @@ out:
  * Receive data handling
  *****************************************************************************/
 
-static int pppol2tp_recv_payload_hook(struct sk_buff *skb)
-{
-	/* Skip PPP header, if present.	 In testing, Microsoft L2TP clients
-	 * don't send the PPP header (PPP header compression enabled), but
-	 * other clients can include the header. So we cope with both cases
-	 * here. The PPP header is always FF03 when using L2TP.
-	 *
-	 * Note that skb->data[] isn't dereferenced from a u16 ptr here since
-	 * the field may be unaligned.
-	 */
-	if (!pskb_may_pull(skb, 2))
-		return 1;
-
-	if ((skb->data[0] == PPP_ALLSTATIONS) && (skb->data[1] == PPP_UI))
-		skb_pull(skb, 2);
-
-	return 0;
-}
-
 /* Receive message. This is the recvmsg for the PPPoL2TP socket.
  */
-static int pppol2tp_recvmsg(struct kiocb *iocb, struct socket *sock,
-			    struct msghdr *msg, size_t len,
-			    int flags)
+static int pppol2tp_recvmsg(struct socket *sock, struct msghdr *msg,
+			    size_t len, int flags)
 {
 	int err;
 	struct sk_buff *skb;
@@ -229,7 +209,7 @@ static int pppol2tp_recvmsg(struct kiocb *iocb, struct socket *sock,
 	else if (len < skb->len)
 		msg->msg_flags |= MSG_TRUNC;
 
-	err = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, len);
+	err = skb_copy_datagram_msg(skb, 0, msg, len);
 	if (likely(err == 0))
 		err = len;
 
@@ -251,27 +231,23 @@ static void pppol2tp_recv(struct l2tp_session *session, struct sk_buff *skb, int
 	if (sk == NULL)
 		goto no_sock;
 
+	/* If the first two bytes are 0xFF03, consider that it is the PPP's
+	 * Address and Control fields and skip them. The L2TP module has always
+	 * worked this way, although, in theory, the use of these fields should
+	 * be negociated and handled at the PPP layer. These fields are
+	 * constant: 0xFF is the All-Stations Address and 0x03 the Unnumbered
+	 * Information command with Poll/Final bit set to zero (RFC 1662).
+	 */
+	if (pskb_may_pull(skb, 2) && skb->data[0] == PPP_ALLSTATIONS &&
+	    skb->data[1] == PPP_UI)
+		skb_pull(skb, 2);
+
 	if (sk->sk_state & PPPOX_BOUND) {
 		struct pppox_sock *po;
+
 		l2tp_dbg(session, L2TP_MSG_DATA,
 			 "%s: recv %d byte data frame, passing to ppp\n",
 			 session->name, data_len);
-
-		/* We need to forget all info related to the L2TP packet
-		 * gathered in the skb as we are going to reuse the same
-		 * skb for the inner packet.
-		 * Namely we need to:
-		 * - reset xfrm (IPSec) information as it applies to
-		 *   the outer L2TP packet and not to the inner one
-		 * - release the dst to force a route lookup on the inner
-		 *   IP packet since skb->dst currently points to the dst
-		 *   of the UDP tunnel
-		 * - reset netfilter information as it doesn't apply
-		 *   to the inner packet either
-		 */
-		secpath_reset(skb);
-		skb_dst_drop(skb);
-		nf_reset(skb);
 
 		po = pppox_sk(sk);
 		ppp_input(&po->chan, skb);
@@ -303,7 +279,7 @@ no_sock:
  * when a user application does a sendmsg() on the session socket. L2TP and
  * PPP headers must be inserted into the user's data.
  */
-static int pppol2tp_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *m,
+static int pppol2tp_sendmsg(struct socket *sock, struct msghdr *m,
 			    size_t total_len)
 {
 	struct sock *sk = sock->sk;
@@ -353,8 +329,7 @@ static int pppol2tp_sendmsg(struct kiocb *iocb, struct socket *sock, struct msgh
 	skb_put(skb, 2);
 
 	/* Copy user data into skb */
-	error = memcpy_fromiovec(skb_put(skb, total_len), m->msg_iov,
-				 total_len);
+	error = memcpy_from_msg(skb_put(skb, total_len), m, total_len);
 	if (error < 0) {
 		kfree_skb(skb);
 		goto error_put_sess_tun;
@@ -570,12 +545,12 @@ static int pppol2tp_backlog_recv(struct sock *sk, struct sk_buff *skb)
 
 /* socket() handler. Initialize a new struct sock.
  */
-static int pppol2tp_create(struct net *net, struct socket *sock)
+static int pppol2tp_create(struct net *net, struct socket *sock, int kern)
 {
 	int error = -ENOMEM;
 	struct sock *sk;
 
-	sk = sk_alloc(net, PF_PPPOX, GFP_KERNEL, &pppol2tp_sk_proto);
+	sk = sk_alloc(net, PF_PPPOX, GFP_KERNEL, &pppol2tp_sk_proto, kern);
 	if (!sk)
 		goto out;
 
@@ -597,7 +572,7 @@ out:
 	return error;
 }
 
-#if defined(CONFIG_L2TP_DEBUGFS) || defined(CONFIG_L2TP_DEBUGFS_MODULE)
+#if IS_ENABLED(CONFIG_L2TP_DEBUGFS)
 static void pppol2tp_show(struct seq_file *m, void *arg)
 {
 	struct l2tp_session *session = arg;
@@ -620,7 +595,7 @@ static void pppol2tp_session_init(struct l2tp_session *session)
 
 	session->recv_skb = pppol2tp_recv;
 	session->session_close = pppol2tp_session_close;
-#if defined(CONFIG_L2TP_DEBUGFS) || defined(CONFIG_L2TP_DEBUGFS_MODULE)
+#if IS_ENABLED(CONFIG_L2TP_DEBUGFS)
 	session->show = pppol2tp_show;
 #endif
 
@@ -759,9 +734,6 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 		if (tunnel->sock == NULL)
 			goto end;
 	}
-
-	if (tunnel->recv_payload_hook == NULL)
-		tunnel->recv_payload_hook = pppol2tp_recv_payload_hook;
 
 	if (tunnel->peer_tunnel_id == 0)
 		tunnel->peer_tunnel_id = peer_tunnel_id;
@@ -929,7 +901,7 @@ static int pppol2tp_getname(struct socket *sock, struct sockaddr *uaddr,
 	error = -ENOTCONN;
 	if (sk == NULL)
 		goto end;
-	if (sk->sk_state != PPPOX_CONNECTED)
+	if (!(sk->sk_state & PPPOX_CONNECTED))
 		goto end;
 
 	error = -EBADF;
@@ -1943,4 +1915,5 @@ MODULE_AUTHOR("James Chapman <jchapman@katalix.com>");
 MODULE_DESCRIPTION("PPP over L2TP over UDP");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(PPPOL2TP_DRV_VERSION);
-MODULE_ALIAS("pppox-proto-" __stringify(PX_PROTO_OL2TP));
+MODULE_ALIAS_NET_PF_PROTO(PF_PPPOX, PX_PROTO_OL2TP);
+MODULE_ALIAS_L2TP_PWTYPE(7);

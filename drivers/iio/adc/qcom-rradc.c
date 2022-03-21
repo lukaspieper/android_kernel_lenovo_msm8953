@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,7 +22,7 @@
 #include <linux/regmap.h>
 #include <linux/delay.h>
 #include <linux/qpnp/qpnp-revid.h>
-#include <linux/spmi.h>
+#include <linux/power_supply.h>
 
 #define FG_ADC_RR_EN_CTL			0x46
 #define FG_ADC_RR_SKIN_TEMP_LSB			0x50
@@ -181,6 +181,9 @@
 #define FG_ADC_RR_VOLT_INPUT_FACTOR		8
 #define FG_ADC_RR_CURR_INPUT_FACTOR		2000
 #define FG_ADC_RR_CURR_USBIN_INPUT_FACTOR_MIL	1886
+#define FG_ADC_RR_CURR_USBIN_660_FACTOR_MIL	9
+#define FG_ADC_RR_CURR_USBIN_660_UV_VAL	579500
+
 #define FG_ADC_SCALE_MILLI_FACTOR		1000
 #define FG_ADC_KELVINMIL_CELSIUSMIL		273150
 
@@ -190,9 +193,14 @@
 #define FG_RR_ADC_STS_CHANNEL_READING_MASK	0x3
 #define FG_RR_ADC_STS_CHANNEL_STS		0x2
 
-#define FG_RR_CONV_CONTINUOUS_TIME_MIN_US	50000
-#define FG_RR_CONV_CONTINUOUS_TIME_MAX_US	51000
+#define FG_RR_CONV_CONTINUOUS_TIME_MIN_MS	50
 #define FG_RR_CONV_MAX_RETRY_CNT		50
+#define FG_RR_TP_REV_VERSION1		21
+#define FG_RR_TP_REV_VERSION2		29
+#define FG_RR_TP_REV_VERSION3		32
+
+#define BATT_ID_SETTLE_SHIFT		5
+#define RRADC_BATT_ID_DELAY_MAX		8
 
 /*
  * The channel number is not a physical index in hardware,
@@ -224,14 +232,14 @@ struct rradc_chip {
 	struct mutex			lock;
 	struct regmap			*regmap;
 	u16				base;
-	struct spmi_device		*spmi;
-	u8				slave;
-	u16			offset;
+	int				batt_id_delay;
 	struct iio_chan_spec		*iio_chans;
 	unsigned int			nchannels;
 	struct rradc_chan_prop		*chan_props;
 	struct device_node		*revid_dev_node;
 	struct pmic_revid_data		*pmic_fab_id;
+	int volt;
+	struct power_supply		*usb_trig;
 };
 
 struct rradc_channels {
@@ -252,34 +260,21 @@ struct rradc_chan_prop {
 					u16 adc_code, int *result);
 };
 
-static int rradc_spmi_read(struct rradc_chip *rr_adc, unsigned int reg,
-						u8 *data, int len)
+static const int batt_id_delays[] = {0, 1, 4, 12, 20, 40, 60, 80};
+
+static int rradc_masked_write(struct rradc_chip *rr_adc, u16 offset, u8 mask,
+						u8 val)
 {
 	int rc;
 
-	rc = spmi_ext_register_readl(rr_adc->spmi->ctrl, rr_adc->slave,
-		reg, data, len);
-	if (rc < 0) {
-		pr_err("rradc spmi read reg %x failed with %d\n", reg, rc);
+	rc = regmap_update_bits(rr_adc->regmap, rr_adc->base + offset,
+								mask, val);
+	if (rc) {
+		pr_err("spmi write failed: addr=%03X, rc=%d\n", offset, rc);
 		return rc;
 	}
 
-	return 0;
-}
-
-static int rradc_spmi_write(struct rradc_chip *rr_adc, u16 reg,
-						u8 *buf, int len)
-{
-	int rc;
-
-	rc = spmi_ext_register_writel(rr_adc->spmi->ctrl, rr_adc->slave,
-		reg, buf, len);
-	if (rc < 0) {
-		pr_err("rradc spmi write reg %d failed with %d\n", reg, rc);
-		return rc;
-	}
-
-	return 0;
+	return rc;
 }
 
 static int rradc_read(struct rradc_chip *rr_adc, u16 offset, u8 *data, int len)
@@ -294,14 +289,14 @@ static int rradc_read(struct rradc_chip *rr_adc, u16 offset, u8 *data, int len)
 	}
 
 	while (retry_cnt < FG_RR_ADC_COHERENT_CHECK_RETRY) {
-		rc = rradc_spmi_read(rr_adc, rr_adc->base + offset,
+		rc = regmap_bulk_read(rr_adc->regmap, rr_adc->base + offset,
 							data, len);
 		if (rc < 0) {
 			pr_err("rr_adc reg 0x%x failed :%d\n", offset, rc);
 			return rc;
 		}
 
-		rc = rradc_spmi_read(rr_adc, rr_adc->base + offset,
+		rc = regmap_bulk_read(rr_adc->regmap, rr_adc->base + offset,
 							data_check, len);
 		if (rc < 0) {
 			pr_err("rr_adc reg 0x%x failed :%d\n", offset, rc);
@@ -350,8 +345,8 @@ static int rradc_post_process_therm(struct rradc_chip *chip,
 	int64_t temp;
 
 	/* K = code/4 */
-	temp = div64_s64(adc_code, FG_ADC_RR_BATT_THERM_LSB_K);
-	temp *= FG_ADC_SCALE_MILLI_FACTOR;
+	temp = ((int64_t)adc_code * FG_ADC_SCALE_MILLI_FACTOR);
+	temp = div64_s64(temp, FG_ADC_RR_BATT_THERM_LSB_K);
 	*result_millidegc = temp - FG_ADC_KELVINMIL_CELSIUSMIL;
 
 	return 0;
@@ -372,7 +367,7 @@ static int rradc_post_process_volt(struct rradc_chip *chip,
 	return 0;
 }
 
-static int rradc_post_process_curr(struct rradc_chip *chip,
+static int rradc_post_process_usbin_curr(struct rradc_chip *chip,
 			struct rradc_chan_prop *prop, u16 adc_code,
 			int *result_ua)
 {
@@ -380,14 +375,54 @@ static int rradc_post_process_curr(struct rradc_chip *chip,
 
 	if (!prop)
 		return -EINVAL;
-
-	if (prop->channel == RR_ADC_USBIN_I)
-		scale = FG_ADC_RR_CURR_USBIN_INPUT_FACTOR_MIL;
-	else
-		scale = FG_ADC_RR_CURR_INPUT_FACTOR;
+	if (chip->revid_dev_node) {
+		switch (chip->pmic_fab_id->pmic_subtype) {
+		case PM660_SUBTYPE:
+			if (((chip->pmic_fab_id->tp_rev
+				>= FG_RR_TP_REV_VERSION1)
+			&& (chip->pmic_fab_id->tp_rev
+				<= FG_RR_TP_REV_VERSION2))
+			|| (chip->pmic_fab_id->tp_rev
+				>= FG_RR_TP_REV_VERSION3)) {
+				chip->volt = div64_s64(chip->volt, 1000);
+				chip->volt = chip->volt *
+					FG_ADC_RR_CURR_USBIN_660_FACTOR_MIL;
+				chip->volt = FG_ADC_RR_CURR_USBIN_660_UV_VAL -
+					(chip->volt);
+				chip->volt = div64_s64(1000000000, chip->volt);
+				scale = chip->volt;
+			} else
+				scale = FG_ADC_RR_CURR_USBIN_INPUT_FACTOR_MIL;
+			break;
+		case PMI8998_SUBTYPE:
+			scale = FG_ADC_RR_CURR_USBIN_INPUT_FACTOR_MIL;
+			break;
+		default:
+			pr_err("No PMIC subtype found\n");
+			return -EINVAL;
+		}
+	}
 
 	/* scale * V/A; 2.5V ADC full scale */
 	ua = ((int64_t)adc_code * scale);
+	ua *= (FG_ADC_RR_FS_VOLTAGE_MV * FG_ADC_SCALE_MILLI_FACTOR);
+	ua = div64_s64(ua, (FG_MAX_ADC_READINGS * 1000));
+	*result_ua = ua;
+
+	return 0;
+}
+
+static int rradc_post_process_dcin_curr(struct rradc_chip *chip,
+			struct rradc_chan_prop *prop, u16 adc_code,
+			int *result_ua)
+{
+	int64_t ua = 0;
+
+	if (!prop)
+		return -EINVAL;
+
+	/* 0.5 V/A; 2.5V ADC full scale */
+	ua = ((int64_t)adc_code * FG_ADC_RR_CURR_INPUT_FACTOR);
 	ua *= (FG_ADC_RR_FS_VOLTAGE_MV * FG_ADC_SCALE_MILLI_FACTOR);
 	ua = div64_s64(ua, (FG_MAX_ADC_READINGS * 1000));
 	*result_ua = ua;
@@ -610,13 +645,13 @@ static const struct rradc_channels rradc_chans[] = {
 			BIT(IIO_CHAN_INFO_RAW) | BIT(IIO_CHAN_INFO_PROCESSED),
 			FG_ADC_RR_SKIN_TEMP_LSB, FG_ADC_RR_SKIN_TEMP_MSB,
 			FG_ADC_RR_AUX_THERM_STS)
-	RR_ADC_CHAN_CURRENT("usbin_i", &rradc_post_process_curr,
+	RR_ADC_CHAN_CURRENT("usbin_i", &rradc_post_process_usbin_curr,
 			FG_ADC_RR_USB_IN_I_LSB, FG_ADC_RR_USB_IN_I_MSB,
 			FG_ADC_RR_USB_IN_I_STS)
 	RR_ADC_CHAN_VOLT("usbin_v", &rradc_post_process_volt,
 			FG_ADC_RR_USB_IN_V_LSB, FG_ADC_RR_USB_IN_V_MSB,
 			FG_ADC_RR_USB_IN_V_STS)
-	RR_ADC_CHAN_CURRENT("dcin_i", &rradc_post_process_curr,
+	RR_ADC_CHAN_CURRENT("dcin_i", &rradc_post_process_dcin_curr,
 			FG_ADC_RR_DC_IN_I_LSB, FG_ADC_RR_DC_IN_I_MSB,
 			FG_ADC_RR_DC_IN_I_STS)
 	RR_ADC_CHAN_VOLT("dcin_v", &rradc_post_process_volt,
@@ -654,35 +689,27 @@ static const struct rradc_channels rradc_chans[] = {
 static int rradc_enable_continuous_mode(struct rradc_chip *chip)
 {
 	int rc = 0;
-	u8 result, value;
 
 	/* Clear channel log */
-	rc = rradc_spmi_read(chip, chip->base + FG_ADC_RR_ADC_LOG,
-			&result, 1);
-	value = (result) | FG_ADC_RR_ADC_LOG_CLR_CTRL;
-	rc = rradc_spmi_write(chip, chip->base + FG_ADC_RR_ADC_LOG,
-			&value, 1);
+	rc = rradc_masked_write(chip, FG_ADC_RR_ADC_LOG,
+			FG_ADC_RR_ADC_LOG_CLR_CTRL,
+			FG_ADC_RR_ADC_LOG_CLR_CTRL);
 	if (rc < 0) {
 		pr_err("log ctrl update to clear failed:%d\n", rc);
 		return rc;
 	}
 
-	rc = rradc_spmi_read(chip, chip->base + FG_ADC_RR_ADC_LOG,
-			&result, 1);
-	value = (result) & ~(FG_ADC_RR_ADC_LOG_CLR_CTRL);
-	rc = rradc_spmi_write(chip, chip->base + FG_ADC_RR_ADC_LOG,
-			&value, 1);
+	rc = rradc_masked_write(chip, FG_ADC_RR_ADC_LOG,
+		FG_ADC_RR_ADC_LOG_CLR_CTRL, 0);
 	if (rc < 0) {
 		pr_err("log ctrl update to not clear failed:%d\n", rc);
 		return rc;
 	}
 
 	/* Switch to continuous mode */
-	rc = rradc_spmi_read(chip, chip->base + FG_ADC_RR_RR_ADC_CTL,
-			&result, 1);
-	value = (result) | FG_ADC_RR_ADC_CTL_CONTINUOUS_SEL;
-	rc = rradc_spmi_write(chip, chip->base + FG_ADC_RR_RR_ADC_CTL,
-			&value, 1);
+	rc = rradc_masked_write(chip, FG_ADC_RR_RR_ADC_CTL,
+		FG_ADC_RR_ADC_CTL_CONTINUOUS_SEL_MASK,
+		FG_ADC_RR_ADC_CTL_CONTINUOUS_SEL);
 	if (rc < 0) {
 		pr_err("Update to continuous mode failed:%d\n", rc);
 		return rc;
@@ -694,20 +721,34 @@ static int rradc_enable_continuous_mode(struct rradc_chip *chip)
 static int rradc_disable_continuous_mode(struct rradc_chip *chip)
 {
 	int rc = 0;
-	u8 result, value;
 
 	/* Switch to non continuous mode */
-	rc = rradc_spmi_read(chip, chip->base + FG_ADC_RR_RR_ADC_CTL,
-			&result, 1);
-	value = (result) & ~(FG_ADC_RR_ADC_CTL_CONTINUOUS_SEL);
-	rc = rradc_spmi_write(chip, chip->base + FG_ADC_RR_RR_ADC_CTL,
-			&value, 1);
+	rc = rradc_masked_write(chip, FG_ADC_RR_RR_ADC_CTL,
+			FG_ADC_RR_ADC_CTL_CONTINUOUS_SEL_MASK, 0);
 	if (rc < 0) {
 		pr_err("Update to non-continuous mode failed:%d\n", rc);
 		return rc;
 	}
 
 	return rc;
+}
+
+static bool rradc_is_usb_present(struct rradc_chip *chip)
+{
+	union power_supply_propval pval;
+	int rc;
+	bool usb_present = false;
+
+	if (!chip->usb_trig) {
+		pr_debug("USB property not present\n");
+		return usb_present;
+	}
+
+	rc = power_supply_get_property(chip->usb_trig,
+			POWER_SUPPLY_PROP_PRESENT, &pval);
+	usb_present = (rc < 0) ? 0 : pval.intval;
+
+	return usb_present;
 }
 
 static int rradc_check_status_ready_with_retry(struct rradc_chip *chip,
@@ -729,8 +770,17 @@ static int rradc_check_status_ready_with_retry(struct rradc_chip *chip,
 			(retry_cnt < FG_RR_CONV_MAX_RETRY_CNT)) {
 		pr_debug("%s is not ready; nothing to read:0x%x\n",
 			rradc_chans[prop->channel].datasheet_name, buf[0]);
-		usleep_range(FG_RR_CONV_CONTINUOUS_TIME_MIN_US,
-				FG_RR_CONV_CONTINUOUS_TIME_MAX_US);
+
+		if (((prop->channel == RR_ADC_CHG_TEMP) ||
+			(prop->channel == RR_ADC_SKIN_TEMP) ||
+			(prop->channel == RR_ADC_USBIN_I)) &&
+					((!rradc_is_usb_present(chip)))) {
+			pr_debug("USB not present for %d\n", prop->channel);
+			rc = -ENODATA;
+			break;
+		}
+
+		msleep(FG_RR_CONV_CONTINUOUS_TIME_MIN_MS);
 		retry_cnt++;
 		rc = rradc_read(chip, status, buf, 1);
 		if (rc < 0) {
@@ -748,7 +798,7 @@ static int rradc_check_status_ready_with_retry(struct rradc_chip *chip,
 static int rradc_read_channel_with_continuous_mode(struct rradc_chip *chip,
 			struct rradc_chan_prop *prop, u8 *buf)
 {
-	int rc = 0;
+	int rc = 0, ret = 0;
 	u16 status = 0;
 
 	rc = rradc_enable_continuous_mode(chip);
@@ -761,46 +811,42 @@ static int rradc_read_channel_with_continuous_mode(struct rradc_chip *chip,
 	rc = rradc_read(chip, status, buf, 1);
 	if (rc < 0) {
 		pr_err("status read failed:%d\n", rc);
-		return rc;
+		ret = rc;
+		goto disable;
 	}
 
 	rc = rradc_check_status_ready_with_retry(chip, prop,
 						buf, status);
 	if (rc < 0) {
 		pr_err("Status read failed:%d\n", rc);
-		return rc;
+		ret = rc;
 	}
 
+disable:
 	rc = rradc_disable_continuous_mode(chip);
 	if (rc < 0) {
 		pr_err("Failed to switch to non continuous mode\n");
-		return rc;
+		ret = rc;
 	}
 
-	return rc;
+	return ret;
 }
 
 static int rradc_enable_batt_id_channel(struct rradc_chip *chip, bool enable)
 {
 	int rc = 0;
-	u8 result, value;
 
 	if (enable) {
-		rc = rradc_spmi_read(chip, chip->base + FG_ADC_RR_BATT_ID_CTRL,
-				&result, 1);
-		value = (result) | FG_ADC_RR_BATT_ID_CTRL_CHANNEL_CONV;
-		rc = rradc_spmi_write(chip, chip->base + FG_ADC_RR_BATT_ID_CTRL,
-				&value, 1);
+		rc = rradc_masked_write(chip, FG_ADC_RR_BATT_ID_CTRL,
+				FG_ADC_RR_BATT_ID_CTRL_CHANNEL_CONV,
+				FG_ADC_RR_BATT_ID_CTRL_CHANNEL_CONV);
 		if (rc < 0) {
 			pr_err("Enabling BATT ID channel failed:%d\n", rc);
 			return rc;
 		}
 	} else {
-		rc = rradc_spmi_read(chip, chip->base + FG_ADC_RR_BATT_ID_CTRL,
-				&result, 1);
-		value = (result) & ~(FG_ADC_RR_BATT_ID_CTRL_CHANNEL_CONV);
-		rc = rradc_spmi_write(chip, chip->base + FG_ADC_RR_BATT_ID_CTRL,
-				&value, 1);
+		rc = rradc_masked_write(chip, FG_ADC_RR_BATT_ID_CTRL,
+				FG_ADC_RR_BATT_ID_CTRL_CHANNEL_CONV, 0);
 		if (rc < 0) {
 			pr_err("Disabling BATT ID channel failed:%d\n", rc);
 			return rc;
@@ -813,8 +859,7 @@ static int rradc_enable_batt_id_channel(struct rradc_chip *chip, bool enable)
 static int rradc_do_batt_id_conversion(struct rradc_chip *chip,
 		struct rradc_chan_prop *prop, u16 *data, u8 *buf)
 {
-	int rc = 0, ret = 0;
-	u8 result, value;
+	int rc = 0, ret = 0, batt_id_delay;
 
 	rc = rradc_enable_batt_id_channel(chip, true);
 	if (rc < 0) {
@@ -822,11 +867,17 @@ static int rradc_do_batt_id_conversion(struct rradc_chip *chip,
 		return rc;
 	}
 
-	rc = rradc_spmi_read(chip, chip->base + FG_ADC_RR_BATT_ID_TRIGGER,
-			&result, 1);
-	value = (result) | FG_ADC_RR_BATT_ID_TRIGGER_CTL;
-	rc = rradc_spmi_write(chip, chip->base + FG_ADC_RR_BATT_ID_TRIGGER,
-			&value, 1);
+	if (chip->batt_id_delay != -EINVAL) {
+		batt_id_delay = chip->batt_id_delay << BATT_ID_SETTLE_SHIFT;
+		rc = rradc_masked_write(chip, FG_ADC_RR_BATT_ID_CFG,
+				batt_id_delay, batt_id_delay);
+		if (rc < 0)
+			pr_err("BATT_ID settling time config failed:%d\n", rc);
+	}
+
+	rc = rradc_masked_write(chip, FG_ADC_RR_BATT_ID_TRIGGER,
+				FG_ADC_RR_BATT_ID_TRIGGER_CTL,
+				FG_ADC_RR_BATT_ID_TRIGGER_CTL);
 	if (rc < 0) {
 		pr_err("BATT_ID trigger set failed:%d\n", rc);
 		ret = rc;
@@ -842,11 +893,8 @@ static int rradc_do_batt_id_conversion(struct rradc_chip *chip,
 		ret = rc;
 	}
 
-	rc = rradc_spmi_read(chip, chip->base + FG_ADC_RR_BATT_ID_TRIGGER,
-			&result, 1);
-	value = (result) & ~(FG_ADC_RR_BATT_ID_TRIGGER_CTL);
-	rc = rradc_spmi_write(chip, chip->base + FG_ADC_RR_BATT_ID_TRIGGER,
-			&value, 1);
+	rc = rradc_masked_write(chip, FG_ADC_RR_BATT_ID_TRIGGER,
+			FG_ADC_RR_BATT_ID_TRIGGER_CTL, 0);
 	if (rc < 0) {
 		pr_err("BATT_ID trigger re-set failed:%d\n", rc);
 		ret = rc;
@@ -868,7 +916,6 @@ static int rradc_do_conversion(struct rradc_chip *chip,
 	u8 buf[6];
 	u16 offset = 0, batt_id_5 = 0, batt_id_15 = 0, batt_id_150 = 0;
 	u16 status = 0;
-	u8 result, value;
 
 	mutex_lock(&chip->lock);
 
@@ -882,13 +929,9 @@ static int rradc_do_conversion(struct rradc_chip *chip,
 		break;
 	case RR_ADC_USBIN_V:
 		/* Force conversion every cycle */
-		rc = rradc_spmi_read(chip,
-				chip->base + FG_ADC_RR_USB_IN_V_TRIGGER,
-				&result, 1);
-		value = (result) | FG_ADC_RR_USB_IN_V_EVERY_CYCLE;
-		rc = rradc_spmi_write(chip,
-				chip->base + FG_ADC_RR_USB_IN_V_TRIGGER,
-				&value, 1);
+		rc = rradc_masked_write(chip, FG_ADC_RR_USB_IN_V_TRIGGER,
+				FG_ADC_RR_USB_IN_V_EVERY_CYCLE_MASK,
+				FG_ADC_RR_USB_IN_V_EVERY_CYCLE);
 		if (rc < 0) {
 			pr_err("Force every cycle update failed:%d\n", rc);
 			goto fail;
@@ -901,13 +944,32 @@ static int rradc_do_conversion(struct rradc_chip *chip,
 		}
 
 		/* Restore usb_in trigger */
-		rc = rradc_spmi_read(chip,
-				chip->base + FG_ADC_RR_USB_IN_V_TRIGGER,
-				&result, 1);
-		value = (result) & ~(FG_ADC_RR_USB_IN_V_EVERY_CYCLE);
-		rc = rradc_spmi_write(chip,
-				chip->base + FG_ADC_RR_USB_IN_V_TRIGGER,
-				&value, 1);
+		rc = rradc_masked_write(chip, FG_ADC_RR_USB_IN_V_TRIGGER,
+				FG_ADC_RR_USB_IN_V_EVERY_CYCLE_MASK, 0);
+		if (rc < 0) {
+			pr_err("Restore every cycle update failed:%d\n", rc);
+			goto fail;
+		}
+		break;
+	case RR_ADC_DIE_TEMP:
+		/* Force conversion every cycle */
+		rc = rradc_masked_write(chip, FG_ADC_RR_PMI_DIE_TEMP_TRIGGER,
+				FG_ADC_RR_USB_IN_V_EVERY_CYCLE_MASK,
+				FG_ADC_RR_USB_IN_V_EVERY_CYCLE);
+		if (rc < 0) {
+			pr_err("Force every cycle update failed:%d\n", rc);
+			goto fail;
+		}
+
+		rc = rradc_read_channel_with_continuous_mode(chip, prop, buf);
+		if (rc < 0) {
+			pr_err("Error reading in continuous mode:%d\n", rc);
+			goto fail;
+		}
+
+		/* Restore aux_therm trigger */
+		rc = rradc_masked_write(chip, FG_ADC_RR_PMI_DIE_TEMP_TRIGGER,
+				FG_ADC_RR_USB_IN_V_EVERY_CYCLE_MASK, 0);
 		if (rc < 0) {
 			pr_err("Restore every cycle update failed:%d\n", rc);
 			goto fail;
@@ -1008,6 +1070,21 @@ static int rradc_read_raw(struct iio_dev *indio_dev,
 
 	switch (mask) {
 	case IIO_CHAN_INFO_PROCESSED:
+		if (((chip->pmic_fab_id->tp_rev
+				>= FG_RR_TP_REV_VERSION1)
+		&& (chip->pmic_fab_id->tp_rev
+				<= FG_RR_TP_REV_VERSION2))
+		|| (chip->pmic_fab_id->tp_rev
+				>= FG_RR_TP_REV_VERSION3)) {
+			if (chan->address == RR_ADC_USBIN_I) {
+				prop = &chip->chan_props[RR_ADC_USBIN_V];
+				rc = rradc_do_conversion(chip, prop, &adc_code);
+				if (rc)
+					break;
+				prop->scale(chip, prop, adc_code, &chip->volt);
+			}
+		}
+
 		prop = &chip->chan_props[chan->address];
 		rc = rradc_do_conversion(chip, prop, &adc_code);
 		if (rc)
@@ -1066,6 +1143,21 @@ static int rradc_get_dt_data(struct rradc_chip *chip, struct device_node *node)
 		return rc;
 	}
 
+	chip->batt_id_delay = -EINVAL;
+
+	rc = of_property_read_u32(node, "qcom,batt-id-delay-ms",
+			&chip->batt_id_delay);
+	if (!rc) {
+		for (i = 0; i < RRADC_BATT_ID_DELAY_MAX; i++) {
+			if (chip->batt_id_delay == batt_id_delays[i])
+				break;
+		}
+		if (i == RRADC_BATT_ID_DELAY_MAX)
+			pr_err("Invalid batt_id_delay, rc=%d\n", rc);
+		else
+			chip->batt_id_delay = i;
+	}
+
 	chip->base = base;
 	chip->revid_dev_node = of_parse_phandle(node, "qcom,pmic-revid", 0);
 	if (chip->revid_dev_node) {
@@ -1076,6 +1168,9 @@ static int rradc_get_dt_data(struct rradc_chip *chip, struct device_node *node)
 				pr_err("Unable to get pmic_revid rc=%d\n", rc);
 			return rc;
 		}
+
+		if (!chip->pmic_fab_id)
+			return -EINVAL;
 
 		if (chip->pmic_fab_id->fab_id == -EINVAL) {
 			rc = chip->pmic_fab_id->fab_id;
@@ -1106,11 +1201,10 @@ static int rradc_get_dt_data(struct rradc_chip *chip, struct device_node *node)
 	return 0;
 }
 
-static int rradc_probe(struct spmi_device *spmi)
+static int rradc_probe(struct platform_device *pdev)
 {
-	struct device_node *node = spmi->dev.of_node;
-	struct device *dev = &(spmi->dev);
-	struct resource *res;
+	struct device_node *node = pdev->dev.of_node;
+	struct device *dev = &pdev->dev;
 	struct iio_dev *indio_dev;
 	struct rradc_chip *chip;
 	int rc = 0;
@@ -1120,20 +1214,11 @@ static int rradc_probe(struct spmi_device *spmi)
 		return -ENOMEM;
 
 	chip = iio_priv(indio_dev);
-	chip->regmap = dev_get_regmap(&(spmi->dev), NULL);
+	chip->regmap = dev_get_regmap(pdev->dev.parent, NULL);
 	if (!chip->regmap) {
-		pr_debug("Couldn't get parent's regmap\n");
-	}
-
-	chip->spmi = spmi;
-	res = spmi_get_resource(spmi, NULL, IORESOURCE_MEM, 0);
-	if (!res) {
-		pr_err("RRADC No base address definition\n");
+		dev_err(&pdev->dev, "Couldn't get parent's regmap\n");
 		return -EINVAL;
 	}
-
-	chip->slave = spmi->sid;
-	chip->offset = res->start;
 
 	chip->dev = dev;
 	mutex_init(&chip->lock);
@@ -1144,11 +1229,15 @@ static int rradc_probe(struct spmi_device *spmi)
 
 	indio_dev->dev.parent = dev;
 	indio_dev->dev.of_node = node;
-	indio_dev->name = spmi->name;
+	indio_dev->name = pdev->name;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->info = &rradc_info;
 	indio_dev->channels = chip->iio_chans;
 	indio_dev->num_channels = chip->nchannels;
+
+	chip->usb_trig = power_supply_get_by_name("usb");
+	if (!chip->usb_trig)
+		pr_debug("Error obtaining usb power supply\n");
 
 	return devm_iio_device_register(dev, indio_dev);
 }
@@ -1157,26 +1246,16 @@ static const struct of_device_id rradc_match_table[] = {
 	{ .compatible = "qcom,rradc" },
 	{ }
 };
+MODULE_DEVICE_TABLE(of, rradc_match_table);
 
-static struct spmi_driver qpnp_rradc_driver = {
+static struct platform_driver rradc_driver = {
 	.driver		= {
 		.name		= "qcom-rradc",
 		.of_match_table	= rradc_match_table,
 	},
 	.probe = rradc_probe,
 };
-
-static int __init qpnp_rradc_init(void)
-{
-	return spmi_driver_register(&qpnp_rradc_driver);
-}
-module_init(qpnp_rradc_init);
-
-static void __exit qpnp_rradc_exit(void)
-{
-	spmi_driver_unregister(&qpnp_rradc_driver);
-}
-module_exit(qpnp_rradc_exit);
+module_platform_driver(rradc_driver);
 
 MODULE_DESCRIPTION("QPNP PMIC RR ADC driver");
 MODULE_LICENSE("GPL v2");

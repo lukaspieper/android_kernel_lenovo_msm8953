@@ -32,7 +32,7 @@
 
 #define SNDRV_COMPRESS_VERSION SNDRV_PROTOCOL_VERSION(0, 1, 2)
 /**
- * struct snd_compressed_buffer: compressed buffer
+ * struct snd_compressed_buffer - compressed buffer
  * @fragment_size: size of buffer fragment in bytes
  * @fragments: number of such fragments
  */
@@ -42,7 +42,7 @@ struct snd_compressed_buffer {
 } __attribute__((packed, aligned(4)));
 
 /**
- * struct snd_compr_params: compressed stream params
+ * struct snd_compr_params - compressed stream params
  * @buffer: buffer description
  * @codec: codec parameters
  * @no_wake_mode: dont wake on fragment elapsed
@@ -54,7 +54,7 @@ struct snd_compr_params {
 } __attribute__((packed, aligned(4)));
 
 /**
- * struct snd_compr_tstamp: timestamp descriptor
+ * struct snd_compr_tstamp - timestamp descriptor
  * @byte_offset: Byte offset in ring buffer to DSP
  * @copied_total: Total number of bytes copied from/to ring buffer to/by DSP
  * @pcm_frames: Frames decoded or encoded by DSP. This field will evolve by
@@ -70,13 +70,13 @@ struct snd_compr_tstamp {
 	__u32 pcm_frames;
 	__u32 pcm_io_frames;
 	__u32 sampling_rate;
-	uint64_t timestamp;
+	__u64 timestamp;
 } __attribute__((packed, aligned(4)));
 
 /**
- * struct snd_compr_avail: avail descriptor
+ * struct snd_compr_avail - avail descriptor
  * @avail: Number of bytes available in ring buffer for writing/reading
- * @tstamp: timestamp infomation
+ * @tstamp: timestamp information
  */
 struct snd_compr_avail {
 	__u64 avail;
@@ -89,7 +89,7 @@ enum snd_compr_direction {
 };
 
 /**
- * struct snd_compr_caps: caps descriptor
+ * struct snd_compr_caps - caps descriptor
  * @codecs: pointer to array of codecs
  * @direction: direction supported. Of type snd_compr_direction
  * @min_fragment_size: minimum fragment supported by DSP
@@ -111,7 +111,7 @@ struct snd_compr_caps {
 } __attribute__((packed, aligned(4)));
 
 /**
- * struct snd_compr_codec_caps: query capability of codec
+ * struct snd_compr_codec_caps - query capability of codec
  * @codec: codec for which capability is queried
  * @num_descriptors: number of codec descriptors
  * @descriptor: array of codec capability descriptor
@@ -128,25 +128,57 @@ struct snd_compr_codec_caps {
  * @reserved: reserved for furture use
  */
 struct snd_compr_audio_info {
-	uint32_t frame_size;
-	uint32_t reserved[15];
+	__u32 frame_size;
+	__u32 reserved[15];
 } __attribute__((packed, aligned(4)));
 
+#define SNDRV_COMPRESS_RENDER_MODE_AUDIO_MASTER 0
+#define SNDRV_COMPRESS_RENDER_MODE_STC_MASTER 1
+#define SNDRV_COMPRESS_RENDER_MODE_TTP 2
+#define SNDRV_COMPRESS_RENDER_MODE_TTP_PASS_THROUGH 3
+
+#define SNDRV_COMPRESS_CLK_REC_MODE_NONE 0
+#define SNDRV_COMPRESS_CLK_REC_MODE_AUTO 1
+
 /**
+ * enum sndrv_compress_encoder
  * @SNDRV_COMPRESS_ENCODER_PADDING: no of samples appended by the encoder at the
  * end of the track
  * @SNDRV_COMPRESS_ENCODER_DELAY: no of samples inserted by the encoder at the
  * beginning of the track
+ * @SNDRV_COMPRESS_PATH_DELAY: dsp path delay in microseconds
+ * @SNDRV_COMPRESS_RENDER_MODE: dsp render mode (audio master or stc)
+ * @SNDRV_COMPRESS_CLK_REC_MODE: clock recovery mode ( none or auto)
+ * @SNDRV_COMPRESS_RENDER_WINDOW: render window
+ * @SNDRV_COMPRESS_START_DELAY: start delay
+ * @SNDRV_COMPRESS_ENABLE_ADJUST_SESSION_CLOCK: enable dsp drift correction
+ * @SNDRV_COMPRESS_ADJUST_SESSION_CLOCK: set drift correction value
  */
-enum {
+enum sndrv_compress_encoder {
 	SNDRV_COMPRESS_ENCODER_PADDING = 1,
 	SNDRV_COMPRESS_ENCODER_DELAY = 2,
 	SNDRV_COMPRESS_MIN_BLK_SIZE = 3,
 	SNDRV_COMPRESS_MAX_BLK_SIZE = 4,
+	SNDRV_COMPRESS_PATH_DELAY = 5,
+	SNDRV_COMPRESS_RENDER_MODE = 6,
+	SNDRV_COMPRESS_CLK_REC_MODE = 7,
+	SNDRV_COMPRESS_RENDER_WINDOW = 8,
+	SNDRV_COMPRESS_START_DELAY = 9,
+	SNDRV_COMPRESS_ENABLE_ADJUST_SESSION_CLOCK = 10,
+	SNDRV_COMPRESS_ADJUST_SESSION_CLOCK = 11,
 };
 
+#define SNDRV_COMPRESS_PATH_DELAY SNDRV_COMPRESS_PATH_DELAY
+#define SNDRV_COMPRESS_RENDER_MODE SNDRV_COMPRESS_RENDER_MODE
+#define SNDRV_COMPRESS_CLK_REC_MODE SNDRV_COMPRESS_CLK_REC_MODE
+#define SNDRV_COMPRESS_RENDER_WINDOW SNDRV_COMPRESS_RENDER_WINDOW
+#define SNDRV_COMPRESS_START_DELAY SNDRV_COMPRESS_START_DELAY
+#define SNDRV_COMPRESS_ENABLE_ADJUST_SESSION_CLOCK \
+			SNDRV_COMPRESS_ENABLE_ADJUST_SESSION_CLOCK
+#define SNDRV_COMPRESS_ADJUST_SESSION_CLOCK SNDRV_COMPRESS_ADJUST_SESSION_CLOCK
+
 /**
- * struct snd_compr_metadata: compressed stream metadata
+ * struct snd_compr_metadata - compressed stream metadata
  * @key: key id
  * @value: key value
  */
@@ -204,6 +236,5 @@ struct snd_compr_metadata {
 #define SND_COMPR_TRIGGER_DRAIN 7 /*FIXME move this to pcm.h */
 #define SND_COMPR_TRIGGER_NEXT_TRACK 8
 #define SND_COMPR_TRIGGER_PARTIAL_DRAIN 9
-
-#define SNDRV_COMPRESS_METADATA_MODE          _IOW('C', 0x99, bool)
+#define SNDRV_COMPRESS_DSP_POSITION 10
 #endif

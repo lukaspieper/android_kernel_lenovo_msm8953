@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -482,22 +482,26 @@
 #define gpll0_main_mock_src_val		3   /* usb30_mock_utmi_clk_src */
 
 #define gpll0_main_div2_usb3_src_val	2   /* usb30_master_clk_src
-					       rbcpr_gfx_clk_src */
+					     * rbcpr_gfx_clk_src
+					     */
 #define gpll0_main_div2_src_val		4
 #define gpll0_main_div2_cci_src_val	3   /* cci_clk_src */
 #define gpll0_main_div2_mm_src_val	5   /* gfx3d_clk_src vfe0_clk_src
-					       vfe1_clk_src cpp_clk_src
-					       csi0_clk_src csi0p_clk_src
-					       csi1p_clk_src csi2p_clk_src */
+					     * vfe1_clk_src cpp_clk_src
+					     * csi0_clk_src csi0p_clk_src
+					     * csi1p_clk_src csi2p_clk_src
+					     */
 #define gpll0_main_div2_axi_src_val	6   /* apss_axi_clk_src */
 
 #define gpll2_src_val			4   /* vfe0_clk_src  vfe1_clk_src
-					       cpp_clk_src   csi0_clk_src
-					       csi0p_clk_src csi1p_clk_src
-					       csi2p_clk_src */
+					     * cpp_clk_src   csi0_clk_src
+					     * csi0p_clk_src csi1p_clk_src
+					     * csi2p_clk_src
+					     */
 
 #define gpll2_out_main_src_val		5   /* jpeg0_clk_src csi1_clk_src
-					      csi2_clk_src */
+					     * csi2_clk_src
+					     */
 #define gpll2_vcodec_src_val		3   /* vcodec0_clk_src */
 
 #define gpll3_src_val			2   /* gfx3d_clk_src */
@@ -513,12 +517,14 @@
 #define gpll6_main_div2_mock_src_val    2   /* usb30_mock_utmi_clk_src */
 
 #define gpll6_main_div2_src_val		5   /* mclk0_clk_src mclk1_clk_src
-					       mclk2_clk_src mclk3_clk_src */
+					     * mclk2_clk_src mclk3_clk_src
+					     */
 #define gpll6_main_div2_gfx_src_val	6   /* gfx3d_clk_src */
 
 #define gpll6_aux_src_val		2  /* gp1_clk_src gp2_clk_src
-					      gp3_clk_src camss_gp0_clk_src
-					      camss_gp1_clk_src */
+					    * gp3_clk_src camss_gp0_clk_src
+					    * camss_gp1_clk_src
+					    */
 
 #define gpll6_out_aux_src_val		3   /* mdp_clk_src cpp_clk_src */
 

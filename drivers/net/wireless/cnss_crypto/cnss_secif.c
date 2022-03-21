@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, 2015, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,7 +17,7 @@
 /* APIs for calling crypto routines from kernel
  */
 struct crypto_ahash *wcnss_wlan_crypto_alloc_ahash(const char *alg_name,
-							 u32 type, u32 mask)
+						   u32 type, u32 mask)
 {
 	return crypto_alloc_ahash(alg_name, type, mask);
 }
@@ -36,18 +36,11 @@ void wcnss_wlan_crypto_free_ahash(struct crypto_ahash *tfm)
 EXPORT_SYMBOL(wcnss_wlan_crypto_free_ahash);
 
 int wcnss_wlan_crypto_ahash_setkey(struct crypto_ahash *tfm, const u8 *key,
-			unsigned int keylen)
+				   unsigned int keylen)
 {
 	return crypto_ahash_setkey(tfm, key, keylen);
 }
 EXPORT_SYMBOL(wcnss_wlan_crypto_ahash_setkey);
-
-struct crypto_ablkcipher *
-wcnss_wlan_crypto_alloc_ablkcipher(const char *alg_name, u32 type, u32 mask)
-{
-	return crypto_alloc_ablkcipher(alg_name, type, mask);
-}
-EXPORT_SYMBOL(wcnss_wlan_crypto_alloc_ablkcipher);
 
 void wcnss_wlan_ablkcipher_request_free(struct ablkcipher_request *req)
 {
@@ -136,7 +129,7 @@ static inline void padding(u8 *lastb, u8 *pad, u16 length)
 }
 
 void wcnss_wlan_cmac_calc_mic(struct crypto_cipher *tfm, u8 *m,
-				u16 length, u8 *mac)
+			      u16 length, u8 *mac)
 {
 	u8 x[AES_BLOCK_SIZE], y[AES_BLOCK_SIZE];
 	u8 m_last[AES_BLOCK_SIZE], padded[AES_BLOCK_SIZE];

@@ -13,7 +13,7 @@
 #include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/io.h>
-#include <linux/mutex.h>
+#include <linux/spinlock.h>
 #include <linux/atmel-ssc.h>
 #include <linux/slab.h>
 #include <linux/module.h>
@@ -21,7 +21,7 @@
 #include <linux/of.h>
 
 /* Serialize access to ssc_list and user count */
-static DEFINE_MUTEX(user_lock);
+static DEFINE_SPINLOCK(user_lock);
 static LIST_HEAD(ssc_list);
 
 struct ssc_device *ssc_request(unsigned int ssc_num)
@@ -29,11 +29,12 @@ struct ssc_device *ssc_request(unsigned int ssc_num)
 	int ssc_valid = 0;
 	struct ssc_device *ssc;
 
-	mutex_lock(&user_lock);
+	spin_lock(&user_lock);
 	list_for_each_entry(ssc, &ssc_list, list) {
 		if (ssc->pdev->dev.of_node) {
 			if (of_alias_get_id(ssc->pdev->dev.of_node, "ssc")
 				== ssc_num) {
+				ssc->pdev->id = ssc_num;
 				ssc_valid = 1;
 				break;
 			}
@@ -44,20 +45,20 @@ struct ssc_device *ssc_request(unsigned int ssc_num)
 	}
 
 	if (!ssc_valid) {
-		mutex_unlock(&user_lock);
+		spin_unlock(&user_lock);
 		pr_err("ssc: ssc%d platform device is missing\n", ssc_num);
 		return ERR_PTR(-ENODEV);
 	}
 
 	if (ssc->user) {
-		mutex_unlock(&user_lock);
+		spin_unlock(&user_lock);
 		dev_dbg(&ssc->pdev->dev, "module busy\n");
 		return ERR_PTR(-EBUSY);
 	}
 	ssc->user++;
-	mutex_unlock(&user_lock);
+	spin_unlock(&user_lock);
 
-	clk_prepare_enable(ssc->clk);
+	clk_prepare(ssc->clk);
 
 	return ssc;
 }
@@ -67,17 +68,17 @@ void ssc_free(struct ssc_device *ssc)
 {
 	bool disable_clk = true;
 
-	mutex_lock(&user_lock);
+	spin_lock(&user_lock);
 	if (ssc->user)
 		ssc->user--;
 	else {
 		disable_clk = false;
 		dev_dbg(&ssc->pdev->dev, "device already free\n");
 	}
-	mutex_unlock(&user_lock);
+	spin_unlock(&user_lock);
 
 	if (disable_clk)
-		clk_disable_unprepare(ssc->clk);
+		clk_unprepare(ssc->clk);
 }
 EXPORT_SYMBOL(ssc_free);
 
@@ -194,9 +195,9 @@ static int ssc_probe(struct platform_device *pdev)
 		return -ENXIO;
 	}
 
-	mutex_lock(&user_lock);
+	spin_lock(&user_lock);
 	list_add_tail(&ssc->list, &ssc_list);
-	mutex_unlock(&user_lock);
+	spin_unlock(&user_lock);
 
 	platform_set_drvdata(pdev, ssc);
 
@@ -210,9 +211,9 @@ static int ssc_remove(struct platform_device *pdev)
 {
 	struct ssc_device *ssc = platform_get_drvdata(pdev);
 
-	mutex_lock(&user_lock);
+	spin_lock(&user_lock);
 	list_del(&ssc->list);
-	mutex_unlock(&user_lock);
+	spin_unlock(&user_lock);
 
 	return 0;
 }
@@ -220,7 +221,6 @@ static int ssc_remove(struct platform_device *pdev)
 static struct platform_driver ssc_driver = {
 	.driver		= {
 		.name		= "ssc",
-		.owner		= THIS_MODULE,
 		.of_match_table	= of_match_ptr(atmel_ssc_dt_ids),
 	},
 	.id_table	= atmel_ssc_devtypes,

@@ -36,7 +36,13 @@
 #ifndef _DRM_H_
 #define _DRM_H_
 
-#if defined(__KERNEL__) || defined(__linux__)
+#if defined(__KERNEL__)
+
+#include <linux/types.h>
+#include <asm/ioctl.h>
+typedef unsigned int drm_handle_t;
+
+#elif defined(__linux__)
 
 #include <linux/types.h>
 #include <asm/ioctl.h>
@@ -54,8 +60,13 @@ typedef int32_t  __s32;
 typedef uint32_t __u32;
 typedef int64_t  __s64;
 typedef uint64_t __u64;
+typedef size_t   __kernel_size_t;
 typedef unsigned long drm_handle_t;
 
+#endif
+
+#if defined(__cplusplus)
+extern "C" {
 #endif
 
 #define DRM_NAME	"drm"	  /**< Name in kernel, /dev, and /proc */
@@ -129,11 +140,11 @@ struct drm_version {
 	int version_major;	  /**< Major version */
 	int version_minor;	  /**< Minor version */
 	int version_patchlevel;	  /**< Patch level */
-	size_t name_len;	  /**< Length of name buffer */
+	__kernel_size_t name_len;	  /**< Length of name buffer */
 	char __user *name;	  /**< Name of driver */
-	size_t date_len;	  /**< Length of date buffer */
+	__kernel_size_t date_len;	  /**< Length of date buffer */
 	char __user *date;	  /**< User-space buffer to hold date */
-	size_t desc_len;	  /**< Length of desc buffer */
+	__kernel_size_t desc_len;	  /**< Length of desc buffer */
 	char __user *desc;	  /**< User-space buffer to hold desc */
 };
 
@@ -143,7 +154,7 @@ struct drm_version {
  * \sa drmGetBusid() and drmSetBusId().
  */
 struct drm_unique {
-	size_t unique_len;	  /**< Length of unique */
+	__kernel_size_t unique_len;	  /**< Length of unique */
 	char __user *unique;	  /**< Unique name for driver instantiation */
 };
 
@@ -635,6 +646,7 @@ struct drm_gem_open {
 #define DRM_CAP_CURSOR_WIDTH		0x8
 #define DRM_CAP_CURSOR_HEIGHT		0x9
 #define DRM_CAP_ADDFB2_MODIFIERS	0x10
+#define DRM_CAP_PAGE_FLIP_TARGET	0x11
 
 /** DRM_IOCTL_GET_CAP ioctl argument type */
 struct drm_get_cap {
@@ -672,6 +684,7 @@ struct drm_set_client_cap {
 	__u64 value;
 };
 
+#define DRM_RDWR O_RDWR
 #define DRM_CLOEXEC O_CLOEXEC
 struct drm_prime_handle {
 	__u32 handle;
@@ -683,7 +696,15 @@ struct drm_prime_handle {
 	__s32 fd;
 };
 
-#include <drm/drm_mode.h>
+#if defined(__cplusplus)
+}
+#endif
+
+#include "drm_mode.h"
+
+#if defined(__cplusplus)
+extern "C" {
+#endif
 
 #define DRM_IOCTL_BASE			'd'
 #define DRM_IO(nr)			_IO(DRM_IOCTL_BASE,nr)
@@ -876,6 +897,10 @@ typedef struct drm_agp_binding drm_agp_binding_t;
 typedef struct drm_agp_info drm_agp_info_t;
 typedef struct drm_scatter_gather drm_scatter_gather_t;
 typedef struct drm_set_version drm_set_version_t;
+#endif
+
+#if defined(__cplusplus)
+}
 #endif
 
 #endif

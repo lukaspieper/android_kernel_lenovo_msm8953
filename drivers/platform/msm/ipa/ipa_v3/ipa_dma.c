@@ -28,10 +28,6 @@
 #define IPA_DMA_MAX_PKT_SZ 0xFFFF
 #define IPA_DMA_DUMMY_BUFF_SZ 8
 #define IPA_DMA_PREFETCH_WA_THRESHOLD 9
-#define IPA_DMA_MAX_PENDING_SYNC (IPA_SYS_DESC_FIFO_SZ / \
-	sizeof(struct sps_iovec) - 1)
-#define IPA_DMA_MAX_PENDING_ASYNC (IPA_DMA_SYS_DESC_MAX_FIFO_SZ / \
-	sizeof(struct sps_iovec) - 1)
 
 #define IPADMA_DRV_NAME "ipa_dma"
 
@@ -70,7 +66,7 @@
 	IPADMA_DBG_LOW("EXIT\n")
 
 #ifdef CONFIG_DEBUG_FS
-#define IPADMA_MAX_MSG_LEN 4096
+#define IPADMA_MAX_MSG_LEN 1024
 static char dbg_buff[IPADMA_MAX_MSG_LEN];
 static void ipa3_dma_debugfs_init(void);
 static void ipa3_dma_debugfs_destroy(void);
@@ -100,7 +96,7 @@ static void ipa3_dma_debugfs_destroy(void) {}
  * @total_uc_memcpy: total number of uc memcpy (statistics)
  */
 struct ipa3_dma_ctx {
-	unsigned enable_ref_cnt;
+	unsigned int enable_ref_cnt;
 	bool destroy_pending;
 	struct kmem_cache *ipa_dma_xfer_wrapper_cache;
 	struct mutex sync_lock;
@@ -131,7 +127,7 @@ static struct ipa3_dma_ctx *ipa3_dma_ctx;
  * @lock: lock for the reference count
  */
 struct ipa3_dma_init_refcnt_ctrl {
-	unsigned ref_cnt;
+	unsigned int ref_cnt;
 	struct mutex lock;
 };
 static struct ipa3_dma_init_refcnt_ctrl *ipa3_dma_init_refcnt_ctrl;
@@ -526,7 +522,7 @@ completed:
  *		-EINVAL: invalid params
  *		-EPERM: operation not permitted as ipa_dma isn't enable or
  *			initialized
- *		-SPS_ERROR: on sps faliures
+ *		-gsi_status : on GSI failures
  *		-EFAULT: other
  */
 int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
@@ -536,7 +532,6 @@ int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
 	int i = 0;
 	struct ipa3_sys_context *cons_sys;
 	struct ipa3_sys_context *prod_sys;
-	struct sps_iovec iov;
 	struct ipa3_dma_xfer_wrapper *xfer_descr = NULL;
 	struct ipa3_dma_xfer_wrapper *head_descr = NULL;
 	struct gsi_xfer_elem prod_xfer_elem;
@@ -561,12 +556,6 @@ int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
 		IPADMA_ERR("invalid len, %d\n", len);
 		return	-EINVAL;
 	}
-	if (ipa3_ctx->transport_prototype != IPA_TRANSPORT_TYPE_GSI) {
-		if (((u32)src != src) || ((u32)dest != dest)) {
-			IPADMA_ERR("Bad addr, only 32b addr supported for BAM");
-			return -EINVAL;
-		}
-	}
 	spin_lock_irqsave(&ipa3_dma_ctx->pending_lock, flags);
 	if (!ipa3_dma_ctx->enable_ref_cnt) {
 		IPADMA_ERR("can't memcpy, IPADMA isn't enabled\n");
@@ -575,14 +564,6 @@ int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
 	}
 	atomic_inc(&ipa3_dma_ctx->sync_memcpy_pending_cnt);
 	spin_unlock_irqrestore(&ipa3_dma_ctx->pending_lock, flags);
-	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_SPS) {
-		if (atomic_read(&ipa3_dma_ctx->sync_memcpy_pending_cnt) >=
-				IPA_DMA_MAX_PENDING_SYNC) {
-			atomic_dec(&ipa3_dma_ctx->sync_memcpy_pending_cnt);
-			IPADMA_ERR("Reached pending requests limit\n");
-			return -EFAULT;
-		}
-	}
 
 	ep_idx = ipa3_get_ep_mapping(IPA_CLIENT_MEMCPY_DMA_SYNC_CONS);
 	if (-1 == ep_idx) {
@@ -615,106 +596,91 @@ int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
 	mutex_lock(&ipa3_dma_ctx->sync_lock);
 	list_add_tail(&xfer_descr->link, &cons_sys->head_desc_list);
 	cons_sys->len++;
-	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
-		cons_xfer_elem.addr = dest;
-		cons_xfer_elem.len = len;
+	cons_xfer_elem.addr = dest;
+	cons_xfer_elem.len = len;
+	cons_xfer_elem.type = GSI_XFER_ELEM_DATA;
+	cons_xfer_elem.flags = GSI_XFER_FLAG_EOT;
+
+	prod_xfer_elem.addr = src;
+	prod_xfer_elem.len = len;
+	prod_xfer_elem.type = GSI_XFER_ELEM_DATA;
+	prod_xfer_elem.xfer_user_data = NULL;
+
+	/*
+	 * when copy is less than 9B we need to chain another dummy
+	 * copy so the total size will be larger (for ipav3.5)
+	 * for the consumer we have to prepare an additional credit
+	 */
+	prefetch_wa = ((ipa_get_hw_type() == IPA_HW_v3_5) &&
+		len < IPA_DMA_PREFETCH_WA_THRESHOLD);
+	if (prefetch_wa) {
+		cons_xfer_elem.xfer_user_data = NULL;
+		res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
+			&cons_xfer_elem, false);
+		if (res) {
+			IPADMA_ERR(
+				"Failed: gsi_queue_xfer dest descr res:%d\n",
+				res);
+			goto fail_send;
+		}
+		cons_xfer_elem.addr =
+			ipa3_dma_ctx->ipa_dma_dummy_dst_sync.phys_base;
+		cons_xfer_elem.len = IPA_DMA_DUMMY_BUFF_SZ;
 		cons_xfer_elem.type = GSI_XFER_ELEM_DATA;
 		cons_xfer_elem.flags = GSI_XFER_FLAG_EOT;
-
-		prod_xfer_elem.addr = src;
-		prod_xfer_elem.len = len;
+		cons_xfer_elem.xfer_user_data = xfer_descr;
+		res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
+			&cons_xfer_elem, true);
+		if (res) {
+			IPADMA_ERR(
+				"Failed: gsi_queue_xfer dummy dest descr res:%d\n",
+				res);
+			goto fail_send;
+		}
+		prod_xfer_elem.flags = GSI_XFER_FLAG_CHAIN;
+		res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
+			&prod_xfer_elem, false);
+		if (res) {
+			IPADMA_ERR(
+				"Failed: gsi_queue_xfer src descr res:%d\n",
+				res);
+			ipa_assert();
+			goto fail_send;
+		}
+		prod_xfer_elem.addr =
+			ipa3_dma_ctx->ipa_dma_dummy_src_sync.phys_base;
+		prod_xfer_elem.len = IPA_DMA_DUMMY_BUFF_SZ;
 		prod_xfer_elem.type = GSI_XFER_ELEM_DATA;
+		prod_xfer_elem.flags = GSI_XFER_FLAG_EOT;
 		prod_xfer_elem.xfer_user_data = NULL;
-
-		/*
-		 * when copy is less than 9B we need to chain another dummy
-		 * copy so the total size will be larger (for ipav3.5)
-		 * for the consumer we have to prepare an additional credit
-		 */
-		prefetch_wa = ((ipa_get_hw_type() == IPA_HW_v3_5) &&
-			len < IPA_DMA_PREFETCH_WA_THRESHOLD);
-		if (prefetch_wa) {
-			cons_xfer_elem.xfer_user_data = NULL;
-			res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
-				&cons_xfer_elem, false);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer dest descr res:%d\n",
-					res);
-				goto fail_send;
-			}
-			cons_xfer_elem.addr =
-				ipa3_dma_ctx->ipa_dma_dummy_dst_sync.phys_base;
-			cons_xfer_elem.len = IPA_DMA_DUMMY_BUFF_SZ;
-			cons_xfer_elem.type = GSI_XFER_ELEM_DATA;
-			cons_xfer_elem.flags = GSI_XFER_FLAG_EOT;
-			cons_xfer_elem.xfer_user_data = xfer_descr;
-			res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
-				&cons_xfer_elem, true);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer dummy dest descr res:%d\n",
-					res);
-				goto fail_send;
-			}
-			prod_xfer_elem.flags = GSI_XFER_FLAG_CHAIN;
-			res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
-				&prod_xfer_elem, false);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer src descr res:%d\n",
-					res);
-				ipa_assert();
-				goto fail_send;
-			}
-			prod_xfer_elem.addr =
-				ipa3_dma_ctx->ipa_dma_dummy_src_sync.phys_base;
-			prod_xfer_elem.len = IPA_DMA_DUMMY_BUFF_SZ;
-			prod_xfer_elem.type = GSI_XFER_ELEM_DATA;
-			prod_xfer_elem.flags = GSI_XFER_FLAG_EOT;
-			prod_xfer_elem.xfer_user_data = NULL;
-			res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
+		res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
 				&prod_xfer_elem, true);
-			if (res) {
-				IPADMA_ERR(
+		if (res) {
+			IPADMA_ERR(
 					"Failed: gsi_queue_xfer dummy src descr res:%d\n",
 					res);
 				ipa_assert();
 				goto fail_send;
 			}
-		} else {
-			cons_xfer_elem.xfer_user_data = xfer_descr;
-			res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
-				&cons_xfer_elem, true);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer dest descr res:%d\n",
-					res);
-				goto fail_send;
-			}
-			prod_xfer_elem.flags = GSI_XFER_FLAG_EOT;
-			res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
-				&prod_xfer_elem, true);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer src descr res:%d\n",
-					res);
-				ipa_assert();
-				goto fail_send;
-			}
-		}
 	} else {
-		res = sps_transfer_one(cons_sys->ep->ep_hdl, dest, len,
-			NULL, 0);
+		cons_xfer_elem.xfer_user_data = xfer_descr;
+		res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
+			&cons_xfer_elem, true);
 		if (res) {
-			IPADMA_ERR("Failed: sps_transfer_one on dest descr\n");
+			IPADMA_ERR(
+				"Failed: gsi_queue_xfer dest descr res:%d\n",
+				res);
 			goto fail_send;
 		}
-		res = sps_transfer_one(prod_sys->ep->ep_hdl, src, len,
-			NULL, SPS_IOVEC_FLAG_EOT);
+		prod_xfer_elem.flags = GSI_XFER_FLAG_EOT;
+		res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
+			&prod_xfer_elem, true);
 		if (res) {
-			IPADMA_ERR("Failed: sps_transfer_one on src descr\n");
-			BUG();
+			IPADMA_ERR(
+			"Failed: gsi_queue_xfer src descr res:%d\n",
+			 res);
+			ipa_assert();
+			goto fail_send;
 		}
 	}
 	head_descr = list_first_entry(&cons_sys->head_desc_list,
@@ -733,45 +699,30 @@ int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
 
 	do {
 		/* wait for transfer to complete */
-		if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
-			res = gsi_poll_channel(cons_sys->ep->gsi_chan_hdl,
-				&gsi_notify);
-			if (res == GSI_STATUS_SUCCESS)
-				stop_polling = true;
-			else if (res != GSI_STATUS_POLL_EMPTY)
-				IPADMA_ERR(
-					"Failed: gsi_poll_chanel, returned %d loop#:%d\n",
-					res, i);
-		} else {
-			res = sps_get_iovec(cons_sys->ep->ep_hdl, &iov);
-			if (res)
-				IPADMA_ERR(
-					"Failed: get_iovec, returned %d loop#:%d\n",
-					res, i);
-			if (iov.addr != 0)
-				stop_polling = true;
-		}
+		res = gsi_poll_channel(cons_sys->ep->gsi_chan_hdl,
+			&gsi_notify);
+		if (res == GSI_STATUS_SUCCESS)
+			stop_polling = true;
+		else if (res != GSI_STATUS_POLL_EMPTY)
+			IPADMA_ERR(
+				"Failed: gsi_poll_chanel, returned %d loop#:%d\n",
+				res, i);
 		usleep_range(IPA_DMA_POLLING_MIN_SLEEP_RX,
 			IPA_DMA_POLLING_MAX_SLEEP_RX);
 		i++;
 	} while (!stop_polling);
 
-	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
-		/* for prefetch WA we will receive the length of the dummy
-		 * transfer in the event (because it is the second element)
-		 */
-		if (prefetch_wa)
-			BUG_ON(gsi_notify.bytes_xfered !=
-				IPA_DMA_DUMMY_BUFF_SZ);
-		else
-			ipa_assert_on(len != gsi_notify.bytes_xfered);
+	/* for prefetch WA we will receive the length of the dummy
+	 * transfer in the event (because it is the second element)
+	 */
+	if (prefetch_wa)
+		ipa_assert_on(gsi_notify.bytes_xfered !=
+			IPA_DMA_DUMMY_BUFF_SZ);
+	else
+		ipa_assert_on(len != gsi_notify.bytes_xfered);
 
-		ipa_assert_on(dest != ((struct ipa3_dma_xfer_wrapper *)
+	ipa_assert_on(dest != ((struct ipa3_dma_xfer_wrapper *)
 			(gsi_notify.xfer_user_data))->phys_addr_dest);
-	} else {
-		ipa_assert_on(dest != iov.addr);
-		ipa_assert_on(len != iov.size);
-	}
 
 	mutex_lock(&ipa3_dma_ctx->sync_lock);
 	list_del(&head_descr->link);
@@ -788,7 +739,7 @@ int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
 	atomic_inc(&ipa3_dma_ctx->total_sync_memcpy);
 	atomic_dec(&ipa3_dma_ctx->sync_memcpy_pending_cnt);
 	if (ipa3_dma_ctx->destroy_pending && !ipa3_dma_work_pending())
-			complete(&ipa3_dma_ctx->done);
+		complete(&ipa3_dma_ctx->done);
 
 	IPADMA_FUNC_EXIT();
 	return res;
@@ -801,7 +752,7 @@ fail_send:
 fail_mem_alloc:
 	atomic_dec(&ipa3_dma_ctx->sync_memcpy_pending_cnt);
 	if (ipa3_dma_ctx->destroy_pending && !ipa3_dma_work_pending())
-			complete(&ipa3_dma_ctx->done);
+		complete(&ipa3_dma_ctx->done);
 	return res;
 }
 
@@ -818,7 +769,7 @@ fail_mem_alloc:
  *		-EINVAL: invalid params
  *		-EPERM: operation not permitted as ipa_dma isn't enable or
  *			initialized
- *		-SPS_ERROR: on sps faliures
+ *		-gsi_status : on GSI failures
  *		-EFAULT: descr fifo is full.
  */
 int ipa3_dma_async_memcpy(u64 dest, u64 src, int len,
@@ -847,13 +798,6 @@ int ipa3_dma_async_memcpy(u64 dest, u64 src, int len,
 		IPADMA_ERR("invalid len, %d\n", len);
 		return	-EINVAL;
 	}
-	if (ipa3_ctx->transport_prototype != IPA_TRANSPORT_TYPE_GSI) {
-		if (((u32)src != src) || ((u32)dest != dest)) {
-			IPADMA_ERR(
-				"Bad addr - only 32b addr supported for BAM");
-			return -EINVAL;
-		}
-	}
 	if (!user_cb) {
 		IPADMA_ERR("null pointer: user_cb\n");
 		return -EINVAL;
@@ -866,14 +810,6 @@ int ipa3_dma_async_memcpy(u64 dest, u64 src, int len,
 	}
 	atomic_inc(&ipa3_dma_ctx->async_memcpy_pending_cnt);
 	spin_unlock_irqrestore(&ipa3_dma_ctx->pending_lock, flags);
-	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_SPS) {
-		if (atomic_read(&ipa3_dma_ctx->async_memcpy_pending_cnt) >=
-				IPA_DMA_MAX_PENDING_ASYNC) {
-			atomic_dec(&ipa3_dma_ctx->async_memcpy_pending_cnt);
-			IPADMA_ERR("Reached pending requests limit\n");
-			return -EFAULT;
-		}
-	}
 
 	ep_idx = ipa3_get_ep_mapping(IPA_CLIENT_MEMCPY_DMA_ASYNC_CONS);
 	if (-1 == ep_idx) {
@@ -907,115 +843,100 @@ int ipa3_dma_async_memcpy(u64 dest, u64 src, int len,
 	spin_lock_irqsave(&ipa3_dma_ctx->async_lock, flags);
 	list_add_tail(&xfer_descr->link, &cons_sys->head_desc_list);
 	cons_sys->len++;
-	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
-		/*
-		* when copy is less than 9B we need to chain another dummy
-		* copy so the total size will be larger (for ipav3.5)
-		*/
-		if ((ipa_get_hw_type() == IPA_HW_v3_5) && len <
-			IPA_DMA_PREFETCH_WA_THRESHOLD) {
-			xfer_elem_cons.addr = dest;
-			xfer_elem_cons.len = len;
-			xfer_elem_cons.type = GSI_XFER_ELEM_DATA;
-			xfer_elem_cons.flags = GSI_XFER_FLAG_EOT;
-			xfer_elem_cons.xfer_user_data = NULL;
-			res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
-				&xfer_elem_cons, false);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer on dest descr res: %d\n",
-					res);
-				goto fail_send;
-			}
-			xfer_elem_cons.addr =
-				ipa3_dma_ctx->ipa_dma_dummy_dst_async.phys_base;
-			xfer_elem_cons.len = IPA_DMA_DUMMY_BUFF_SZ;
-			xfer_elem_cons.type = GSI_XFER_ELEM_DATA;
-			xfer_elem_cons.flags = GSI_XFER_FLAG_EOT;
-			xfer_elem_cons.xfer_user_data = xfer_descr;
-			res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
-				&xfer_elem_cons, true);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer on dummy dest descr res: %d\n",
-					res);
-				goto fail_send;
-			}
+	/*
+	 * when copy is less than 9B we need to chain another dummy
+	 * copy so the total size will be larger (for ipav3.5)
+	 */
+	if ((ipa_get_hw_type() == IPA_HW_v3_5) && len <
+		IPA_DMA_PREFETCH_WA_THRESHOLD) {
+		xfer_elem_cons.addr = dest;
+		xfer_elem_cons.len = len;
+		xfer_elem_cons.type = GSI_XFER_ELEM_DATA;
+		xfer_elem_cons.flags = GSI_XFER_FLAG_EOT;
+		xfer_elem_cons.xfer_user_data = NULL;
+		res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
+			&xfer_elem_cons, false);
+		if (res) {
+			IPADMA_ERR(
+				"Failed: gsi_queue_xfer on dest descr res: %d\n",
+				res);
+			goto fail_send;
+		}
+		xfer_elem_cons.addr =
+			ipa3_dma_ctx->ipa_dma_dummy_dst_async.phys_base;
+		xfer_elem_cons.len = IPA_DMA_DUMMY_BUFF_SZ;
+		xfer_elem_cons.type = GSI_XFER_ELEM_DATA;
+		xfer_elem_cons.flags = GSI_XFER_FLAG_EOT;
+		xfer_elem_cons.xfer_user_data = xfer_descr;
+		res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
+			&xfer_elem_cons, true);
+		if (res) {
+			IPADMA_ERR(
+				"Failed: gsi_queue_xfer on dummy dest descr res: %d\n",
+				res);
+			goto fail_send;
+		}
 
-			xfer_elem_prod.addr = src;
-			xfer_elem_prod.len = len;
-			xfer_elem_prod.type = GSI_XFER_ELEM_DATA;
-			xfer_elem_prod.flags = GSI_XFER_FLAG_CHAIN;
-			xfer_elem_prod.xfer_user_data = NULL;
-			res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
-				&xfer_elem_prod, false);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer on src descr res: %d\n",
-					res);
-				ipa_assert();
-				goto fail_send;
-			}
-			xfer_elem_prod.addr =
-				ipa3_dma_ctx->ipa_dma_dummy_src_async.phys_base;
-			xfer_elem_prod.len = IPA_DMA_DUMMY_BUFF_SZ;
-			xfer_elem_prod.type = GSI_XFER_ELEM_DATA;
-			xfer_elem_prod.flags = GSI_XFER_FLAG_EOT;
-			xfer_elem_prod.xfer_user_data = NULL;
-			res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
-				&xfer_elem_prod, true);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer on dummy src descr res: %d\n",
-					res);
-				ipa_assert();
-				goto fail_send;
-			}
-		} else {
-
-			xfer_elem_cons.addr = dest;
-			xfer_elem_cons.len = len;
-			xfer_elem_cons.type = GSI_XFER_ELEM_DATA;
-			xfer_elem_cons.flags = GSI_XFER_FLAG_EOT;
-			xfer_elem_cons.xfer_user_data = xfer_descr;
-			res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
-				&xfer_elem_cons, true);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer on dummy dest descr res: %d\n",
-					res);
-				ipa_assert();
-				goto fail_send;
-			}
-			xfer_elem_prod.addr = src;
-			xfer_elem_prod.len = len;
-			xfer_elem_prod.type = GSI_XFER_ELEM_DATA;
-			xfer_elem_prod.flags = GSI_XFER_FLAG_EOT;
-			xfer_elem_prod.xfer_user_data = NULL;
-			res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
-				&xfer_elem_prod, true);
-			if (res) {
-				IPADMA_ERR(
-					"Failed: gsi_queue_xfer on dummy src descr res: %d\n",
-					res);
-				ipa_assert();
-				goto fail_send;
-			}
+		xfer_elem_prod.addr = src;
+		xfer_elem_prod.len = len;
+		xfer_elem_prod.type = GSI_XFER_ELEM_DATA;
+		xfer_elem_prod.flags = GSI_XFER_FLAG_CHAIN;
+		xfer_elem_prod.xfer_user_data = NULL;
+		res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
+			&xfer_elem_prod, false);
+		if (res) {
+			IPADMA_ERR(
+				"Failed: gsi_queue_xfer on src descr res: %d\n",
+				res);
+			ipa_assert();
+			goto fail_send;
+		}
+		xfer_elem_prod.addr =
+			ipa3_dma_ctx->ipa_dma_dummy_src_async.phys_base;
+		xfer_elem_prod.len = IPA_DMA_DUMMY_BUFF_SZ;
+		xfer_elem_prod.type = GSI_XFER_ELEM_DATA;
+		xfer_elem_prod.flags = GSI_XFER_FLAG_EOT;
+		xfer_elem_prod.xfer_user_data = NULL;
+		res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
+			&xfer_elem_prod, true);
+		if (res) {
+			IPADMA_ERR(
+				"Failed: gsi_queue_xfer on dummy src descr res: %d\n",
+				res);
+			ipa_assert();
+			goto fail_send;
 		}
 	} else {
-		res = sps_transfer_one(cons_sys->ep->ep_hdl, dest, len,
-			xfer_descr, 0);
+
+		xfer_elem_cons.addr = dest;
+		xfer_elem_cons.len = len;
+		xfer_elem_cons.type = GSI_XFER_ELEM_DATA;
+		xfer_elem_cons.flags = GSI_XFER_FLAG_EOT;
+		xfer_elem_cons.xfer_user_data = xfer_descr;
+		res = gsi_queue_xfer(cons_sys->ep->gsi_chan_hdl, 1,
+			&xfer_elem_cons, true);
 		if (res) {
-			IPADMA_ERR("Failed: sps_transfer_one on dest descr\n");
+			IPADMA_ERR(
+					"Failed: gsi_queue_xfer on dummy dest descr res: %d\n",
+				res);
+				ipa_assert();
 			goto fail_send;
 		}
-		res = sps_transfer_one(prod_sys->ep->ep_hdl, src, len,
-			NULL, SPS_IOVEC_FLAG_EOT);
+		xfer_elem_prod.addr = src;
+		xfer_elem_prod.len = len;
+		xfer_elem_prod.type = GSI_XFER_ELEM_DATA;
+		xfer_elem_prod.flags = GSI_XFER_FLAG_EOT;
+		xfer_elem_prod.xfer_user_data = NULL;
+		res = gsi_queue_xfer(prod_sys->ep->gsi_chan_hdl, 1,
+			&xfer_elem_prod, true);
 		if (res) {
-			IPADMA_ERR("Failed: sps_transfer_one on src descr\n");
-			BUG();
+			IPADMA_ERR(
+					"Failed: gsi_queue_xfer on dummy src descr res: %d\n",
+				res);
+			ipa_assert();
 			goto fail_send;
 		}
+
 	}
 	spin_unlock_irqrestore(&ipa3_dma_ctx->async_lock, flags);
 	IPADMA_FUNC_EXIT();
@@ -1028,7 +949,7 @@ fail_send:
 fail_mem_alloc:
 	atomic_dec(&ipa3_dma_ctx->async_memcpy_pending_cnt);
 	if (ipa3_dma_ctx->destroy_pending && !ipa3_dma_work_pending())
-			complete(&ipa3_dma_ctx->done);
+		complete(&ipa3_dma_ctx->done);
 	return res;
 }
 
@@ -1161,9 +1082,9 @@ completed:
 }
 
 /**
- * ipa3_dma_async_memcpy_notify_cb() -Callback function which will be called by
- * IPA driver after getting notify from SPS driver or poll mode on Rx operation
- * is completed (data was written to dest descriptor on async_cons ep).
+ * ipa3_dma_async_memcpy_notify_cb() - Callback function which will be called
+ * by IPA driver after getting notify on Rx operation is completed (data was
+ * written to dest descriptor on async_cons ep).
  *
  * @priv -not in use.
  * @evt - event name - IPA_RECIVE.
@@ -1194,11 +1115,6 @@ void ipa3_dma_async_memcpy_notify_cb(void *priv
 	list_del(&xfer_descr_expected->link);
 	sys->len--;
 	spin_unlock_irqrestore(&ipa3_dma_ctx->async_lock, flags);
-	if (ipa3_ctx->transport_prototype != IPA_TRANSPORT_TYPE_GSI) {
-		BUG_ON(xfer_descr_expected->phys_addr_dest !=
-				mem_info->phys_base);
-		BUG_ON(xfer_descr_expected->len != mem_info->size);
-	}
 	atomic_inc(&ipa3_dma_ctx->total_async_memcpy);
 	atomic_dec(&ipa3_dma_ctx->async_memcpy_pending_cnt);
 	xfer_descr_expected->callback(xfer_descr_expected->user1);
@@ -1207,7 +1123,7 @@ void ipa3_dma_async_memcpy_notify_cb(void *priv
 		xfer_descr_expected);
 
 	if (ipa3_dma_ctx->destroy_pending && !ipa3_dma_work_pending())
-			complete(&ipa3_dma_ctx->done);
+		complete(&ipa3_dma_ctx->done);
 
 	IPADMA_FUNC_EXIT();
 }

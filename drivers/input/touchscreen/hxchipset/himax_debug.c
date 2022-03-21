@@ -812,9 +812,9 @@ void himax_ts_diag_func(void)
 	unsigned int index = 0;
 	int total_size = ic_data->HX_TX_NUM * ic_data->HX_RX_NUM * 2;
 	uint8_t  info_data[total_size];
-	int16_t *mutual_data;
-	int16_t *mutual_data_new;
-	int16_t *mutual_data_old;
+	int16_t *mutual_data = NULL;
+	int16_t *mutual_data_new = NULL;
+	int16_t *mutual_data_old = NULL;
 	int16_t new_data;
 
 	himax_burst_enable(private_ts->client, 1);

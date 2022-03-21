@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,6 +15,7 @@
 
 #include "sde_hw_mdss.h"
 #include "sde_hw_top.h"
+#include "sde_hw_blk.h"
 
 struct sde_hw_cdm;
 
@@ -65,8 +66,9 @@ struct sde_hw_cdm_ops {
 	 * to program a different matrix than default matrix.
 	 * @cdm:          Pointer to the chroma down context structure
 	 * @data          Pointer to CSC configuration data
+	 * return:        0 if success; error code otherwise
 	 */
-	void (*setup_csc_data)(struct sde_hw_cdm *cdm,
+	int (*setup_csc_data)(struct sde_hw_cdm *cdm,
 			struct sde_csc_cfg *data);
 
 	/**
@@ -91,11 +93,11 @@ struct sde_hw_cdm_ops {
 };
 
 struct sde_hw_cdm {
-	/* base */
+	struct sde_hw_blk base;
 	struct sde_hw_blk_reg_map hw;
 
 	/* chroma down */
-	const struct sde_cdm_cfg   *cdm_hw_cap;
+	const struct sde_cdm_cfg *caps;
 	enum  sde_cdm  idx;
 
 	/* mdp top hw driver */
@@ -104,6 +106,16 @@ struct sde_hw_cdm {
 	/* ops */
 	struct sde_hw_cdm_ops ops;
 };
+
+/**
+ * sde_hw_cdm - convert base object sde_hw_base to container
+ * @hw: Pointer to base hardware block
+ * return: Pointer to hardware block container
+ */
+static inline struct sde_hw_cdm *to_sde_hw_cdm(struct sde_hw_blk *hw)
+{
+	return container_of(hw, struct sde_hw_cdm, base);
+}
 
 /**
  * sde_hw_cdm_init - initializes the cdm hw driver object.

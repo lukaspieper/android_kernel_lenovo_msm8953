@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,10 +11,6 @@
  */
 #ifndef __MSMB_ISP__
 #define __MSMB_ISP__
-
-#ifdef CONFIG_LENOVO_DIR_CAMERA
-#include <media/msmb_isp_lenovo.h>
-#else
 
 #include <uapi/media/msmb_isp.h>
 
@@ -46,7 +42,13 @@ struct msm_isp32_event_data32 {
 };
 
 #endif
-
+#ifdef CONFIG_MSM_AVTIMER
+struct avtimer_fptr_t {
+	int (*fptr_avtimer_open)(void);
+	int (*fptr_avtimer_enable)(int enable);
+	int (*fptr_avtimer_get_time)(uint64_t *avtimer_tick);
+};
+void msm_isp_set_avtimer_fptr(struct avtimer_fptr_t avtimer_func);
+#endif
 #endif
 
-#endif /* __MSMB_ISP__ */

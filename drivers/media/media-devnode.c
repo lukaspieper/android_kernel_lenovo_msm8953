@@ -220,21 +220,6 @@ static const struct file_operations media_devnode_fops = {
 	.llseek = no_llseek,
 };
 
-/**
- * media_devnode_register - register a media device node
- * @media_dev: struct media_device we want to register a device node
- * @devnode: media device node structure we want to register
- *
- * The registration code assigns minor numbers and registers the new device node
- * with the kernel. An error is returned if no free minor number can be found,
- * or if the registration of the device node fails.
- *
- * Zero is returned on success.
- *
- * Note that if the media_devnode_register call fails, the release() callback of
- * the media_devnode structure is *not* called, so the caller is responsible for
- * freeing any data.
- */
 int __must_check media_devnode_register(struct media_device *mdev,
 					struct media_devnode *devnode,
 					struct module *owner)
@@ -313,15 +298,6 @@ void media_devnode_unregister_prepare(struct media_devnode *devnode)
 	mutex_unlock(&media_devnode_lock);
 }
 
-/**
- * media_devnode_unregister - unregister a media device node
- * @devnode: the device node to unregister
- *
- * This unregisters the passed device. Future open calls will be met with
- * errors.
- *
- * Should be called after media_devnode_unregister_prepare()
- */
 void media_devnode_unregister(struct media_devnode *devnode)
 {
 	mutex_lock(&media_devnode_lock);

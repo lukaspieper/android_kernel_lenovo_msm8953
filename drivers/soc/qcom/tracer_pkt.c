@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,7 +17,7 @@
 #define CREATE_TRACE_POINTS
 #include "tracer_pkt_private.h"
 
-static unsigned qdss_tracing;
+static unsigned int qdss_tracing;
 module_param_named(qdss_tracing_enable, qdss_tracing,
 		   uint, S_IRUGO | S_IWUSR | S_IWGRP);
 
@@ -56,7 +56,7 @@ struct tracer_pkt_hdr {
 /**
  * struct tracer_pkt_event - data structure defining the tracer packet event
  * @event_id:	Event ID.
- * @event_ts:	Timestamp at which the event occured.
+ * @event_ts:	Timestamp at which the event occurred.
  */
 struct tracer_pkt_event {
 	uint32_t event_id;
@@ -109,7 +109,7 @@ int tracer_pkt_init(void *data, size_t data_len,
 	pkt_hdr->pkt_offset = sizeof(*pkt_hdr) / sizeof(uint32_t);
 	pkt_hdr->clnt_event_cfg = client_event_cfg;
 	pkt_hdr->glink_event_cfg = glink_event_cfg;
-	pkt_hdr->base_ts = arch_counter_get_cntpct();
+	pkt_hdr->base_ts = arch_counter_get_cntvct();
 	memcpy(pkt_hdr->cc, pkt_priv, pkt_hdr->ccl * sizeof(uint32_t));
 	return 0;
 }
@@ -179,7 +179,7 @@ int tracer_pkt_log_event(void *data, uint32_t event_id)
 		return -ETOOSMALL;
 
 	event.event_id = event_id;
-	event.event_ts = (uint32_t)arch_counter_get_cntpct();
+	event.event_ts = (uint32_t)arch_counter_get_cntvct();
 	memcpy(data + (pkt_hdr->pkt_offset * sizeof(uint32_t)),
 		&event, sizeof(event));
 	pkt_hdr->pkt_offset += sizeof(event)/sizeof(uint32_t);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, 2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -36,10 +36,11 @@
 
 struct msm_vidc_drv *vidc_driver;
 
-uint32_t msm_vidc_pwr_collapse_delay = 2000;
 
 static inline struct msm_vidc_inst *get_vidc_inst(struct file *filp, void *fh)
 {
+	if (!filp->private_data)
+		return NULL;
 	return container_of(filp->private_data,
 					struct msm_vidc_inst, event_handler);
 }
@@ -73,13 +74,9 @@ static int msm_v4l2_close(struct file *filp)
 
 	trace_msm_v4l2_vidc_close_start("msm_v4l2_close start");
 	vidc_inst = get_vidc_inst(filp, NULL);
-	rc = msm_vidc_release_buffers(vidc_inst,
-			V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
-	if (rc)
-		dprintk(VIDC_WARN,
-			"Failed in %s for release output buffers\n", __func__);
 
 	rc = msm_vidc_close(vidc_inst);
+	filp->private_data = NULL;
 	trace_msm_v4l2_vidc_close_end("msm_v4l2_close end");
 	return rc;
 }
@@ -88,6 +85,7 @@ static int msm_v4l2_querycap(struct file *filp, void *fh,
 			struct v4l2_capability *cap)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(filp, fh);
+
 	return msm_vidc_querycap((void *)vidc_inst, cap);
 }
 
@@ -95,6 +93,7 @@ int msm_v4l2_enum_fmt(struct file *file, void *fh,
 					struct v4l2_fmtdesc *f)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_enum_fmt((void *)vidc_inst, f);
 }
 
@@ -102,6 +101,7 @@ int msm_v4l2_s_fmt(struct file *file, void *fh,
 					struct v4l2_format *f)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_s_fmt((void *)vidc_inst, f);
 }
 
@@ -109,6 +109,7 @@ int msm_v4l2_g_fmt(struct file *file, void *fh,
 					struct v4l2_format *f)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_g_fmt((void *)vidc_inst, f);
 }
 
@@ -116,6 +117,7 @@ int msm_v4l2_s_ctrl(struct file *file, void *fh,
 					struct v4l2_control *a)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_s_ctrl((void *)vidc_inst, a);
 }
 
@@ -123,6 +125,7 @@ int msm_v4l2_g_ctrl(struct file *file, void *fh,
 					struct v4l2_control *a)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_g_ctrl((void *)vidc_inst, a);
 }
 
@@ -130,26 +133,24 @@ int msm_v4l2_s_ext_ctrl(struct file *file, void *fh,
 					struct v4l2_ext_controls *a)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_s_ext_ctrl((void *)vidc_inst, a);
+}
+
+int msm_v4l2_g_ext_ctrl(struct file *file, void *fh,
+					struct v4l2_ext_controls *a)
+{
+	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
+	return msm_vidc_g_ext_ctrl((void *)vidc_inst, a);
 }
 
 int msm_v4l2_reqbufs(struct file *file, void *fh,
 				struct v4l2_requestbuffers *b)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
-	int rc = 0;
-	if (!b->count)
-		rc = msm_vidc_release_buffers(vidc_inst, b->type);
-	if (rc)
-		dprintk(VIDC_WARN,
-			"Failed in %s for release output buffers\n", __func__);
-	return msm_vidc_reqbufs((void *)vidc_inst, b);
-}
 
-int msm_v4l2_prepare_buf(struct file *file, void *fh,
-				struct v4l2_buffer *b)
-{
-	return msm_vidc_prepare_buf(get_vidc_inst(file, fh), b);
+	return msm_vidc_reqbufs((void *)vidc_inst, b);
 }
 
 int msm_v4l2_qbuf(struct file *file, void *fh,
@@ -168,6 +169,7 @@ int msm_v4l2_streamon(struct file *file, void *fh,
 				enum v4l2_buf_type i)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_streamon((void *)vidc_inst, i);
 }
 
@@ -175,6 +177,7 @@ int msm_v4l2_streamoff(struct file *file, void *fh,
 				enum v4l2_buf_type i)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_streamoff((void *)vidc_inst, i);
 }
 
@@ -183,6 +186,7 @@ static int msm_v4l2_subscribe_event(struct v4l2_fh *fh,
 {
 	struct msm_vidc_inst *vidc_inst = container_of(fh,
 			struct msm_vidc_inst, event_handler);
+
 	return msm_vidc_subscribe_event((void *)vidc_inst, sub);
 }
 
@@ -191,6 +195,7 @@ static int msm_v4l2_unsubscribe_event(struct v4l2_fh *fh,
 {
 	struct msm_vidc_inst *vidc_inst = container_of(fh,
 			struct msm_vidc_inst, event_handler);
+
 	return msm_vidc_unsubscribe_event((void *)vidc_inst, sub);
 }
 
@@ -213,6 +218,7 @@ static int msm_v4l2_s_parm(struct file *file, void *fh,
 			struct v4l2_streamparm *a)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_comm_s_parm(vidc_inst, a);
 }
 static int msm_v4l2_g_parm(struct file *file, void *fh,
@@ -221,11 +227,28 @@ static int msm_v4l2_g_parm(struct file *file, void *fh,
 	return 0;
 }
 
+static int msm_v4l2_g_crop(struct file *file, void *fh,
+			struct v4l2_crop *a)
+{
+	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
+	return msm_vidc_g_crop(vidc_inst, a);
+}
+
 static int msm_v4l2_enum_framesizes(struct file *file, void *fh,
 				struct v4l2_frmsizeenum *fsize)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
 	return msm_vidc_enum_framesizes((void *)vidc_inst, fsize);
+}
+
+static int msm_v4l2_queryctrl(struct file *file, void *fh,
+	struct v4l2_queryctrl *ctrl)
+{
+	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+
+	return msm_vidc_query_ctrl((void *)vidc_inst, ctrl);
 }
 
 static const struct v4l2_ioctl_ops msm_v4l2_ioctl_ops = {
@@ -237,20 +260,22 @@ static const struct v4l2_ioctl_ops msm_v4l2_ioctl_ops = {
 	.vidioc_g_fmt_vid_cap_mplane = msm_v4l2_g_fmt,
 	.vidioc_g_fmt_vid_out_mplane = msm_v4l2_g_fmt,
 	.vidioc_reqbufs = msm_v4l2_reqbufs,
-	.vidioc_prepare_buf = msm_v4l2_prepare_buf,
 	.vidioc_qbuf = msm_v4l2_qbuf,
 	.vidioc_dqbuf = msm_v4l2_dqbuf,
 	.vidioc_streamon = msm_v4l2_streamon,
 	.vidioc_streamoff = msm_v4l2_streamoff,
 	.vidioc_s_ctrl = msm_v4l2_s_ctrl,
 	.vidioc_g_ctrl = msm_v4l2_g_ctrl,
+	.vidioc_queryctrl = msm_v4l2_queryctrl,
 	.vidioc_s_ext_ctrls = msm_v4l2_s_ext_ctrl,
+	.vidioc_g_ext_ctrls = msm_v4l2_g_ext_ctrl,
 	.vidioc_subscribe_event = msm_v4l2_subscribe_event,
 	.vidioc_unsubscribe_event = msm_v4l2_unsubscribe_event,
 	.vidioc_decoder_cmd = msm_v4l2_decoder_cmd,
 	.vidioc_encoder_cmd = msm_v4l2_encoder_cmd,
 	.vidioc_s_parm = msm_v4l2_s_parm,
 	.vidioc_g_parm = msm_v4l2_g_parm,
+	.vidioc_g_crop = msm_v4l2_g_crop,
 	.vidioc_enum_framesizes = msm_v4l2_enum_framesizes,
 };
 
@@ -261,6 +286,7 @@ static unsigned int msm_v4l2_poll(struct file *filp,
 	struct poll_table_struct *pt)
 {
 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(filp, NULL);
+
 	return msm_vidc_poll((void *)vidc_inst, filp, pt);
 }
 
@@ -268,7 +294,7 @@ static const struct v4l2_file_operations msm_v4l2_vidc_fops = {
 	.owner = THIS_MODULE,
 	.open = msm_v4l2_open,
 	.release = msm_v4l2_close,
-	.ioctl = video_ioctl2,
+	.unlocked_ioctl = video_ioctl2,
 	.poll = msm_v4l2_poll,
 };
 
@@ -279,6 +305,8 @@ void msm_vidc_release_video_device(struct video_device *pvdev)
 static int read_platform_resources(struct msm_vidc_core *core,
 		struct platform_device *pdev)
 {
+	int rc = 0;
+
 	if (!core || !pdev) {
 		dprintk(VIDC_ERR, "%s: Invalid params %pK %pK\n",
 			__func__, core, pdev);
@@ -289,11 +317,13 @@ static int read_platform_resources(struct msm_vidc_core *core,
 	core->resources.pdev = pdev;
 	if (pdev->dev.of_node) {
 		/* Target supports DT, parse from it */
-		return read_platform_resources_from_dt(&core->resources);
+		rc = read_platform_resources_from_drv_data(core);
+		rc = read_platform_resources_from_dt(&core->resources);
 	} else {
 		dprintk(VIDC_ERR, "pdev node is NULL\n");
-		return -EINVAL;
+		rc = -EINVAL;
 	}
+	return rc;
 }
 
 static int msm_vidc_initialize_core(struct platform_device *pdev,
@@ -301,6 +331,7 @@ static int msm_vidc_initialize_core(struct platform_device *pdev,
 {
 	int i = 0;
 	int rc = 0;
+
 	if (!core)
 		return -EINVAL;
 	rc = read_platform_resources(core, pdev);
@@ -319,6 +350,14 @@ static int msm_vidc_initialize_core(struct platform_device *pdev,
 	}
 
 	INIT_DELAYED_WORK(&core->fw_unload_work, msm_vidc_fw_unload_handler);
+
+	mutex_lock(&core->lock);
+	core->vote_data = kcalloc(MAX_SUPPORTED_INSTANCES,
+		sizeof(*core->vote_data), GFP_KERNEL);
+	if (!core->vote_data)
+		dprintk(VIDC_ERR, "%s: failed to allocate memory\n", __func__);
+	mutex_unlock(&core->lock);
+
 	return rc;
 }
 
@@ -327,6 +366,7 @@ static ssize_t msm_vidc_link_name_show(struct device *dev,
 		char *buf)
 {
 	struct msm_vidc_core *core = dev_get_drvdata(dev);
+
 	if (core)
 		if (dev == &core->vdev[MSM_VIDC_DECODER].vdev.dev)
 			return snprintf(buf, PAGE_SIZE, "venus_dec");
@@ -346,12 +386,18 @@ static ssize_t store_pwr_collapse_delay(struct device *dev,
 {
 	unsigned long val = 0;
 	int rc = 0;
+	struct msm_vidc_core *core = NULL;
+
 	rc = kstrtoul(buf, 0, &val);
 	if (rc)
 		return rc;
 	else if (!val)
 		return -EINVAL;
-	msm_vidc_pwr_collapse_delay = val;
+
+	core = get_vidc_core(MSM_VIDC_CORE_VENUS);
+	if (!core)
+		return -EINVAL;
+	core->resources.msm_vidc_pwr_collapse_delay = val;
 	return count;
 }
 
@@ -359,7 +405,14 @@ static ssize_t show_pwr_collapse_delay(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%u\n", msm_vidc_pwr_collapse_delay);
+	struct msm_vidc_core *core = NULL;
+
+	core = get_vidc_core(MSM_VIDC_CORE_VENUS);
+	if (!core)
+		return -EINVAL;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n",
+		core->resources.msm_vidc_pwr_collapse_delay);
 }
 
 static DEVICE_ATTR(pwr_collapse_delay, 0644, show_pwr_collapse_delay,
@@ -395,17 +448,17 @@ static ssize_t store_thermal_level(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR(thermal_level, S_IRUGO | S_IWUSR, show_thermal_level,
+static DEVICE_ATTR(thermal_level, 0644, show_thermal_level,
 		store_thermal_level);
 
-static ssize_t show_platform_version(struct device *dev,
+static ssize_t show_sku_version(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%d",
-			vidc_driver->platform_version);
+			vidc_driver->sku_version);
 }
 
-static ssize_t store_platform_version(struct device *dev,
+static ssize_t store_sku_version(struct device *dev,
 		struct device_attribute *attr, const char *buf,
 		size_t count)
 {
@@ -413,32 +466,13 @@ static ssize_t store_platform_version(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR(platform_version, S_IRUGO, show_platform_version,
-		store_platform_version);
-
-static ssize_t show_capability_version(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	return scnprintf(buf, PAGE_SIZE, "%d",
-			vidc_driver->capability_version);
-}
-
-static ssize_t store_capability_version(struct device *dev,
-		struct device_attribute *attr, const char *buf,
-		size_t count)
-{
-	dprintk(VIDC_WARN, "store capability version is not allowed\n");
-	return count;
-}
-
-static DEVICE_ATTR(capability_version, S_IRUGO, show_capability_version,
-		store_capability_version);
+static DEVICE_ATTR(sku_version, 0444, show_sku_version,
+		store_sku_version);
 
 static struct attribute *msm_vidc_core_attrs[] = {
 		&dev_attr_pwr_collapse_delay.attr,
 		&dev_attr_thermal_level.attr,
-		&dev_attr_platform_version.attr,
-		&dev_attr_capability_version.attr,
+		&dev_attr_sku_version.attr,
 		NULL
 };
 
@@ -453,35 +487,6 @@ static const struct of_device_id msm_vidc_dt_match[] = {
 	{}
 };
 
-static u32 msm_vidc_read_efuse_version(struct platform_device *pdev,
-	struct version_table *table, const char *fuse_name)
-{
-	void __iomem *base;
-	struct resource *res;
-	u32 ret = 0;
-
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, fuse_name);
-	if (!res) {
-		dprintk(VIDC_DBG, "Failed to get resource %s\n", fuse_name);
-		goto exit;
-	}
-	base = devm_ioremap(&pdev->dev, res->start, resource_size(res));
-	if (!base) {
-		dprintk(VIDC_ERR,
-			"failed ioremap: res->start %#x, size %d\n",
-			(u32)res->start, (u32)resource_size(res));
-		goto exit;
-	} else {
-		ret = readl_relaxed(base);
-		ret = (ret & table->version_mask) >>
-			table->version_shift;
-
-		devm_iounmap(&pdev->dev, base);
-	}
-exit:
-	return ret;
-}
-
 static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -495,13 +500,15 @@ static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 	}
 
 	core = kzalloc(sizeof(*core), GFP_KERNEL);
-	if (!core) {
-		dprintk(VIDC_ERR,
-			"Failed to allocate memory for device core\n");
+	if (!core)
 		return -ENOMEM;
-	}
 
+	core->platform_data = vidc_get_drv_data(&pdev->dev);
 	dev_set_drvdata(&pdev->dev, core);
+	if (core->platform_data) {
+		core->resources.enable_max_resolution =
+			core->platform_data->enable_max_resolution;
+	}
 	rc = msm_vidc_initialize_core(pdev, core);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to init core\n");
@@ -603,13 +610,7 @@ static int msm_vidc_probe_vidc_device(struct platform_device *pdev)
 	core->debugfs_root = msm_vidc_debugfs_init_core(
 		core, vidc_driver->debugfs_root);
 
-	vidc_driver->platform_version =
-		msm_vidc_read_efuse_version(pdev,
-			core->resources.pf_ver_tbl, "efuse");
-
-	vidc_driver->capability_version =
-		msm_vidc_read_efuse_version(
-			pdev, core->resources.pf_cap_tbl, "efuse2");
+	vidc_driver->sku_version = core->resources.sku_version;
 
 	dprintk(VIDC_DBG, "populating sub devices\n");
 	/*
@@ -674,11 +675,11 @@ static int msm_vidc_probe(struct platform_device *pdev)
 	} else if (of_device_is_compatible(pdev->dev.of_node,
 		"qcom,msm-vidc,context-bank")) {
 		return msm_vidc_probe_context_bank(pdev);
-	} else {
-		/* How did we end up here? */
-		BUG();
-		return -EINVAL;
 	}
+
+	/* How did we end up here? */
+	MSM_VIDC_ERROR(1);
+	return -EINVAL;
 }
 
 static int msm_vidc_remove(struct platform_device *pdev)
@@ -710,8 +711,14 @@ static int msm_vidc_remove(struct platform_device *pdev)
 	v4l2_device_unregister(&core->v4l2_dev);
 
 	msm_vidc_free_platform_resources(&core->resources);
+	kfree(core->vote_data);
 	sysfs_remove_group(&pdev->dev.kobj, &msm_vidc_core_attr_group);
 	dev_set_drvdata(&pdev->dev, NULL);
+	mutex_destroy(&core->lock);
+
+	mutex_lock(&vidc_driver->lock);
+	list_del(&core->list);
+	mutex_unlock(&vidc_driver->lock);
 	kfree(core);
 	return rc;
 }
@@ -773,6 +780,7 @@ static struct platform_driver msm_vidc_driver = {
 static int __init msm_vidc_init(void)
 {
 	int rc = 0;
+
 	vidc_driver = kzalloc(sizeof(*vidc_driver),
 						GFP_KERNEL);
 	if (!vidc_driver) {
@@ -804,9 +812,12 @@ static void __exit msm_vidc_exit(void)
 {
 	platform_driver_unregister(&msm_vidc_driver);
 	debugfs_remove_recursive(vidc_driver->debugfs_root);
+	mutex_destroy(&vidc_driver->lock);
 	kfree(vidc_driver);
 	vidc_driver = NULL;
 }
 
 module_init(msm_vidc_init);
 module_exit(msm_vidc_exit);
+
+MODULE_LICENSE("GPL v2");

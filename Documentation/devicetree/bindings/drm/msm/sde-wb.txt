@@ -1,8 +1,5 @@
 QTI Snapdragon Display Engine (SDE) writeback display
 
-sde-wb is the writeback display which supports memory write back
-through QTI SDE hardware.
-
 Required properties:
 - compatible:		"qcom,wb-display"
 

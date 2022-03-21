@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2014, 2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -124,8 +124,8 @@ static int sysmon_send_msg(struct sysmon_subsys *ss, const char *tx_buf,
  *
  * Returns 0 for success, -EINVAL for invalid destination or notification IDs,
  * -ENODEV if the transport channel is not open, -ETIMEDOUT if the destination
- * subsystem does not respond, and -ENOSYS if the destination subsystem
- * responds, but with something other than an acknowledgement.
+ * subsystem does not respond, and -EPROTO if the destination subsystem
+ * responds, but with something other than an acknowledgment.
  *
  * If CONFIG_MSM_SYSMON_COMM is not defined, always return success (0).
  */
@@ -167,7 +167,7 @@ int sysmon_send_event_no_qmi(struct subsys_desc *dest_desc,
 
 	if (strcmp(ss->rx_buf, "ssr:ack")) {
 		pr_debug("Unexpected response %s\n", ss->rx_buf);
-		ret = -ENOSYS;
+		ret = -EPROTO;
 	}
 out:
 	mutex_unlock(&ss->lock);
@@ -181,7 +181,7 @@ EXPORT_SYMBOL(sysmon_send_event_no_qmi);
  *
  * Returns 0 for success, -EINVAL for an invalid destination, -ENODEV if
  * the SMD transport channel is not open, -ETIMEDOUT if the destination
- * subsystem does not respond, and -ENOSYS if the destination subsystem
+ * subsystem does not respond, and -EPROTO if the destination subsystem
  * responds with something unexpected.
  *
  * If CONFIG_MSM_SYSMON_COMM is not defined, always return success (0).
@@ -206,7 +206,7 @@ int sysmon_send_shutdown_no_qmi(struct subsys_desc *dest_desc)
 		return -ENODEV;
 
 	mutex_lock(&ss->lock);
-	ret = sysmon_send_msg(ss, tx_buf, strlen(tx_buf));
+	ret = sysmon_send_msg(ss, tx_buf, ARRAY_SIZE(tx_buf));
 	if (ret) {
 		pr_err("Message sending failed %d\n", ret);
 		goto out;
@@ -214,7 +214,7 @@ int sysmon_send_shutdown_no_qmi(struct subsys_desc *dest_desc)
 
 	if (strcmp(ss->rx_buf, expect)) {
 		pr_err("Unexpected response %s\n", ss->rx_buf);
-		ret = -ENOSYS;
+		ret = -EPROTO;
 	}
 out:
 	mutex_unlock(&ss->lock);
@@ -230,7 +230,7 @@ EXPORT_SYMBOL(sysmon_send_shutdown_no_qmi);
  *
  * Returns 0 for success, -EINVAL for an invalid destination, -ENODEV if
  * the SMD transport channel is not open, -ETIMEDOUT if the destination
- * subsystem does not respond, and -ENOSYS if the destination subsystem
+ * subsystem does not respond, and -EPROTO if the destination subsystem
  * responds with something unexpected.
  *
  * If CONFIG_MSM_SYSMON_COMM is not defined, always return success (0).
@@ -257,7 +257,7 @@ int sysmon_get_reason_no_qmi(struct subsys_desc *dest_desc,
 		return -ENODEV;
 
 	mutex_lock(&ss->lock);
-	ret = sysmon_send_msg(ss, tx_buf, strlen(tx_buf));
+	ret = sysmon_send_msg(ss, tx_buf, ARRAY_SIZE(tx_buf));
 	if (ret) {
 		pr_err("Message sending failed %d\n", ret);
 		goto out;
@@ -265,7 +265,7 @@ int sysmon_get_reason_no_qmi(struct subsys_desc *dest_desc,
 
 	if (strncmp(ss->rx_buf, expect, prefix_len)) {
 		pr_err("Unexpected response %s\n", ss->rx_buf);
-		ret = -ENOSYS;
+		ret = -EPROTO;
 		goto out;
 	}
 	strlcpy(buf, ss->rx_buf + prefix_len, len);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -319,7 +319,7 @@ static void a4xx_rbbm_debug_bus_read(struct kgsl_device *device,
  * a4xx_snapshot_vbif_debugbus() - Dump the VBIF debug data
  * @device: Device pointer for which the debug data is dumped
  * @buf: Pointer to the memory where the data is dumped
- * @remain: Amout of bytes remaining in snapshot
+ * @remain: Amount of bytes remaining in snapshot
  * @priv: Pointer to debug bus block
  *
  * Returns the number of bytes dumped

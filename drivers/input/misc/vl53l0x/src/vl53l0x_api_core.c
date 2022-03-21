@@ -1,6 +1,6 @@
 /*
- *  vl53l0x_api_core.c - Linux kernel modules for STM VL53L0 FlightSense TOF
- *						 sensor
+ *  vl53l0x_api_core.c - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,8 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
-
 
 #include "vl53l0x_api.h"
 #include "vl53l0x_api_core.h"
@@ -122,8 +120,8 @@ uint32_t VL_isqrt(uint32_t num)
 
 	uint32_t  res = 0;
 	uint32_t  bit = 1 << 30;
-	/* The second-to-top bit is set:
-	 *	1 << 14 for 16-bits, 1 << 30 for 32 bits */
+	/* The second-to-top bit is set: */
+	/* 1 << 14 for 16-bits, 1 << 30 for 32 bits */
 
 	 /* "bit" starts at the highest power of four <= the argument. */
 	while (bit > num)
@@ -177,15 +175,13 @@ int8_t VL_device_read_strobe(struct vl_data *Dev)
 
 	Status |= VL_WrByte(Dev, 0x83, 0x00);
 
-	/* polling
-	 * use timeout to avoid deadlock*/
+	/* polling use timeout to avoid deadlock*/
 	if (Status == VL_ERROR_NONE) {
 		LoopNb = 0;
 		do {
 			Status = VL_RdByte(Dev, 0x83, &strobe);
 			if ((strobe != 0x00) || Status != VL_ERROR_NONE)
-					break;
-
+				break;
 			LoopNb = LoopNb + 1;
 		} while (LoopNb < VL_DEFAULT_MAX_LOOP);
 
@@ -231,8 +227,8 @@ int8_t VL_get_info_from_device(struct vl_data *Dev, uint8_t option)
 	ReadDataFromDeviceDone = VL_GETDEVICESPECIFICPARAMETER(Dev,
 			ReadDataFromDeviceDone);
 
-	/* This access is done only once after that a GetDeviceInfo or
-	 * datainit is done*/
+	/* This access is done only once after that a GetDeviceInfo or */
+	/* datainit is done*/
 	if (ReadDataFromDeviceDone != 7) {
 
 		Status |= VL_WrByte(Dev, 0x80, 0x01);
@@ -446,12 +442,11 @@ int8_t VL_get_info_from_device(struct vl_data *Dev, uint8_t option)
 
 			OffsetMicroMeters = 0;
 			if (DistMeasFixed1104_400_mm != 0) {
-					OffsetFixed1104_mm =
-						DistMeasFixed1104_400_mm -
-						DistMeasTgtFixed1104_mm;
-					OffsetMicroMeters = (OffsetFixed1104_mm
-						* 1000) >> 4;
-					OffsetMicroMeters *= -1;
+				OffsetFixed1104_mm = DistMeasFixed1104_400_mm -
+				DistMeasTgtFixed1104_mm;
+				OffsetMicroMeters = (OffsetFixed1104_mm
+				* 1000) >> 4;
+				OffsetMicroMeters *= -1;
 			}
 
 			PALDevDataSet(Dev,
@@ -477,9 +472,8 @@ uint32_t VL_calc_macro_period_ps(struct vl_data *Dev,
 
 	LOG_FUNCTION_START("");
 
-	/* The above calculation will produce rounding errors,
-	   therefore set fixed value
-	*/
+	/* The above calculation will produce rounding errors, */
+	/* therefore set fixed value */
 	PLL_period_ps = 1655;
 
 	macro_period_vclks = 2304;
@@ -639,8 +633,8 @@ int8_t get_sequence_step_timeout(struct vl_data *Dev,
 				VL_VCSEL_PERIOD_PRE_RANGE,
 				&CurrentVCSELPulsePeriodPClk);
 
-			/* Retrieve PRE-RANGE Timeout in Macro periods
-			 * (MCLKS) */
+			/* Retrieve PRE-RANGE Timeout in Macro periods */
+			/* (MCLKS) */
 			if (Status == VL_ERROR_NONE) {
 				Status = VL_RdWord(Dev,
 				VL_REG_PRE_RANGE_CONFIG_TIMEOUT_MACROP_HI,
@@ -771,8 +765,8 @@ int8_t set_sequence_step_timeout(struct vl_data *Dev,
 					VL_VCSEL_PERIOD_PRE_RANGE,
 					&CurrentVCSELPulsePeriodPClk);
 
-				/* Retrieve PRE-RANGE Timeout in Macro periods
-				 * (MCLKS) */
+				/* Retrieve PRE-RANGE Timeout in Macro */
+				/* periods (MCLKS) */
 				if (Status == VL_ERROR_NONE) {
 					Status = VL_RdWord(Dev, 0x51,
 						&PreRangeEncodedTimeOut);
@@ -782,9 +776,8 @@ int8_t set_sequence_step_timeout(struct vl_data *Dev,
 				}
 			}
 
-			/* Calculate FINAL RANGE Timeout in Macro Periods
-			 * (MCLKS) and add PRE-RANGE value
-			 */
+			/* Calculate FINAL RANGE Timeout in Macro Periods */
+			/* (MCLKS) and add PRE-RANGE value */
 			if (Status == VL_ERROR_NONE) {
 
 				Status = VL_GetVcselPulsePeriod(Dev,
@@ -983,15 +976,13 @@ int8_t VL_set_vcsel_pulse_period(struct vl_data *Dev,
 		vcsel_period_reg = VL_encode_vcsel_period((uint8_t)
 			VCSELPulsePeriodPCLK);
 
-		/* When the VCSEL period for the pre or final range is changed,
-		* the corresponding timeout must be read from the device using
-		* the current VCSEL period, then the new VCSEL period can be
-		* applied. The timeout then must be written back to the device
-		* using the new VCSEL period.
-		*
-		* For the MSRC timeout, the same applies - this timeout being
-		* dependent on the pre-range vcsel period.
-		*/
+	/* When the VCSEL period for the pre or final range is changed, */
+	/* the corresponding timeout must be read from the device using */
+	/* the current VCSEL period, then the new VCSEL period can be */
+	/* applied. The timeout then must be written back to the device */
+	/* using the new VCSEL period. */
+	/* For the MSRC timeout, the same applies - this timeout being */
+	/* dependent on the pre-range vcsel period. */
 		switch (VcselPeriodType) {
 		case VL_VCSEL_PERIOD_PRE_RANGE:
 			Status = get_sequence_step_timeout(Dev,
@@ -1061,9 +1052,9 @@ int8_t VL_set_vcsel_pulse_period(struct vl_data *Dev,
 				MeasurementTimingBudgetMicroSeconds);
 	}
 
-	/* Perform the phase calibration. This is needed after changing on
-	 * vcsel period.
-	 * get_data_enable = 0, restore_config = 1 */
+	/* Perform the phase calibration. This is needed after changing on */
+	/* vcsel period. */
+	/* get_data_enable = 0, restore_config = 1 */
 	if (Status == VL_ERROR_NONE)
 		Status = VL_perform_phase_calibration(
 			Dev, &PhaseCalInt, 0, 1);
@@ -1143,8 +1134,8 @@ int8_t VL_set_measurement_timing_budget_micro_seconds(
 					VL_SEQUENCESTEP_MSRC,
 					&MsrcDccTccTimeoutMicroSeconds);
 
-		/* Subtract the TCC, MSRC and DSS timeouts if they are
-		 * enabled. */
+		/* Subtract the TCC, MSRC and DSS timeouts if they are */
+		/* enabled. */
 
 		if (Status != VL_ERROR_NONE)
 			return Status;
@@ -1537,8 +1528,8 @@ int8_t VL_calc_dmax(
 	minSignalNeeded_p1 = 0;
 	if (totalCorrSignalRate_mcps > 0) {
 
-		/* Shift by 10 bits to increase resolution prior to the
-		 * division */
+		/* Shift by 10 bits to increase resolution prior to the */
+		/* division */
 		signalRateTemp_mcps = totalSignalRate_mcps << 10;
 
 		/* Add rounding value prior to division */
@@ -1548,8 +1539,8 @@ int8_t VL_calc_dmax(
 		/* FixPoint0626/FixPoint1616 = FixPoint2210 */
 		minSignalNeeded_p1 /= totalCorrSignalRate_mcps;
 
-		/* Apply a factored version of the speed of light.
-		 Correction to be applied at the end */
+		/* Apply a factored version of the speed of light. */
+		/* Correction to be applied at the end */
 		minSignalNeeded_p1 *= 3;
 
 		/* FixPoint2210 * FixPoint2210 = FixPoint1220 */
@@ -1838,8 +1829,8 @@ int8_t VL_calc_sigma_estimate(struct vl_data *Dev,
 		/* ((FixPoint1616 << 16)* uint32)/uint32 = FixPoint1616 */
 		sigmaEstimateP2 = (ambientRate_kcps << 16)/peakSignalRate_kcps;
 		if (sigmaEstimateP2 > cAmbToSignalRatioMax) {
-			/* Clip to prevent overflow. Will ensure safe
-			 * max result. */
+			/* Clip to prevent overflow. Will ensure safe */
+			/* max result. */
 			sigmaEstimateP2 = cAmbToSignalRatioMax;
 		}
 		sigmaEstimateP2 *= cAmbientEffectiveWidth_centi_ns;
@@ -1850,21 +1841,19 @@ int8_t VL_calc_sigma_estimate(struct vl_data *Dev,
 		deltaT_ps = pRangingMeasurementData->RangeMilliMeter *
 					cTOF_per_mm_ps;
 
-		/*
-		 * vcselRate - xtalkCompRate
-		 * (uint32 << 16) - FixPoint1616 = FixPoint1616.
-		 * Divide result by 1000 to convert to mcps.
-		 * 500 is added to ensure rounding when integer division
-		 * truncates.
-		 */
+		/* vcselRate - xtalkCompRate */
+		/* (uint32 << 16) - FixPoint1616 = FixPoint1616. */
+		/* Divide result by 1000 to convert to mcps. */
+		/* 500 is added to ensure rounding when integer division */
+		/* truncates. */
 		diff1_mcps = (((peakSignalRate_kcps << 16) -
 			2 * xTalkCompRate_kcps) + 500)/1000;
 
 		/* vcselRate + xtalkCompRate */
 		diff2_mcps = ((peakSignalRate_kcps << 16) + 500)/1000;
 
-		/* Shift by 8 bits to increase resolution prior to the
-		 * division */
+		/* Shift by 8 bits to increase resolution prior to the */
+		/* division */
 		diff1_mcps <<= 8;
 
 		/* FixPoint0824/FixPoint1616 = FixPoint2408 */
@@ -1876,15 +1865,13 @@ int8_t VL_calc_sigma_estimate(struct vl_data *Dev,
 		if (pRangingMeasurementData->RangeStatus != 0) {
 			pwMult = 1 << 16;
 		} else {
-			/* FixPoint1616/uint32 = FixPoint1616 *i/
+			/* FixPoint1616/uint32 = FixPoint1616 *i */
 			/* smaller than 1.0f */
 			pwMult = deltaT_ps/cVcselPulseWidth_ps;
 
-		/*
-		 * FixPoint1616 * FixPoint1616 = FixPoint3232, however both
-		 * values are small enough such that32 bits will not be
-		 * exceeded.
-		 */
+		/* FixPoint1616 * FixPoint1616 = FixPoint3232, however both */
+		/* values are small enough such that32 bits will not be */
+		/* exceeded. */
 			pwMult *= ((1 << 16) - xTalkCorrection);
 
 			/* (FixPoint3232 >> 16) = FixPoint1616 */
@@ -1893,11 +1880,11 @@ int8_t VL_calc_sigma_estimate(struct vl_data *Dev,
 			/* FixPoint1616 + FixPoint1616 = FixPoint1616 */
 			pwMult += (1 << 16);
 
-		/*
-		 * At this point the value will be 1.xx, therefore if we square
-		 * the value this will exceed 32 bits. To address this perform
-		 * a single shift to the right before the multiplication.
-		 */
+		/* At this point the value will be 1.xx, */
+		/* therefore if we square */
+		/* the value this will exceed 32 bits. */
+		/* To address this perform */
+		/* a single shift to the right before the multiplication. */
 			pwMult >>= 1;
 			/* FixPoint1715 * FixPoint1715 = FixPoint3430 */
 			pwMult = pwMult * pwMult;
@@ -1946,17 +1933,16 @@ int8_t VL_calc_sigma_estimate(struct vl_data *Dev,
 		sigmaEstRtn		 /= 10000;
 
 		if (sigmaEstRtn > cSigmaEstRtnMax) {
-			/* Clip to prevent overflow. Will ensure safe
-			 * max result. */
+			/* Clip to prevent overflow. Will ensure safe */
+			/* max result. */
 			sigmaEstRtn = cSigmaEstRtnMax;
 		}
 		finalRangeIntegrationTimeMilliSecs =
 		    (finalRangeTimeoutMicroSecs +
 			preRangeTimeoutMicroSecs + 500)/1000;
 
-		/* sigmaEstRef = 1mm * 25ms/final range integration time
-		 * (inc pre-range) sqrt(FixPoint1616/int) = FixPoint2408)
-		 */
+		/* sigmaEstRef = 1mm * 25ms/final range integration time */
+		/* (inc pre-range) sqrt(FixPoint1616/int) = FixPoint2408) */
 		sigmaEstRef =
 			VL_isqrt((cDfltFinalRangeIntegrationTimeMilliSecs +
 				finalRangeIntegrationTimeMilliSecs/2)/
@@ -1973,17 +1959,17 @@ int8_t VL_calc_sigma_estimate(struct vl_data *Dev,
 
 		/* sqrt(FixPoint3232) = FixPoint1616 */
 		sqrtResult = VL_isqrt((sqr1 + sqr2));
-		/*
-		 * Note that the Shift by 4 bits increases resolution prior to
-		 * the sqrt, therefore the result must be shifted by 2 bits to
-		 * the right to revert back to the FixPoint1616 format.
-		 */
+		/* Note that the Shift by 4 bits increases */
+		/*resolution prior to */
+		/* the sqrt, therefore the result must be */
+		/* shifted by 2 bits to */
+		/* the right to revert back to the FixPoint1616 format. */
 
 		sigmaEstimate	 = 1000 * sqrtResult;
 
 		if ((peakSignalRate_kcps < 1) || (vcselTotalEventsRtn < 1) ||
-				(sigmaEstimate > cSigmaEstMax)) {
-				sigmaEstimate = cSigmaEstMax;
+			(sigmaEstimate > cSigmaEstMax)) {
+			sigmaEstimate = cSigmaEstMax;
 		}
 
 		*pSigmaEstimate = (uint32_t)(sigmaEstimate);
@@ -2066,9 +2052,7 @@ int8_t VL_get_pal_range_status(struct vl_data *Dev,
 			&SigmaLimitCheckEnable);
 
 	if ((SigmaLimitCheckEnable != 0) && (Status == VL_ERROR_NONE)) {
-		/*
-		* compute the Sigma and check with limit
-		*/
+		/* compute the Sigma and check with limit */
 		Status = VL_calc_sigma_estimate(
 			Dev,
 			pRangingMeasurementData,
@@ -2084,15 +2068,14 @@ int8_t VL_get_pal_range_status(struct vl_data *Dev,
 
 			if ((SigmaLimitValue > 0) &&
 				(SigmaEstimate > SigmaLimitValue))
-					/* Limit Fail */
-					SigmaLimitflag = 1;
+				/* Limit Fail */
+				SigmaLimitflag = 1;
 		}
 	}
 
-	/*
-	 * Check if Signal ref clip limit is enabled, if yes then do comparison
-	 * with limit value and put the result back into pPalRangeStatus.
-	 */
+	/* Check if Signal ref clip limit is enabled, */
+	/* if yes then do comparison */
+	/* with limit value and put the result back into pPalRangeStatus. */
 	if (Status == VL_ERROR_NONE)
 		Status =  VL_GetLimitCheckEnable(Dev,
 				VL_CHECKENABLE_SIGNAL_REF_CLIP,

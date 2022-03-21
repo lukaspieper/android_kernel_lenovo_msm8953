@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,7 +20,7 @@
 #include <linux/msm_ion.h>
 #include <uapi/media/msm_vidc.h>
 
-#define HAL_BUFFER_MAX 0xb
+#define HAL_BUFFER_MAX 0xd
 
 enum smem_type {
 	SMEM_ION,
@@ -49,6 +49,7 @@ enum hal_buffer {
 	HAL_BUFFER_INTERNAL_PERSIST = 0x200,
 	HAL_BUFFER_INTERNAL_PERSIST_1 = 0x400,
 	HAL_BUFFER_INTERNAL_CMD_QUEUE = 0x800,
+	HAL_BUFFER_INTERNAL_RECON = 0x1000,
 };
 
 struct dma_mapping_info {
@@ -60,14 +61,19 @@ struct dma_mapping_info {
 };
 
 struct msm_smem {
-	int mem_type;
-	size_t size;
+	u32 refcount;
+	int fd;
+	void *dma_buf;
+	void *handle;
 	void *kvaddr;
-	ion_phys_addr_t device_addr;
+	u32 device_addr;
+	unsigned int offset;
+	unsigned int size;
 	unsigned long flags;
-	void *smem_priv;
 	enum hal_buffer buffer_type;
 	struct dma_mapping_info mapping_info;
+	int mem_type;
+	void *smem_priv;
 };
 
 enum smem_cache_ops {
@@ -100,15 +106,19 @@ int msm_vidc_querycap(void *instance, struct v4l2_capability *cap);
 int msm_vidc_enum_fmt(void *instance, struct v4l2_fmtdesc *f);
 int msm_vidc_s_fmt(void *instance, struct v4l2_format *f);
 int msm_vidc_g_fmt(void *instance, struct v4l2_format *f);
+int msm_vidc_release_buffers(void *instance, int buffer_type);
+int msm_vidc_prepare_buf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_s_ctrl(void *instance, struct v4l2_control *a);
 int msm_vidc_s_ext_ctrl(void *instance, struct v4l2_ext_controls *a);
+int msm_vidc_g_ext_ctrl(void *instance, struct v4l2_ext_controls *a);
 int msm_vidc_g_ctrl(void *instance, struct v4l2_control *a);
 int msm_vidc_reqbufs(void *instance, struct v4l2_requestbuffers *b);
-int msm_vidc_prepare_buf(void *instance, struct v4l2_buffer *b);
-int msm_vidc_release_buffers(void *instance, int buffer_type);
+int msm_vidc_release_buffer(void *instance, int buffer_type,
+		unsigned int buffer_index);
 int msm_vidc_qbuf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_dqbuf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_streamon(void *instance, enum v4l2_buf_type i);
+int msm_vidc_query_ctrl(void *instance, struct v4l2_queryctrl *ctrl);
 int msm_vidc_streamoff(void *instance, enum v4l2_buf_type i);
 int msm_vidc_comm_cmd(void *instance, union msm_v4l2_cmd *cmd);
 int msm_vidc_poll(void *instance, struct file *filp,
@@ -118,5 +128,6 @@ int msm_vidc_subscribe_event(void *instance,
 int msm_vidc_unsubscribe_event(void *instance,
 		const struct v4l2_event_subscription *sub);
 int msm_vidc_dqevent(void *instance, struct v4l2_event *event);
+int msm_vidc_g_crop(void *instance, struct v4l2_crop *a);
 int msm_vidc_enum_framesizes(void *instance, struct v4l2_frmsizeenum *fsize);
 #endif

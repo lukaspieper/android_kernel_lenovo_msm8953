@@ -16,7 +16,6 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/ptrace.h>
@@ -28,7 +27,6 @@
 #include <linux/uaccess.h>
 
 #include <linux/usb/ch9.h>
-#include <linux/ipc_logging.h>
 
 #include "core.h"
 #include "gadget.h"
@@ -38,8 +36,31 @@
 #define dump_register(nm)				\
 {							\
 	.name	= __stringify(nm),			\
-	.offset	= DWC3_ ##nm - DWC3_GLOBALS_REGS_START,	\
+	.offset	= DWC3_ ##nm,				\
 }
+
+#define dump_ep_register_set(n)			\
+	{					\
+		.name = "DEPCMDPAR2("__stringify(n)")",	\
+		.offset = DWC3_DEP_BASE(n) +	\
+			DWC3_DEPCMDPAR2,	\
+	},					\
+	{					\
+		.name = "DEPCMDPAR1("__stringify(n)")",	\
+		.offset = DWC3_DEP_BASE(n) +	\
+			DWC3_DEPCMDPAR1,	\
+	},					\
+	{					\
+		.name = "DEPCMDPAR0("__stringify(n)")",	\
+		.offset = DWC3_DEP_BASE(n) +	\
+			DWC3_DEPCMDPAR0,	\
+	},					\
+	{					\
+		.name = "DEPCMD("__stringify(n)")",	\
+		.offset = DWC3_DEP_BASE(n) +	\
+			DWC3_DEPCMD,		\
+	}
+
 
 #define ep_event_rate(ev, c, p, dt)	\
 	((dt) ? ((c.ev - p.ev) * (MSEC_PER_SEC)) / (dt) : 0)
@@ -52,6 +73,7 @@ static const struct debugfs_reg32 dwc3_regs[] = {
 	dump_register(GCTL),
 	dump_register(GEVTEN),
 	dump_register(GSTS),
+	dump_register(GUCTL1),
 	dump_register(GSNPSID),
 	dump_register(GGPIO),
 	dump_register(GUID),
@@ -215,7 +237,6 @@ static const struct debugfs_reg32 dwc3_regs[] = {
 	dump_register(GEVNTCOUNT(0)),
 
 	dump_register(GHWPARAMS8),
-	dump_register(GFLADJ),
 	dump_register(DCFG),
 	dump_register(DCTL),
 	dump_register(DEVTEN),
@@ -224,137 +245,38 @@ static const struct debugfs_reg32 dwc3_regs[] = {
 	dump_register(DGCMD),
 	dump_register(DALEPENA),
 
-	dump_register(DEPCMDPAR2(0)),
-	dump_register(DEPCMDPAR2(1)),
-	dump_register(DEPCMDPAR2(2)),
-	dump_register(DEPCMDPAR2(3)),
-	dump_register(DEPCMDPAR2(4)),
-	dump_register(DEPCMDPAR2(5)),
-	dump_register(DEPCMDPAR2(6)),
-	dump_register(DEPCMDPAR2(7)),
-	dump_register(DEPCMDPAR2(8)),
-	dump_register(DEPCMDPAR2(9)),
-	dump_register(DEPCMDPAR2(10)),
-	dump_register(DEPCMDPAR2(11)),
-	dump_register(DEPCMDPAR2(12)),
-	dump_register(DEPCMDPAR2(13)),
-	dump_register(DEPCMDPAR2(14)),
-	dump_register(DEPCMDPAR2(15)),
-	dump_register(DEPCMDPAR2(16)),
-	dump_register(DEPCMDPAR2(17)),
-	dump_register(DEPCMDPAR2(18)),
-	dump_register(DEPCMDPAR2(19)),
-	dump_register(DEPCMDPAR2(20)),
-	dump_register(DEPCMDPAR2(21)),
-	dump_register(DEPCMDPAR2(22)),
-	dump_register(DEPCMDPAR2(23)),
-	dump_register(DEPCMDPAR2(24)),
-	dump_register(DEPCMDPAR2(25)),
-	dump_register(DEPCMDPAR2(26)),
-	dump_register(DEPCMDPAR2(27)),
-	dump_register(DEPCMDPAR2(28)),
-	dump_register(DEPCMDPAR2(29)),
-	dump_register(DEPCMDPAR2(30)),
-	dump_register(DEPCMDPAR2(31)),
-
-	dump_register(DEPCMDPAR1(0)),
-	dump_register(DEPCMDPAR1(1)),
-	dump_register(DEPCMDPAR1(2)),
-	dump_register(DEPCMDPAR1(3)),
-	dump_register(DEPCMDPAR1(4)),
-	dump_register(DEPCMDPAR1(5)),
-	dump_register(DEPCMDPAR1(6)),
-	dump_register(DEPCMDPAR1(7)),
-	dump_register(DEPCMDPAR1(8)),
-	dump_register(DEPCMDPAR1(9)),
-	dump_register(DEPCMDPAR1(10)),
-	dump_register(DEPCMDPAR1(11)),
-	dump_register(DEPCMDPAR1(12)),
-	dump_register(DEPCMDPAR1(13)),
-	dump_register(DEPCMDPAR1(14)),
-	dump_register(DEPCMDPAR1(15)),
-	dump_register(DEPCMDPAR1(16)),
-	dump_register(DEPCMDPAR1(17)),
-	dump_register(DEPCMDPAR1(18)),
-	dump_register(DEPCMDPAR1(19)),
-	dump_register(DEPCMDPAR1(20)),
-	dump_register(DEPCMDPAR1(21)),
-	dump_register(DEPCMDPAR1(22)),
-	dump_register(DEPCMDPAR1(23)),
-	dump_register(DEPCMDPAR1(24)),
-	dump_register(DEPCMDPAR1(25)),
-	dump_register(DEPCMDPAR1(26)),
-	dump_register(DEPCMDPAR1(27)),
-	dump_register(DEPCMDPAR1(28)),
-	dump_register(DEPCMDPAR1(29)),
-	dump_register(DEPCMDPAR1(30)),
-	dump_register(DEPCMDPAR1(31)),
-
-	dump_register(DEPCMDPAR0(0)),
-	dump_register(DEPCMDPAR0(1)),
-	dump_register(DEPCMDPAR0(2)),
-	dump_register(DEPCMDPAR0(3)),
-	dump_register(DEPCMDPAR0(4)),
-	dump_register(DEPCMDPAR0(5)),
-	dump_register(DEPCMDPAR0(6)),
-	dump_register(DEPCMDPAR0(7)),
-	dump_register(DEPCMDPAR0(8)),
-	dump_register(DEPCMDPAR0(9)),
-	dump_register(DEPCMDPAR0(10)),
-	dump_register(DEPCMDPAR0(11)),
-	dump_register(DEPCMDPAR0(12)),
-	dump_register(DEPCMDPAR0(13)),
-	dump_register(DEPCMDPAR0(14)),
-	dump_register(DEPCMDPAR0(15)),
-	dump_register(DEPCMDPAR0(16)),
-	dump_register(DEPCMDPAR0(17)),
-	dump_register(DEPCMDPAR0(18)),
-	dump_register(DEPCMDPAR0(19)),
-	dump_register(DEPCMDPAR0(20)),
-	dump_register(DEPCMDPAR0(21)),
-	dump_register(DEPCMDPAR0(22)),
-	dump_register(DEPCMDPAR0(23)),
-	dump_register(DEPCMDPAR0(24)),
-	dump_register(DEPCMDPAR0(25)),
-	dump_register(DEPCMDPAR0(26)),
-	dump_register(DEPCMDPAR0(27)),
-	dump_register(DEPCMDPAR0(28)),
-	dump_register(DEPCMDPAR0(29)),
-	dump_register(DEPCMDPAR0(30)),
-	dump_register(DEPCMDPAR0(31)),
-
-	dump_register(DEPCMD(0)),
-	dump_register(DEPCMD(1)),
-	dump_register(DEPCMD(2)),
-	dump_register(DEPCMD(3)),
-	dump_register(DEPCMD(4)),
-	dump_register(DEPCMD(5)),
-	dump_register(DEPCMD(6)),
-	dump_register(DEPCMD(7)),
-	dump_register(DEPCMD(8)),
-	dump_register(DEPCMD(9)),
-	dump_register(DEPCMD(10)),
-	dump_register(DEPCMD(11)),
-	dump_register(DEPCMD(12)),
-	dump_register(DEPCMD(13)),
-	dump_register(DEPCMD(14)),
-	dump_register(DEPCMD(15)),
-	dump_register(DEPCMD(16)),
-	dump_register(DEPCMD(17)),
-	dump_register(DEPCMD(18)),
-	dump_register(DEPCMD(19)),
-	dump_register(DEPCMD(20)),
-	dump_register(DEPCMD(21)),
-	dump_register(DEPCMD(22)),
-	dump_register(DEPCMD(23)),
-	dump_register(DEPCMD(24)),
-	dump_register(DEPCMD(25)),
-	dump_register(DEPCMD(26)),
-	dump_register(DEPCMD(27)),
-	dump_register(DEPCMD(28)),
-	dump_register(DEPCMD(29)),
-	dump_register(DEPCMD(30)),
-	dump_register(DEPCMD(31)),
+	dump_ep_register_set(0),
+	dump_ep_register_set(1),
+	dump_ep_register_set(2),
+	dump_ep_register_set(3),
+	dump_ep_register_set(4),
+	dump_ep_register_set(5),
+	dump_ep_register_set(6),
+	dump_ep_register_set(7),
+	dump_ep_register_set(8),
+	dump_ep_register_set(9),
+	dump_ep_register_set(10),
+	dump_ep_register_set(11),
+	dump_ep_register_set(12),
+	dump_ep_register_set(13),
+	dump_ep_register_set(14),
+	dump_ep_register_set(15),
+	dump_ep_register_set(16),
+	dump_ep_register_set(17),
+	dump_ep_register_set(18),
+	dump_ep_register_set(19),
+	dump_ep_register_set(20),
+	dump_ep_register_set(21),
+	dump_ep_register_set(22),
+	dump_ep_register_set(23),
+	dump_ep_register_set(24),
+	dump_ep_register_set(25),
+	dump_ep_register_set(26),
+	dump_ep_register_set(27),
+	dump_ep_register_set(28),
+	dump_ep_register_set(29),
+	dump_ep_register_set(30),
+	dump_ep_register_set(31),
 
 	dump_register(OCFG),
 	dump_register(OCTL),
@@ -368,6 +290,11 @@ static int dwc3_mode_show(struct seq_file *s, void *unused)
 	struct dwc3		*dwc = s->private;
 	unsigned long		flags;
 	u32			reg;
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
 
 	spin_lock_irqsave(&dwc->lock, flags);
 	reg = dwc3_readl(dwc->regs, DWC3_GCTL);
@@ -402,7 +329,12 @@ static ssize_t dwc3_mode_write(struct file *file,
 	struct dwc3		*dwc = s->private;
 	unsigned long		flags;
 	u32			mode = 0;
-	char buf[32] = {0};
+	char buf[32] = {};
+
+	if (atomic_read(&dwc->in_lpm)) {
+		dev_err(dwc->dev, "USB device is powered off\n");
+		return count;
+	}
 
 	if (copy_from_user(&buf, ubuf, min_t(size_t, sizeof(buf) - 1, count)))
 		return -EFAULT;
@@ -437,6 +369,12 @@ static int dwc3_testmode_show(struct seq_file *s, void *unused)
 	struct dwc3		*dwc = s->private;
 	unsigned long		flags;
 	u32			reg;
+
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
 
 	spin_lock_irqsave(&dwc->lock, flags);
 	reg = dwc3_readl(dwc->regs, DWC3_DCTL);
@@ -482,7 +420,12 @@ static ssize_t dwc3_testmode_write(struct file *file,
 	struct dwc3		*dwc = s->private;
 	unsigned long		flags;
 	u32			testmode = 0;
-	char			buf[32] = {0};
+	char			buf[32] = {};
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
 
 	if (copy_from_user(&buf, ubuf, min_t(size_t, sizeof(buf) - 1, count)))
 		return -EFAULT;
@@ -521,6 +464,11 @@ static int dwc3_link_state_show(struct seq_file *s, void *unused)
 	unsigned long		flags;
 	enum dwc3_link_state	state;
 	u32			reg;
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
 
 	spin_lock_irqsave(&dwc->lock, flags);
 	reg = dwc3_readl(dwc->regs, DWC3_DSTS);
@@ -589,7 +537,12 @@ static ssize_t dwc3_link_state_write(struct file *file,
 	struct dwc3		*dwc = s->private;
 	unsigned long		flags;
 	enum dwc3_link_state	state = 0;
-	char			buf[32] = {0};
+	char			buf[32] = {};
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
 
 	if (copy_from_user(&buf, ubuf, min_t(size_t, sizeof(buf) - 1, count)))
 		return -EFAULT;
@@ -624,272 +577,339 @@ static const struct file_operations dwc3_link_state_fops = {
 	.release		= single_release,
 };
 
-static int ep_num;
-static ssize_t dwc3_store_ep_num(struct file *file, const char __user *ubuf,
-				 size_t count, loff_t *ppos)
-{
-	struct seq_file		*s = file->private_data;
-	struct dwc3		*dwc = s->private;
-	char			kbuf[10] = {0};
-	unsigned int		num, dir, temp;
-	unsigned long		flags;
-
-	if (copy_from_user(kbuf, ubuf, min_t(size_t, sizeof(kbuf) - 1, count)))
-		return -EFAULT;
-
-	if (sscanf(kbuf, "%u %u", &num, &dir) != 2)
-		return -EINVAL;
-
-	if (dir != 0 && dir != 1)
-		return -EINVAL;
-
-	temp = (num << 1) + dir;
-	if (temp >= (dwc->num_in_eps + dwc->num_out_eps) ||
-					temp >= DWC3_ENDPOINTS_NUM)
-		return -EINVAL;
-
-	spin_lock_irqsave(&dwc->lock, flags);
-	ep_num = temp;
-	spin_unlock_irqrestore(&dwc->lock, flags);
-
-	return count;
-}
-
-static int dwc3_ep_req_list_show(struct seq_file *s, void *unused)
-{
-	struct dwc3		*dwc = s->private;
-	struct dwc3_ep		*dep;
-	struct dwc3_request	*req = NULL;
-	struct list_head	*ptr = NULL;
-	unsigned long		flags;
-
-	spin_lock_irqsave(&dwc->lock, flags);
-	dep = dwc->eps[ep_num];
-
-	seq_printf(s, "%s request list: flags: 0x%x\n", dep->name, dep->flags);
-	list_for_each(ptr, &dep->request_list) {
-		req = list_entry(ptr, struct dwc3_request, list);
-
-		seq_printf(s,
-			"req:0x%pK len: %d sts: %d dma:0x%pKa num_sgs: %d\n",
-			req, req->request.length, req->request.status,
-			&req->request.dma, req->request.num_sgs);
-	}
-	spin_unlock_irqrestore(&dwc->lock, flags);
-
-	return 0;
-}
-
-static int dwc3_ep_req_list_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, dwc3_ep_req_list_show, inode->i_private);
-}
-
-static const struct file_operations dwc3_ep_req_list_fops = {
-	.open			= dwc3_ep_req_list_open,
-	.write			= dwc3_store_ep_num,
-	.read			= seq_read,
-	.llseek			= seq_lseek,
-	.release		= single_release,
+struct dwc3_ep_file_map {
+	char name[25];
+	int (*show)(struct seq_file *s, void *unused);
 };
 
-static int dwc3_ep_queued_req_show(struct seq_file *s, void *unused)
+static int dwc3_tx_fifo_queue_show(struct seq_file *s, void *unused)
 {
-	struct dwc3		*dwc = s->private;
-	struct dwc3_ep		*dep;
-	struct dwc3_request	*req = NULL;
-	struct list_head	*ptr = NULL;
+	struct dwc3_ep		*dep = s->private;
+	struct dwc3		*dwc = dep->dwc;
 	unsigned long		flags;
+	u32			val;
 
-	spin_lock_irqsave(&dwc->lock, flags);
-	dep = dwc->eps[ep_num];
-
-	seq_printf(s, "%s queued reqs to HW: flags:0x%x\n", dep->name,
-								dep->flags);
-	list_for_each(ptr, &dep->req_queued) {
-		req = list_entry(ptr, struct dwc3_request, list);
-
-		seq_printf(s,
-			"req:0x%pK len:%d sts:%d dma:%pKa nsg:%d trb:0x%pK\n",
-			req, req->request.length, req->request.status,
-			&req->request.dma, req->request.num_sgs, req->trb);
-	}
-	spin_unlock_irqrestore(&dwc->lock, flags);
-
-	return 0;
-}
-
-static int dwc3_ep_queued_req_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, dwc3_ep_queued_req_show, inode->i_private);
-}
-
-const struct file_operations dwc3_ep_req_queued_fops = {
-	.open			= dwc3_ep_queued_req_open,
-	.write			= dwc3_store_ep_num,
-	.read			= seq_read,
-	.llseek			= seq_lseek,
-	.release		= single_release,
-};
-
-static int dwc3_ep_trbs_show(struct seq_file *s, void *unused)
-{
-	struct dwc3		*dwc = s->private;
-	struct dwc3_ep		*dep;
-	struct dwc3_trb		*trb;
-	unsigned long		flags;
-	int			j;
-
-	if (!ep_num)
-		return 0;
-
-	spin_lock_irqsave(&dwc->lock, flags);
-	dep = dwc->eps[ep_num];
-	if (!dep->trb_pool) {
-		spin_unlock_irqrestore(&dwc->lock, flags);
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
 		return 0;
 	}
 
-	seq_printf(s, "%s trb pool: flags:0x%x freeslot:%d busyslot:%d\n",
-		dep->name, dep->flags, dep->free_slot, dep->busy_slot);
-	for (j = 0; j < DWC3_TRB_NUM; j++) {
-		trb = &dep->trb_pool[j];
-		seq_printf(s, "trb:0x%pK bph:0x%x bpl:0x%x size:0x%x ctrl: %x\n",
-			trb, trb->bph, trb->bpl, trb->size, trb->ctrl);
-	}
+	spin_lock_irqsave(&dwc->lock, flags);
+	val = dwc3_core_fifo_space(dep, DWC3_TXFIFOQ);
+	seq_printf(s, "%u\n", val);
 	spin_unlock_irqrestore(&dwc->lock, flags);
 
 	return 0;
 }
 
-static int dwc3_ep_trbs_list_open(struct inode *inode, struct file *file)
+static int dwc3_rx_fifo_queue_show(struct seq_file *s, void *unused)
 {
-	return single_open(file, dwc3_ep_trbs_show, inode->i_private);
+	struct dwc3_ep		*dep = s->private;
+	struct dwc3		*dwc = dep->dwc;
+	unsigned long		flags;
+	u32			val;
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	val = dwc3_core_fifo_space(dep, DWC3_RXFIFOQ);
+	seq_printf(s, "%u\n", val);
+	spin_unlock_irqrestore(&dwc->lock, flags);
+
+	return 0;
 }
 
-const struct file_operations dwc3_ep_trb_list_fops = {
-	.open			= dwc3_ep_trbs_list_open,
-	.write			= dwc3_store_ep_num,
+static int dwc3_tx_request_queue_show(struct seq_file *s, void *unused)
+{
+	struct dwc3_ep		*dep = s->private;
+	struct dwc3		*dwc = dep->dwc;
+	unsigned long		flags;
+	u32			val;
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	val = dwc3_core_fifo_space(dep, DWC3_TXREQQ);
+	seq_printf(s, "%u\n", val);
+	spin_unlock_irqrestore(&dwc->lock, flags);
+
+	return 0;
+}
+
+static int dwc3_rx_request_queue_show(struct seq_file *s, void *unused)
+{
+	struct dwc3_ep		*dep = s->private;
+	struct dwc3		*dwc = dep->dwc;
+	unsigned long		flags;
+	u32			val;
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	val = dwc3_core_fifo_space(dep, DWC3_RXREQQ);
+	seq_printf(s, "%u\n", val);
+	spin_unlock_irqrestore(&dwc->lock, flags);
+
+	return 0;
+}
+
+static int dwc3_rx_info_queue_show(struct seq_file *s, void *unused)
+{
+	struct dwc3_ep		*dep = s->private;
+	struct dwc3		*dwc = dep->dwc;
+	unsigned long		flags;
+	u32			val;
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	val = dwc3_core_fifo_space(dep, DWC3_RXINFOQ);
+	seq_printf(s, "%u\n", val);
+	spin_unlock_irqrestore(&dwc->lock, flags);
+
+	return 0;
+}
+
+static int dwc3_descriptor_fetch_queue_show(struct seq_file *s, void *unused)
+{
+	struct dwc3_ep		*dep = s->private;
+	struct dwc3		*dwc = dep->dwc;
+	unsigned long		flags;
+	u32			val;
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	val = dwc3_core_fifo_space(dep, DWC3_DESCFETCHQ);
+	seq_printf(s, "%u\n", val);
+	spin_unlock_irqrestore(&dwc->lock, flags);
+
+	return 0;
+}
+
+static int dwc3_event_queue_show(struct seq_file *s, void *unused)
+{
+	struct dwc3_ep		*dep = s->private;
+	struct dwc3		*dwc = dep->dwc;
+	unsigned long		flags;
+	u32			val;
+
+	if (atomic_read(&dwc->in_lpm)) {
+		seq_puts(s, "USB device is powered off\n");
+		return 0;
+	}
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	val = dwc3_core_fifo_space(dep, DWC3_EVENTQ);
+	seq_printf(s, "%u\n", val);
+	spin_unlock_irqrestore(&dwc->lock, flags);
+
+	return 0;
+}
+
+static int dwc3_ep_transfer_type_show(struct seq_file *s, void *unused)
+{
+	struct dwc3_ep		*dep = s->private;
+	struct dwc3		*dwc = dep->dwc;
+	unsigned long		flags;
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	if (!(dep->flags & DWC3_EP_ENABLED) ||
+			!dep->endpoint.desc) {
+		seq_printf(s, "--\n");
+		goto out;
+	}
+
+	switch (usb_endpoint_type(dep->endpoint.desc)) {
+	case USB_ENDPOINT_XFER_CONTROL:
+		seq_printf(s, "control\n");
+		break;
+	case USB_ENDPOINT_XFER_ISOC:
+		seq_printf(s, "isochronous\n");
+		break;
+	case USB_ENDPOINT_XFER_BULK:
+		seq_printf(s, "bulk\n");
+		break;
+	case USB_ENDPOINT_XFER_INT:
+		seq_printf(s, "interrupt\n");
+		break;
+	default:
+		seq_printf(s, "--\n");
+	}
+
+out:
+	spin_unlock_irqrestore(&dwc->lock, flags);
+
+	return 0;
+}
+
+static inline const char *dwc3_trb_type_string(struct dwc3_trb *trb)
+{
+	switch (DWC3_TRBCTL_TYPE(trb->ctrl)) {
+	case DWC3_TRBCTL_NORMAL:
+		return "normal";
+	case DWC3_TRBCTL_CONTROL_SETUP:
+		return "control-setup";
+	case DWC3_TRBCTL_CONTROL_STATUS2:
+		return "control-status2";
+	case DWC3_TRBCTL_CONTROL_STATUS3:
+		return "control-status3";
+	case DWC3_TRBCTL_CONTROL_DATA:
+		return "control-data";
+	case DWC3_TRBCTL_ISOCHRONOUS_FIRST:
+		return "isoc-first";
+	case DWC3_TRBCTL_ISOCHRONOUS:
+		return "isoc";
+	case DWC3_TRBCTL_LINK_TRB:
+		return "link";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static int dwc3_ep_trb_ring_show(struct seq_file *s, void *unused)
+{
+	struct dwc3_ep		*dep = s->private;
+	struct dwc3		*dwc = dep->dwc;
+	unsigned long		flags;
+	int			i;
+
+	spin_lock_irqsave(&dwc->lock, flags);
+	if (dep->number <= 1) {
+		seq_printf(s, "--\n");
+		goto out;
+	}
+
+	seq_printf(s, "enqueue pointer %d\n", dep->trb_enqueue);
+	seq_printf(s, "dequeue pointer %d\n", dep->trb_dequeue);
+	seq_printf(s, "\n--------------------------------------------------\n\n");
+	seq_printf(s, "buffer_addr,size,type,ioc,isp_imi,csp,chn,lst,hwo\n");
+
+	for (i = 0; i < DWC3_TRB_NUM; i++) {
+		struct dwc3_trb *trb = &dep->trb_pool[i];
+
+		seq_printf(s, "%08x%08x,%d,%s,%d,%d,%d,%d,%d,%d\n",
+				trb->bph, trb->bpl, trb->size,
+				dwc3_trb_type_string(trb),
+				!!(trb->ctrl & DWC3_TRB_CTRL_IOC),
+				!!(trb->ctrl & DWC3_TRB_CTRL_ISP_IMI),
+				!!(trb->ctrl & DWC3_TRB_CTRL_CSP),
+				!!(trb->ctrl & DWC3_TRB_CTRL_CHN),
+				!!(trb->ctrl & DWC3_TRB_CTRL_LST),
+				!!(trb->ctrl & DWC3_TRB_CTRL_HWO));
+	}
+
+out:
+	spin_unlock_irqrestore(&dwc->lock, flags);
+
+	return 0;
+}
+
+static struct dwc3_ep_file_map map[] = {
+	{ "tx_fifo_queue", dwc3_tx_fifo_queue_show, },
+	{ "rx_fifo_queue", dwc3_rx_fifo_queue_show, },
+	{ "tx_request_queue", dwc3_tx_request_queue_show, },
+	{ "rx_request_queue", dwc3_rx_request_queue_show, },
+	{ "rx_info_queue", dwc3_rx_info_queue_show, },
+	{ "descriptor_fetch_queue", dwc3_descriptor_fetch_queue_show, },
+	{ "event_queue", dwc3_event_queue_show, },
+	{ "transfer_type", dwc3_ep_transfer_type_show, },
+	{ "trb_ring", dwc3_ep_trb_ring_show, },
+};
+
+static int dwc3_endpoint_open(struct inode *inode, struct file *file)
+{
+	const char		*file_name = file_dentry(file)->d_iname;
+	struct dwc3_ep_file_map	*f_map;
+	int			i;
+
+	for (i = 0; i < ARRAY_SIZE(map); i++) {
+		f_map = &map[i];
+
+		if (strcmp(f_map->name, file_name) == 0)
+			break;
+	}
+
+	return single_open(file, f_map->show, inode->i_private);
+}
+
+static const struct file_operations dwc3_endpoint_fops = {
+	.open			= dwc3_endpoint_open,
 	.read			= seq_read,
 	.llseek			= seq_lseek,
 	.release		= single_release,
 };
 
-static unsigned int ep_addr_rxdbg_mask = 1;
-module_param(ep_addr_rxdbg_mask, uint, S_IRUGO | S_IWUSR);
-static unsigned int ep_addr_txdbg_mask = 1;
-module_param(ep_addr_txdbg_mask, uint, S_IRUGO | S_IWUSR);
-
-static struct dwc3 *dbg_dwc3_data[DWC_CTRL_COUNT];
-
-static int allow_dbg_print(u8 ep_num)
+static void dwc3_debugfs_create_endpoint_file(struct dwc3_ep *dep,
+		struct dentry *parent, int type)
 {
-	int dir, num;
+	struct dentry		*file;
+	struct dwc3_ep_file_map	*ep_file = &map[type];
 
-	/* allow bus wide events */
-	if (ep_num == 0xff)
-		return 1;
-
-	dir = ep_num & 0x1;
-	num = ep_num >> 1;
-	num = 1 << num;
-
-	if (dir && (num & ep_addr_txdbg_mask))
-		return 1;
-	if (!dir && (num & ep_addr_rxdbg_mask))
-		return 1;
-
-	return 0;
+	file = debugfs_create_file(ep_file->name, S_IRUGO, parent, dep,
+			&dwc3_endpoint_fops);
 }
 
-/**
- * dwc3_dbg_print:  prints the common part of the event
- * @addr:   endpoint address
- * @name:   event name
- * @status: status
- * @extra:  extra information
- * @dwc3: pointer to struct dwc3
- */
-void dwc3_dbg_print(struct dwc3 *dwc, u8 ep_num, const char *name,
-			int status, const char *extra)
+static void dwc3_debugfs_create_endpoint_files(struct dwc3_ep *dep,
+		struct dentry *parent)
 {
-	if (!allow_dbg_print(ep_num))
-		return;
+	int			i;
 
-	if (name == NULL)
-		return;
-
-	ipc_log_string(dwc->dwc_ipc_log_ctxt, "%02X %-12.12s %4i ?\t%s",
-			ep_num, name, status, extra);
+	for (i = 0; i < ARRAY_SIZE(map); i++)
+		dwc3_debugfs_create_endpoint_file(dep, parent, i);
 }
 
-/**
- * dwc3_dbg_done: prints a DONE event
- * @addr:   endpoint address
- * @td:     transfer descriptor
- * @status: status
- * @dwc3: pointer to struct dwc3
- */
-void dwc3_dbg_done(struct dwc3 *dwc, u8 ep_num,
-		const u32 count, int status)
+static void dwc3_debugfs_create_endpoint_dir(struct dwc3_ep *dep,
+		struct dentry *parent)
 {
-	if (!allow_dbg_print(ep_num))
+	struct dentry		*dir;
+
+	dir = debugfs_create_dir(dep->name, parent);
+	if (IS_ERR_OR_NULL(dir))
 		return;
 
-	ipc_log_string(dwc->dwc_ipc_log_ctxt, "%02X %-12.12s %4i ?\t%d",
-			ep_num, "DONE", status, count);
+	dwc3_debugfs_create_endpoint_files(dep, dir);
 }
 
-/*
- * dwc3_dbg_queue: prints a QUEUE event
- * @addr:   endpoint address
- * @req:    USB request
- * @status: status
- */
-void dwc3_dbg_queue(struct dwc3 *dwc, u8 ep_num,
-		const struct usb_request *req, int status)
+static void dwc3_debugfs_create_endpoint_dirs(struct dwc3 *dwc,
+		struct dentry *parent)
 {
-	if (!allow_dbg_print(ep_num))
-		return;
+	int			i;
 
-	if (req != NULL) {
-		ipc_log_string(dwc->dwc_ipc_log_ctxt,
-			"%02X %-12.12s %4i ?\t%d %d", ep_num, "QUEUE", status,
-			!req->no_interrupt, req->length);
+	for (i = 0; i < dwc->num_in_eps; i++) {
+		u8		epnum = (i << 1) | 1;
+		struct dwc3_ep	*dep = dwc->eps[epnum];
+
+		if (!dep)
+			continue;
+
+		dwc3_debugfs_create_endpoint_dir(dep, parent);
 	}
-}
 
-/**
- * dwc3_dbg_setup: prints a SETUP event
- * @addr: endpoint address
- * @req:  setup request
- */
-void dwc3_dbg_setup(struct dwc3 *dwc, u8 ep_num,
-		const struct usb_ctrlrequest *req)
-{
-	if (!allow_dbg_print(ep_num))
-		return;
+	for (i = 0; i < dwc->num_out_eps; i++) {
+		u8		epnum = (i << 1);
+		struct dwc3_ep	*dep = dwc->eps[epnum];
 
-	if (req != NULL) {
-		ipc_log_string(dwc->dwc_ipc_log_ctxt,
-			"%02X %-12.12s ?\t%02X %02X %04X %04X %d",
-			ep_num, "SETUP", req->bRequestType,
-			req->bRequest, le16_to_cpu(req->wValue),
-			le16_to_cpu(req->wIndex), le16_to_cpu(req->wLength));
+		if (!dep)
+			continue;
+
+		dwc3_debugfs_create_endpoint_dir(dep, parent);
 	}
-}
-
-/**
- * dwc3_dbg_print_reg: prints a reg value
- * @name:   reg name
- * @reg: reg value to be printed
- */
-void dwc3_dbg_print_reg(struct dwc3 *dwc, const char *name, int reg)
-{
-	if (name == NULL)
-		return;
-
-	ipc_log_string(dwc->dwc_ipc_log_ctxt, "%s = 0x%08x", name, reg);
 }
 
 static ssize_t dwc3_store_int_events(struct file *file,
@@ -921,9 +941,8 @@ static ssize_t dwc3_store_int_events(struct file *file,
 		return ret;
 	}
 
-	spin_lock_irqsave(&dwc->lock, flags);
-
 	pr_debug("%s(): clearing debug interrupt buffers\n", __func__);
+	spin_lock_irqsave(&dwc->lock, flags);
 	ts = current_kernel_time();
 	for (i = 0; i < DWC3_ENDPOINTS_NUM; i++) {
 		dep = dwc->eps[i];
@@ -932,9 +951,7 @@ static ssize_t dwc3_store_int_events(struct file *file,
 		dep->dbg_ep_events_ts = ts;
 	}
 	memset(&dwc->dbg_gadget_events, 0, sizeof(dwc->dbg_gadget_events));
-
 	spin_unlock_irqrestore(&dwc->lock, flags);
-
 	return count;
 }
 
@@ -996,10 +1013,6 @@ static int dwc3_gadget_int_events_show(struct seq_file *s, void *unused)
 		seq_printf(s, "epcmdcomplt:%u @ %luHz\n",
 			dep->dbg_ep_events.epcmdcomplete,
 			ep_event_rate(epcmdcomplete, dep->dbg_ep_events,
-				dep->dbg_ep_events_diff, ts_delta_ms));
-		seq_printf(s, "cmdcmplt:%u @ %luHz\n",
-			dep->dbg_ep_events.cmdcmplt,
-			ep_event_rate(cmdcmplt, dep->dbg_ep_events,
 				dep->dbg_ep_events_diff, ts_delta_ms));
 		seq_printf(s, "unknown:%u @ %luHz\n",
 			dep->dbg_ep_events.unknown_event,
@@ -1072,119 +1085,77 @@ const struct file_operations dwc3_gadget_dbg_events_fops = {
 	.release	= single_release,
 };
 
-static int count;
 int dwc3_debugfs_init(struct dwc3 *dwc)
 {
 	struct dentry		*root;
-	struct dentry		*file;
-
-	if (count >= DWC_CTRL_COUNT) {
-		dev_err(dwc->dev, "Err dwc instance %d >= %d available\n",
-				count, DWC_CTRL_COUNT);
-		return -EINVAL;
-	}
+	struct dentry           *file;
+	int			ret;
 
 	root = debugfs_create_dir(dev_name(dwc->dev), NULL);
-	if (!root) {
-		dev_err(dwc->dev, "Can't create debugfs root\n");
-		return -ENOMEM;
+	if (IS_ERR_OR_NULL(root)) {
+		if (!root)
+			dev_err(dwc->dev, "Can't create debugfs root\n");
+		ret = -ENOMEM;
+		goto err0;
 	}
-
 	dwc->root = root;
 
 	dwc->regset = kzalloc(sizeof(*dwc->regset), GFP_KERNEL);
 	if (!dwc->regset) {
+		ret = -ENOMEM;
 		goto err1;
 	}
 
 	dwc->regset->regs = dwc3_regs;
 	dwc->regset->nregs = ARRAY_SIZE(dwc3_regs);
-	dwc->regset->base = dwc->regs;
+	dwc->regset->base = dwc->regs - DWC3_GLOBALS_REGS_START;
 
-	file = debugfs_create_regset32("regdump", S_IRUGO, root, dwc->regset);
-	if (!file) {
-		dev_dbg(dwc->dev, "Can't create debugfs regdump\n");
-		goto err1;
+	if (dwc->create_reg_debugfs) {
+		file = debugfs_create_regset32("regdump", 0444,
+						root, dwc->regset);
+		if (!file)
+			dev_dbg(dwc->dev, "Can't create debugfs regdump\n");
 	}
 
 	if (IS_ENABLED(CONFIG_USB_DWC3_DUAL_ROLE)) {
 		file = debugfs_create_file("mode", S_IRUGO | S_IWUSR, root,
 				dwc, &dwc3_mode_fops);
-		if (!file) {
+		if (!file)
 			dev_dbg(dwc->dev, "Can't create debugfs mode\n");
-			goto err1;
-		}
 	}
 
 	if (IS_ENABLED(CONFIG_USB_DWC3_DUAL_ROLE) ||
 			IS_ENABLED(CONFIG_USB_DWC3_GADGET)) {
 		file = debugfs_create_file("testmode", S_IRUGO | S_IWUSR, root,
 				dwc, &dwc3_testmode_fops);
-		if (!file) {
+		if (!file)
 			dev_dbg(dwc->dev, "Can't create debugfs testmode\n");
-			goto err1;
-		}
 
-		file = debugfs_create_file("link_state", S_IRUGO | S_IWUSR, root,
-				dwc, &dwc3_link_state_fops);
+		file = debugfs_create_file("link_state", S_IRUGO | S_IWUSR,
+				root, dwc, &dwc3_link_state_fops);
+		if (!file)
+			dev_dbg(dwc->dev, "Can't create debugfs link_state\n");
+
+		dwc3_debugfs_create_endpoint_dirs(dwc, root);
+
+		file = debugfs_create_file("int_events", 0644, root, dwc,
+				&dwc3_gadget_dbg_events_fops);
 		if (!file) {
-			dev_dbg(dwc->dev, "Can't create debugfs linkstate\n");
+			ret = -ENOMEM;
 			goto err1;
 		}
 	}
 
-	file = debugfs_create_file("trbs", S_IRUGO | S_IWUSR, root,
-			dwc, &dwc3_ep_trb_list_fops);
-	if (!file) {
-		dev_dbg(dwc->dev, "Can't create debugfs trbs\n");
-		goto err1;
-	}
-
-	file = debugfs_create_file("requests", S_IRUGO | S_IWUSR, root,
-			dwc, &dwc3_ep_req_list_fops);
-	if (!file) {
-		dev_dbg(dwc->dev, "Can't create debugfs requests\n");
-		goto err1;
-	}
-
-	file = debugfs_create_file("queued_reqs", S_IRUGO | S_IWUSR, root,
-			dwc, &dwc3_ep_req_queued_fops);
-	if (!file) {
-		dev_dbg(dwc->dev, "Can't create debugfs queued_reqs\n");
-		goto err1;
-	}
-
-	file = debugfs_create_file("int_events", S_IRUGO | S_IWUSR, root,
-			dwc, &dwc3_gadget_dbg_events_fops);
-	if (!file) {
-		dev_dbg(dwc->dev, "Can't create debugfs int_events\n");
-		goto err1;
-	}
-
-	dwc->dwc_ipc_log_ctxt = ipc_log_context_create(NUM_LOG_PAGES,
-					dev_name(dwc->dev), 0);
-	if (!dwc->dwc_ipc_log_ctxt) {
-		dev_err(dwc->dev, "Error getting ipc_log_ctxt\n");
-		goto err1;
-	}
-
-	dbg_dwc3_data[count] = dwc;
-	count++;
 	return 0;
 
 err1:
-	kfree(dwc->regset);
-	dwc->regset = NULL;
 	debugfs_remove_recursive(root);
-	return -ENOMEM;
+err0:
+	return ret;
 }
 
 void dwc3_debugfs_exit(struct dwc3 *dwc)
 {
 	debugfs_remove_recursive(dwc->root);
-	dwc->root = NULL;
 	kfree(dwc->regset);
-	dwc->regset = NULL;
-	ipc_log_context_destroy(dwc->dwc_ipc_log_ctxt);
-	dwc->dwc_ipc_log_ctxt = NULL;
 }

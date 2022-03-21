@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2017, 2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,6 +10,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+
 / {
 	aliases {
 		i2c1 = &i2c_1;
@@ -24,7 +25,7 @@
 };
 
 &soc {
-	dma_blsp1: qcom,sps-dma@0x7884000{ /* BLSP1 */
+	dma_blsp1: qcom,sps-dma@7884000{ /* BLSP1 */
 		#dma-cells = <4>;
 		compatible = "qcom,sps-dma";
 		reg = <0x7884000 0x23000>;
@@ -55,12 +56,12 @@
 		status = "disabled";
 	};
 
-	i2c_2: i2c@78B6000 { /* BLSP1 QUP2 */
+	i2c_2: i2c@78b6000 { /* BLSP1 QUP2 */
 		compatible = "qcom,i2c-msm-v2";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg-names = "qup_phys_addr";
-		reg = <0x78B6000 0x600>;
+		reg = <0x78b6000 0x600>;
 		interrupt-names = "qup_irq";
 		interrupts = <0 96 0>;
 		dmas = <&dma_blsp1 10 64 0x20000020 0x20>,
@@ -78,12 +79,12 @@
 		status = "disabled";
 	};
 
-	i2c_3: i2c@78B7000 { /* BLSP1 QUP3 */
+	i2c_3: i2c@78b7000 { /* BLSP1 QUP3 */
 		compatible = "qcom,i2c-msm-v2";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg-names = "qup_phys_addr";
-		reg = <0x78B7000 0x600>;
+		reg = <0x78b7000 0x600>;
 		interrupt-names = "qup_irq";
 		interrupts = <0 97 0>;
 		dmas = <&dma_blsp1 12 64 0x20000020 0x20>,
@@ -186,12 +187,12 @@
 		};
 	};
 
-	i2c_4: i2c@78B8000 { /* BLSP1 QUP4 */
+	i2c_4: i2c@78b8000 { /* BLSP1 QUP4 */
 		compatible = "qcom,i2c-msm-v2";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg-names = "qup_phys_addr";
-		reg = <0x78B8000 0x600>;
+		reg = <0x78b8000 0x600>;
 		interrupt-names = "qup_irq";
 		interrupts = <0 98 0>;
 		dmas = <&dma_blsp1 14 64 0x20000020 0x20>,
@@ -210,12 +211,12 @@
 	};
 
 
-	spi_1: spi@78B5000 { /* BLSP1 QUP1 */
+	spi_1: spi@78b5000 { /* BLSP1 QUP1 */
 		compatible = "qcom,spi-qup-v2";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg-names = "spi_physical", "spi_bam_physical";
-		reg = <0x078B5000 0x600>,
+		reg = <0x078b5000 0x600>,
 		      <0x7884000 0x23000>;
 		interrupt-names = "spi_irq", "spi_bam_irq";
 		interrupts = <0 95 0>, <0 238 0>;
@@ -235,12 +236,12 @@
 		status = "disabled";
 	};
 
-	spi_2: spi@78B6000 { /* BLSP1 QUP2 */
+	spi_2: spi@78b6000 { /* BLSP1 QUP2 */
 		compatible = "qcom,spi-qup-v2";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg-names = "spi_physical", "spi_bam_physical";
-		reg = <0x78B6000 0x600>,
+		reg = <0x78b6000 0x600>,
 		      <0x7884000 0x23000>;
 		interrupt-names = "spi_irq", "spi_bam_irq";
 		interrupts = <0 96 0>, <0 238 0>;
@@ -260,12 +261,12 @@
 		status = "disabled";
 	};
 
-	spi_3: spi@78B7000 { /* BLSP1 QUP3 */
+	spi_3: spi@78b7000 { /* BLSP1 QUP3 */
 		compatible = "qcom,spi-qup-v2";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg-names = "spi_physical", "spi_bam_physical";
-		reg = <0x078B7000 0x600>,
+		reg = <0x078b7000 0x600>,
 		      <0x7884000 0x23000>;
 		interrupt-names = "spi_irq", "spi_bam_irq";
 		interrupts = <0 97 0>, <0 238 0>;
@@ -285,12 +286,12 @@
 		status = "disabled";
 	};
 
-	spi_4: spi@78B8000 { /* BLSP1 QUP4 */
+	spi_4: spi@78b8000 { /* BLSP1 QUP4 */
 		compatible = "qcom,spi-qup-v2";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg-names = "spi_physical", "spi_bam_physical";
-		reg = <0x078B8000 0x600>,
+		reg = <0x078b8000 0x600>,
 		      <0x7884000 0x23000>;
 		interrupt-names = "spi_irq", "spi_bam_irq";
 		interrupts = <0 98 0>, <0 238 0>;
@@ -310,9 +311,9 @@
 		status = "disabled";
 	};
 
-	blsp1_uart1_hs: uart@78AF000 { /* BLSP1 UART1 */
-		compatible = "qcom,msm-hsuart-v14";
-		reg = <0x78AF000 0x200>,
+	blsp1_uart1_hs: uart@78af000 { /* BLSP1 UART1 */
+		compatible = "qcom,msm-uartdm-v1.4", "qcom,msm-uartdm";
+		reg = <0x78af000 0x200>,
 		    <0x7884000 0x23000>;
 		reg-names = "core_mem", "bam_mem";
 		interrupt-names = "core_irq", "bam_irq", "wakeup_irq";
@@ -347,9 +348,9 @@
 		status = "disabled";
 	};
 
-	blsp1_uart2_hs: uart@78B0000 { /* BLSP1 UART2 */
-		compatible = "qcom,msm-hsuart-v14";
-		reg = <0x78B0000 0x200>,
+	blsp1_uart2_hs: uart@78b0000 { /* BLSP1 UART2 */
+		compatible = "qcom,msm-uartdm-v1.4", "qcom,msm-uartdm";
+		reg = <0x78b0000 0x200>,
 		    <0x7884000 0x23000>;
 		reg-names = "core_mem", "bam_mem";
 		interrupt-names = "core_irq", "bam_irq", "wakeup_irq";
@@ -384,9 +385,9 @@
 		status = "disabled";
 	};
 
-	blsp1_uart3_hs: uart@78B1000 { /* BLSP1 UART3 */
-		compatible = "qcom,msm-hsuart-v14";
-		reg = <0x78B1000 0x200>,
+	blsp1_uart3_hs: uart@78b1000 { /* BLSP1 UART3 */
+		compatible = "qcom,msm-uartdm-v1.4", "qcom,msm-uartdm";
+		reg = <0x78b1000 0x200>,
 		    <0x7884000 0x23000>;
 		reg-names = "core_mem", "bam_mem";
 		interrupt-names = "core_irq", "bam_irq", "wakeup_irq";
@@ -421,14 +422,14 @@
 		status = "disabled";
 	};
 
-	blsp1_uart4a_hs: uarta@78B2000 { /* BLSP1 UART4 */
-		compatible = "qcom,msm-hsuart-v14";
-		reg = <0x78B2000 0x200>,
+	blsp1_uart4_hs: uart@78b2000 { /* BLSP1 UART4 */
+		compatible = "qcom,msm-uartdm-v1.4", "qcom,msm-uartdm";
+		reg = <0x78b2000 0x200>,
 		    <0x7884000 0x23000>;
 		reg-names = "core_mem", "bam_mem";
 		interrupt-names = "core_irq", "bam_irq", "wakeup_irq";
 		#address-cells = <0>;
-		interrupt-parent = <&blsp1_uart4a_hs>;
+		interrupt-parent = <&blsp1_uart4_hs>;
 		interrupts = <0 1 2>;
 		#interrupt-cells = <1>;
 		interrupt-map-mask = <0xffffffff>;
@@ -458,14 +459,14 @@
 		status = "disabled";
 	};
 
-	blsp1_uart4b_hs: uartb@78B2000 { /* BLSP1 UART4b */
-		compatible = "qcom,msm-hsuart-v14";
-		reg = <0x78B2000 0x200>,
+	blsp1_uart4b_hs: uart@78b2000 { /* BLSP1 UART4b */
+		compatible = "qcom,msm-uartdm-v1.4", "qcom,msm-uartdm";
+		reg = <0x78b2000 0x200>,
 		    <0x7884000 0x23000>;
 		reg-names = "core_mem", "bam_mem";
 		interrupt-names = "core_irq", "bam_irq", "wakeup_irq";
 		#address-cells = <0>;
-		interrupt-parent = <&blsp1_uart4b_hs>;
+		interrupt-parent = <&blsp1_uart4_hs>;
 		interrupts = <0 1 2>;
 		#interrupt-cells = <1>;
 		interrupt-map-mask = <0xffffffff>;

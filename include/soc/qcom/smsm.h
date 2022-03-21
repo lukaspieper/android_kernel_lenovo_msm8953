@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -130,7 +130,7 @@ static inline int smsm_state_cb_deregister(uint32_t smsm_entry, uint32_t mask,
 {
 	return -ENODEV;
 }
-static inline void smsm_reset_modem(unsigned mode)
+static inline void smsm_reset_modem(unsigned int mode)
 {
 }
 static inline void smsm_reset_modem_cont(void)

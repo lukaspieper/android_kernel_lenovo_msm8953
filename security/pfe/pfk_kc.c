@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,6 +23,7 @@
  * Empty entries always have the oldest timestamp.
  */
 
+#include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <crypto/ice.h>
@@ -31,6 +32,7 @@
 #include <linux/jiffies.h>
 #include <linux/slab.h>
 #include <linux/printk.h>
+#include <linux/sched.h>
 
 #include "pfk_kc.h"
 #include "pfk_ice.h"
@@ -50,44 +52,41 @@
 /** The maximum key and salt size */
 #define PFK_MAX_KEY_SIZE PFK_KC_KEY_SIZE
 #define PFK_MAX_SALT_SIZE PFK_KC_SALT_SIZE
+#define PFK_UFS "ufs"
 
 static DEFINE_SPINLOCK(kc_lock);
 static unsigned long flags;
 static bool kc_ready;
+static char *s_type = "sdcc";
 
+/**
+ * enum pfk_kc_entry_state - state of the entry inside kc table
+ *
+ * @FREE:		   entry is free
+ * @ACTIVE_ICE_PRELOAD:    entry is actively used by ICE engine
+			   and cannot be used by others. SCM call
+			   to load key to ICE is pending to be performed
+ * @ACTIVE_ICE_LOADED:     entry is actively used by ICE engine and
+			   cannot be used by others. SCM call to load the
+			   key to ICE was successfully executed and key is
+			   now loaded
+ * @INACTIVE_INVALIDATING: entry is being invalidated during file close
+			   and cannot be used by others until invalidation
+			   is complete
+ * @INACTIVE:		   entry's key is already loaded, but is not
+			   currently being used. It can be re-used for
+			   optimization and to avoid SCM call cost or
+			   it can be taken by another key if there are
+			   no FREE entries
+ * @SCM_ERROR:		   error occurred while scm call was performed to
+			   load the key to ICE
+ */
 enum pfk_kc_entry_state {
-	/* Entry is free */
 	FREE,
-
-	/*
-	 * Entry is actively used by ICE engine and cannot be used by others.
-	 * SCM call to load key to ICE is pending to be performed
-	 */
 	ACTIVE_ICE_PRELOAD,
-
-	/*
-	 * Entry is actively used by ICE engine and cannot be used by others.
-	 * SCM call to load key to ICE was successfully executed and key is
-	 * now loaded.
-	 */
 	ACTIVE_ICE_LOADED,
-
-	/*
-	 * Entry is being invalidated during file close and cannot be used by
-	 * others until invalidation is complete.
-	 */
 	INACTIVE_INVALIDATING,
-
-	/*
-	 * Entry's key is already loaded, but is not currently being used.
-	 * It can be re-used for optimization and avoid SCM call cost, or,
-	 * it can be taken by another key if there are no FREE entries.
-	 */
 	INACTIVE,
-
-	/*
-	 * Error occurred while scm call was performed to load the key to ICE
-	 */
 	SCM_ERROR
 };
 
@@ -104,6 +103,9 @@ struct kc_entry {
 	 struct task_struct *thread_pending;
 
 	 enum pfk_kc_entry_state state;
+
+	 /* ref count for the number of requests in the HW queue for this key */
+	 int loaded_ref_cnt;
 	 int scm_error;
 };
 
@@ -127,6 +129,16 @@ static inline void kc_spin_lock(void)
 static inline void kc_spin_unlock(void)
 {
 	spin_unlock_irqrestore(&kc_lock, flags);
+}
+
+/**
+ * pfk_kc_get_storage_type() - return the hardware storage type.
+ *
+ * Return: storage type queried during bootup.
+ */
+const char *pfk_kc_get_storage_type(void)
+{
+	return s_type;
 }
 
 /**
@@ -271,18 +283,18 @@ static struct kc_entry *kc_find_key_at_index(const unsigned char *key,
 	for (i = *starting_index; i < PFK_KC_TABLE_SIZE; i++) {
 		entry = kc_entry_at_index(i);
 
-		if (NULL != salt) {
+		if (salt != NULL) {
 			if (entry->salt_size != salt_size)
 				continue;
 
-			if (0 != memcmp(entry->salt, salt, salt_size))
+			if (memcmp(entry->salt, salt, salt_size) != 0)
 				continue;
 		}
 
 		if (entry->key_size != key_size)
 			continue;
 
-		if (0 == memcmp(entry->key, key, key_size)) {
+		if (memcmp(entry->key, key, key_size) == 0) {
 			*starting_index = i;
 			return entry;
 		}
@@ -371,6 +383,11 @@ static void kc_clear_entry(struct kc_entry *entry)
 
 	entry->time_stamp = 0;
 	entry->scm_error = 0;
+
+	entry->state = FREE;
+
+	entry->loaded_ref_cnt = 0;
+	entry->thread_pending = NULL;
 }
 
 /**
@@ -382,13 +399,15 @@ static void kc_clear_entry(struct kc_entry *entry)
  * @key_size: key_size
  * @salt: salt
  * @salt_size: salt_size
+ * @data_unit: dun size
  *
  * The previous key is securely released and wiped, the new one is loaded
  * to ICE.
  * Should be invoked under spinlock
  */
 static int kc_update_entry(struct kc_entry *entry, const unsigned char *key,
-	size_t key_size, const unsigned char *salt, size_t salt_size)
+	size_t key_size, const unsigned char *salt, size_t salt_size,
+	unsigned int data_unit, int ice_rev)
 {
 	int ret;
 
@@ -405,7 +424,7 @@ static int kc_update_entry(struct kc_entry *entry, const unsigned char *key,
 	kc_spin_unlock();
 
 	ret = qti_pfk_ice_set_key(entry->key_index, entry->key,
-			entry->salt);
+			entry->salt, s_type, data_unit, ice_rev);
 
 	kc_spin_lock();
 	return ret;
@@ -446,8 +465,8 @@ int pfk_kc_deinit(void)
 }
 
 /**
- * pfk_kc_load_key_start() - retrieve the key from cache or add it if it's not there
- * and return the ICE hw key index in @key_index.
+ * pfk_kc_load_key_start() - retrieve the key from cache or add it if
+ * it's not there and return the ICE hw key index in @key_index.
  * @key: pointer to the key
  * @key_size: the size of the key
  * @salt: pointer to the salt
@@ -471,7 +490,7 @@ int pfk_kc_deinit(void)
  */
 int pfk_kc_load_key_start(const unsigned char *key, size_t key_size,
 		const unsigned char *salt, size_t salt_size, u32 *key_index,
-		bool async)
+		bool async, unsigned int data_unit, int ice_rev)
 {
 	int ret = 0;
 	struct kc_entry *entry = NULL;
@@ -480,16 +499,18 @@ int pfk_kc_load_key_start(const unsigned char *key, size_t key_size,
 	if (!kc_is_ready())
 		return -ENODEV;
 
-	if (!key || !salt || !key_index)
+	if (!key || !salt || !key_index) {
+		pr_err("%s key/salt/key_index NULL\n", __func__);
 		return -EINVAL;
+	}
 
 	if (key_size != PFK_KC_KEY_SIZE) {
-		pr_err("unsupported key size %lu\n", key_size);
+		pr_err("unsupported key size %zu\n", key_size);
 		return -EINVAL;
 	}
 
 	if (salt_size != PFK_KC_SALT_SIZE) {
-		pr_err("unsupported salt size %lu\n", salt_size);
+		pr_err("unsupported salt size %zu\n", salt_size);
 		return -EINVAL;
 	}
 
@@ -498,6 +519,7 @@ int pfk_kc_load_key_start(const unsigned char *key, size_t key_size,
 	entry = kc_find_key(key, key_size, salt, salt_size);
 	if (!entry) {
 		if (async) {
+			pr_debug("%s task will populate entry\n", __func__);
 			kc_spin_unlock();
 			return -EAGAIN;
 		}
@@ -523,17 +545,37 @@ int pfk_kc_load_key_start(const unsigned char *key, size_t key_size,
 		if (entry_exists) {
 			kc_update_timestamp(entry);
 			entry->state = ACTIVE_ICE_LOADED;
+
+			if (!strcmp(s_type, (char *)PFK_UFS)) {
+				if (async)
+					entry->loaded_ref_cnt++;
+			} else {
+				entry->loaded_ref_cnt++;
+			}
 			break;
 		}
 	case (FREE):
-		ret = kc_update_entry(entry, key, key_size, salt, salt_size);
+		ret = kc_update_entry(entry, key, key_size, salt, salt_size,
+					data_unit, ice_rev);
 		if (ret) {
 			entry->state = SCM_ERROR;
 			entry->scm_error = ret;
 			pr_err("%s: key load error (%d)\n", __func__, ret);
 		} else {
-			entry->state = ACTIVE_ICE_LOADED;
 			kc_update_timestamp(entry);
+			entry->state = ACTIVE_ICE_LOADED;
+
+			/*
+			 * In case of UFS only increase ref cnt for async calls,
+			 * sync calls from within work thread do not pass
+			 * requests further to HW
+			 */
+			if (!strcmp(s_type, (char *)PFK_UFS)) {
+				if (async)
+					entry->loaded_ref_cnt++;
+			} else {
+				entry->loaded_ref_cnt++;
+			}
 		}
 		break;
 	case (ACTIVE_ICE_PRELOAD):
@@ -542,6 +584,13 @@ int pfk_kc_load_key_start(const unsigned char *key, size_t key_size,
 		break;
 	case (ACTIVE_ICE_LOADED):
 		kc_update_timestamp(entry);
+
+		if (!strcmp(s_type, (char *)PFK_UFS)) {
+			if (async)
+				entry->loaded_ref_cnt++;
+		} else {
+			entry->loaded_ref_cnt++;
+		}
 		break;
 	case(SCM_ERROR):
 		ret = entry->scm_error;
@@ -575,6 +624,8 @@ void pfk_kc_load_key_end(const unsigned char *key, size_t key_size,
 		const unsigned char *salt, size_t salt_size)
 {
 	struct kc_entry *entry = NULL;
+	struct task_struct *tmp_pending = NULL;
+	int ref_cnt = 0;
 
 	if (!kc_is_ready())
 		return;
@@ -594,14 +645,28 @@ void pfk_kc_load_key_end(const unsigned char *key, size_t key_size,
 	if (!entry) {
 		kc_spin_unlock();
 		pr_err("internal error, there should an entry to unlock\n");
+
 		return;
 	}
-	entry->state = INACTIVE;
+	ref_cnt = --entry->loaded_ref_cnt;
 
-	/* wake-up invalidation if it's waiting for the entry to be released */
-	if (entry->thread_pending) {
-		wake_up_process(entry->thread_pending);
-		entry->thread_pending = NULL;
+	if (ref_cnt < 0)
+		pr_err("internal error, ref count should never be negative\n");
+
+	if (!ref_cnt) {
+		entry->state = INACTIVE;
+		/*
+		 * wake-up invalidation if it's waiting
+		 * for the entry to be released
+		 */
+		if (entry->thread_pending) {
+			tmp_pending = entry->thread_pending;
+			entry->thread_pending = NULL;
+
+			kc_spin_unlock();
+			wake_up_process(tmp_pending);
+			return;
+		}
 	}
 
 	kc_spin_unlock();
@@ -656,7 +721,7 @@ int pfk_kc_remove_key_with_salt(const unsigned char *key, size_t key_size,
 
 	kc_spin_unlock();
 
-	qti_pfk_ice_invalidate_key(entry->key_index);
+	qti_pfk_ice_invalidate_key(entry->key_index, s_type);
 
 	kc_spin_lock();
 	kc_entry_finish_invalidating(entry);
@@ -738,7 +803,8 @@ int pfk_kc_remove_key(const unsigned char *key, size_t key_size)
 	temp_indexes_size--;
 	for (i = temp_indexes_size; i >= 0 ; i--)
 		qti_pfk_ice_invalidate_key(
-				kc_entry_at_index(temp_indexes[i])->key_index);
+			kc_entry_at_index(temp_indexes[i])->key_index,
+					s_type);
 
 	/* fall through */
 	res = 0;
@@ -781,7 +847,8 @@ int pfk_kc_clear(void)
 	kc_spin_unlock();
 
 	for (i = 0; i < PFK_KC_TABLE_SIZE; i++)
-		qti_pfk_ice_invalidate_key(kc_entry_at_index(i)->key_index);
+		qti_pfk_ice_invalidate_key(kc_entry_at_index(i)->key_index,
+					s_type);
 
 	/* fall through */
 	res = 0;
@@ -793,3 +860,60 @@ out:
 
 	return res;
 }
+
+/**
+ * pfk_kc_clear_on_reset() - clear the table and remove all keys from ICE
+ * The assumption is that at this point we don't have any pending transactions
+ * Also, there is no need to clear keys from ICE
+ *
+ * Return 0 on success, error otherwise
+ *
+ */
+void pfk_kc_clear_on_reset(void)
+{
+	struct kc_entry *entry = NULL;
+	int i = 0;
+
+	if (!kc_is_ready())
+		return;
+
+	kc_spin_lock();
+	for (i = 0; i < PFK_KC_TABLE_SIZE; i++) {
+		entry = kc_entry_at_index(i);
+		kc_clear_entry(entry);
+	}
+	kc_spin_unlock();
+}
+
+static int pfk_kc_find_storage_type(char **device)
+{
+	char boot[20] = {'\0'};
+	char *match = (char *)strnstr(saved_command_line,
+				"androidboot.bootdevice=",
+				strlen(saved_command_line));
+	if (match) {
+		memcpy(boot, (match + strlen("androidboot.bootdevice=")),
+			sizeof(boot) - 1);
+		if (strnstr(boot, PFK_UFS, strlen(boot)))
+			*device = PFK_UFS;
+
+		return 0;
+	}
+	return -EINVAL;
+}
+
+static int __init pfk_kc_pre_init(void)
+{
+	return pfk_kc_find_storage_type(&s_type);
+}
+
+static void __exit pfk_kc_exit(void)
+{
+	s_type = NULL;
+}
+
+module_init(pfk_kc_pre_init);
+module_exit(pfk_kc_exit);
+
+MODULE_LICENSE("GPL v2");
+MODULE_DESCRIPTION("Per-File-Key-KC driver");

@@ -102,7 +102,7 @@ struct tzdbg_boot_info64_t {
  */
 struct tzdbg_reset_info_t {
 	uint32_t reset_type;	/* Reset Reason */
-	uint32_t reset_cnt;	/* Number of resets occured/CPU */
+	uint32_t reset_cnt;	/* Number of resets occurred/CPU */
 };
 /*
  * Interrupt Info Table
@@ -163,8 +163,8 @@ struct tzdbg_log_pos_t {
 };
 
  /*
- * Log ring buffer
- */
+  * Log ring buffer
+  */
 struct tzdbg_log_t {
 	struct tzdbg_log_pos_t	log_pos;
 	/* open ended array to the end of the 4K IMEM buffer */
@@ -477,10 +477,10 @@ static int _disp_tz_reset_stats(void)
 
 static int _disp_tz_interrupt_stats(void)
 {
-	int i, j, int_info_size;
+	int i, j;
 	int len = 0;
 	int *num_int;
-	unsigned char *ptr;
+	void *ptr;
 	struct tzdbg_int_t *tzdbg_ptr;
 	struct tzdbg_int_t_tz40 *tzdbg_ptr_tz40;
 
@@ -488,14 +488,12 @@ static int _disp_tz_interrupt_stats(void)
 			(tzdbg.diag_buf->int_info_off - sizeof(uint32_t)));
 	ptr = ((unsigned char *)tzdbg.diag_buf +
 					tzdbg.diag_buf->int_info_off);
-	int_info_size = ((tzdbg.diag_buf->ring_off -
-				tzdbg.diag_buf->int_info_off)/(*num_int));
 
 	pr_info("qsee_version = 0x%x\n", tzdbg.tz_version);
 
 	if (tzdbg.tz_version < QSEE_VERSION_TZ_4_X) {
+		tzdbg_ptr = ptr;
 		for (i = 0; i < (*num_int); i++) {
-			tzdbg_ptr = (struct tzdbg_int_t *)ptr;
 			len += snprintf(tzdbg.disp_buf + len,
 				(debug_rw_buf_size - 1) - len,
 				"     Interrupt Number          : 0x%x\n"
@@ -519,11 +517,11 @@ static int _disp_tz_interrupt_stats(void)
 								__func__);
 				break;
 			}
-			ptr += int_info_size;
+			tzdbg_ptr++;
 		}
 	} else {
+		tzdbg_ptr_tz40 = ptr;
 		for (i = 0; i < (*num_int); i++) {
-			tzdbg_ptr_tz40 = (struct tzdbg_int_t_tz40 *)ptr;
 			len += snprintf(tzdbg.disp_buf + len,
 				(debug_rw_buf_size - 1) - len,
 				"     Interrupt Number          : 0x%x\n"
@@ -547,7 +545,7 @@ static int _disp_tz_interrupt_stats(void)
 								__func__);
 				break;
 			}
-			ptr += int_info_size;
+			tzdbg_ptr_tz40++;
 		}
 	}
 
@@ -608,6 +606,7 @@ static int _disp_log_stats(struct tzdbg_log_t *log,
 		 * so we'll hang around until something happens
 		 */
 		unsigned long t = msleep_interruptible(50);
+
 		if (t != 0) {
 			/* Some event woke us up, so let's quit */
 			return 0;
@@ -627,7 +626,7 @@ static int _disp_log_stats(struct tzdbg_log_t *log,
 	while ((log_start->offset != log->log_pos.offset) && (len < max_len)) {
 		tzdbg.disp_buf[i++] = log->log_buf[log_start->offset];
 		log_start->offset = (log_start->offset + 1) % log_len;
-		if (0 == log_start->offset)
+		if (log_start->offset == 0)
 			++log_start->wrap;
 		++len;
 	}
@@ -699,7 +698,7 @@ static int __disp_hyp_log_stats(uint8_t *log,
 	while ((log_start->offset != hyp->log_pos.offset) && (len < max_len)) {
 		tzdbg.disp_buf[i++] = log[log_start->offset];
 		log_start->offset = (log_start->offset + 1) % log_len;
-		if (0 == log_start->offset)
+		if (log_start->offset == 0)
 			++log_start->wrap;
 		++len;
 	}
@@ -715,6 +714,7 @@ static int _disp_tz_log_stats(size_t count)
 {
 	static struct tzdbg_log_pos_t log_start = {0};
 	struct tzdbg_log_t *log_ptr;
+
 	log_ptr = (struct tzdbg_log_t *)((unsigned char *)tzdbg.diag_buf +
 				tzdbg.diag_buf->ring_off -
 				offsetof(struct tzdbg_log_t, log_buf));
@@ -904,6 +904,7 @@ static void tzdbg_register_qsee_log_buf(void)
 			&resp, sizeof(resp));
 	} else {
 		struct scm_desc desc = {0};
+
 		desc.args[0] = pa;
 		desc.args[1] = len;
 		desc.arginfo = 0x22;
@@ -959,14 +960,8 @@ static int  tzdbgfs_init(struct platform_device *pdev)
 
 	for (i = 0; i < TZDBG_STATS_MAX; i++) {
 		tzdbg.debug_tz[i] = i;
-		/* Do not create hyp entries in debugfs when hyplog flag is not
-		   enabled in dtsi. */
-		if (!tzdbg.is_hyplog_enabled &&
-		    ((TZDBG_HYP_LOG == tzdbg.debug_tz[i]) ||
-		     (TZDBG_HYP_GENERAL == tzdbg.debug_tz[i])))
-			continue;
-		dent = debugfs_create_file(tzdbg.stat[i].name,
-				S_IRUGO, dent_dir,
+		dent = debugfs_create_file_unsafe(tzdbg.stat[i].name,
+				0444, dent_dir,
 				&tzdbg.debug_tz[i], &tzdbg_fops);
 		if (dent == NULL) {
 			dev_err(&pdev->dev, "TZ debugfs_create_file failed\n");
@@ -976,12 +971,8 @@ static int  tzdbgfs_init(struct platform_device *pdev)
 	}
 	tzdbg.disp_buf = kzalloc(max(debug_rw_buf_size,
 			tzdbg.hyp_debug_rw_buf_size), GFP_KERNEL);
-	if (tzdbg.disp_buf == NULL) {
-		pr_err("%s: Can't Allocate memory for tzdbg.disp_buf\n",
-			__func__);
-
+	if (tzdbg.disp_buf == NULL)
 		goto err;
-	}
 	platform_set_drvdata(pdev, dent_dir);
 	return 0;
 err:
@@ -1152,11 +1143,8 @@ static int tz_log_probe(struct platform_device *pdev)
 	}
 
 	ptr = kzalloc(debug_rw_buf_size, GFP_KERNEL);
-	if (ptr == NULL) {
-		pr_err("%s: Can't Allocate memory: ptr\n",
-			__func__);
+	if (ptr == NULL)
 		return -ENXIO;
-	}
 
 	tzdbg.diag_buf = (struct tzdbg_t *)ptr;
 
@@ -1184,7 +1172,7 @@ static int tz_log_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id tzlog_match[] = {
+static const struct of_device_id tzlog_match[] = {
 	{	.compatible = "qcom,tz-log",
 	},
 	{}

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,7 +30,7 @@
 
 static int msm_ipc_router_smd_xprt_debug_mask;
 module_param_named(debug_mask, msm_ipc_router_smd_xprt_debug_mask,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+		   int, 0664);
 
 #if defined(DEBUG)
 #define D(x...) do { \
@@ -86,8 +86,8 @@ struct msm_ipc_router_smd_xprt {
 	int ss_reset;
 	void *pil;
 	struct completion sft_close_complete;
-	unsigned xprt_version;
-	unsigned xprt_option;
+	unsigned int xprt_version;
+	unsigned int xprt_option;
 	bool disable_pil_loading;
 };
 
@@ -114,8 +114,8 @@ struct msm_ipc_router_smd_xprt_config {
 	char xprt_name[XPRT_NAME_LEN];
 	uint32_t edge;
 	uint32_t link_id;
-	unsigned xprt_version;
-	unsigned xprt_option;
+	unsigned int xprt_version;
+	unsigned int xprt_option;
 	bool disable_pil_loading;
 };
 
@@ -142,7 +142,7 @@ static bool is_pil_loading_disabled(uint32_t edge);
  * @version: The version to be set in transport.
  */
 static void ipc_router_smd_set_xprt_version(
-	struct msm_ipc_router_xprt *xprt, unsigned version)
+	struct msm_ipc_router_xprt *xprt, unsigned int version)
 {
 	struct msm_ipc_router_smd_xprt *smd_xprtp;
 
@@ -156,6 +156,7 @@ static int msm_ipc_router_smd_get_xprt_version(
 	struct msm_ipc_router_xprt *xprt)
 {
 	struct msm_ipc_router_smd_xprt *smd_xprtp;
+
 	if (!xprt)
 		return -EINVAL;
 	smd_xprtp = container_of(xprt, struct msm_ipc_router_smd_xprt, xprt);
@@ -167,6 +168,7 @@ static int msm_ipc_router_smd_get_xprt_option(
 	struct msm_ipc_router_xprt *xprt)
 {
 	struct msm_ipc_router_smd_xprt *smd_xprtp;
+
 	if (!xprt)
 		return -EINVAL;
 	smd_xprtp = container_of(xprt, struct msm_ipc_router_smd_xprt, xprt);
@@ -294,8 +296,10 @@ static void smd_xprt_read_data(struct work_struct *work)
 	spin_lock_irqsave(&smd_xprtp->ss_reset_lock, flags);
 	if (smd_xprtp->ss_reset) {
 		spin_unlock_irqrestore(&smd_xprtp->ss_reset_lock, flags);
-		if (smd_xprtp->in_pkt)
+		if (smd_xprtp->in_pkt) {
 			release_pkt(smd_xprtp->in_pkt);
+			smd_xprtp->in_pkt = NULL;
+		}
 		smd_xprtp->is_partial_in_pkt = 0;
 		IPC_RTR_ERR("%s: %s channel reset\n",
 			__func__, smd_xprtp->xprt.name);
@@ -348,6 +352,7 @@ static void smd_xprt_read_data(struct work_struct *work)
 				__func__, smd_xprtp->xprt.name);
 			kfree_skb(ipc_rtr_pkt);
 			release_pkt(smd_xprtp->in_pkt);
+			smd_xprtp->in_pkt = NULL;
 			smd_xprtp->is_partial_in_pkt = 0;
 			return;
 		}
@@ -411,7 +416,7 @@ static void smd_xprt_close_event(struct work_struct *work)
 	kfree(xprt_work);
 }
 
-static void msm_ipc_router_smd_remote_notify(void *_dev, unsigned event)
+static void msm_ipc_router_smd_remote_notify(void *_dev, unsigned int event)
 {
 	unsigned long flags;
 	struct msm_ipc_router_smd_xprt *smd_xprtp;
@@ -605,7 +610,7 @@ static int msm_ipc_router_smd_driver_register(
 {
 	int ret;
 	struct msm_ipc_router_smd_xprt *item;
-	unsigned already_registered = 0;
+	unsigned int already_registered = 0;
 
 	mutex_lock(&smd_remote_xprt_list_lock_lha1);
 	list_for_each_entry(item, &smd_remote_xprt_list, list) {
@@ -810,7 +815,8 @@ static void ipc_router_smd_xprt_probe_worker(struct work_struct *work)
 {
 	int i, ret;
 
-	BUG_ON(ARRAY_SIZE(smd_xprt_cfg) != NUM_SMD_XPRTS);
+	if (WARN_ON(ARRAY_SIZE(smd_xprt_cfg) != NUM_SMD_XPRTS))
+		return;
 
 	mutex_lock(&smd_remote_xprt_list_lock_lha1);
 	if (!ipc_router_smd_xprt_probe_done) {
@@ -826,7 +832,7 @@ static void ipc_router_smd_xprt_probe_worker(struct work_struct *work)
 	mutex_unlock(&smd_remote_xprt_list_lock_lha1);
 }
 
-static struct of_device_id msm_ipc_router_smd_xprt_match_table[] = {
+static const struct of_device_id msm_ipc_router_smd_xprt_match_table[] = {
 	{ .compatible = "qcom,ipc_router_smd_xprt" },
 	{},
 };

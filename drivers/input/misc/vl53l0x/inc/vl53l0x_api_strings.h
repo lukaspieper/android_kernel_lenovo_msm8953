@@ -1,5 +1,5 @@
 /*
- *  vl53l0x_api_string.h - Linux kernel modules for
+ *  vl53l0x_api_strings.h - Linux kernel modules for
  *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
@@ -15,7 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
 
 
 #ifndef VL_API_STRINGS_H_

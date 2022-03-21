@@ -40,17 +40,17 @@
 #include <linux/spi/flash.h>
 
 #include <mach/common.h>
-#include <mach/cp_intc.h>
+#include "cp_intc.h"
 #include <mach/da8xx.h>
 #include <mach/mux.h>
-#include <mach/sram.h>
+#include "sram.h"
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/system_info.h>
 
-#include <media/tvp514x.h>
-#include <media/adv7343.h>
+#include <media/i2c/tvp514x.h>
+#include <media/i2c/adv7343.h>
 
 #define DA850_EVM_PHY_ID		"davinci_mdio-0:00"
 #define DA850_LCD_PWR_PIN		GPIO_TO_PIN(2, 8)
@@ -448,8 +448,7 @@ static void da850_evm_ui_keys_init(unsigned gpio)
 	for (i = 0; i < DA850_N_UI_PB; i++) {
 		button = &da850_evm_ui_keys[i];
 		button->code = KEY_F8 - i;
-		button->desc = (char *)
-				da850_evm_ui_exp[DA850_EVM_UI_EXP_PB8 + i];
+		button->desc = da850_evm_ui_exp[DA850_EVM_UI_EXP_PB8 + i];
 		button->gpio = gpio + DA850_EVM_UI_EXP_PB8 + i;
 	}
 }
@@ -624,15 +623,13 @@ static void da850_evm_bb_keys_init(unsigned gpio)
 	struct gpio_keys_button *button;
 
 	button = &da850_evm_bb_keys[0];
-	button->desc = (char *)
-		da850_evm_bb_exp[DA850_EVM_BB_EXP_USER_PB1];
+	button->desc = da850_evm_bb_exp[DA850_EVM_BB_EXP_USER_PB1];
 	button->gpio = gpio + DA850_EVM_BB_EXP_USER_PB1;
 
 	for (i = 0; i < DA850_N_BB_USER_SW; i++) {
 		button = &da850_evm_bb_keys[i + 1];
 		button->code = SW_LID + i;
-		button->desc = (char *)
-				da850_evm_bb_exp[DA850_EVM_BB_EXP_USER_SW1 + i];
+		button->desc = da850_evm_bb_exp[DA850_EVM_BB_EXP_USER_SW1 + i];
 		button->gpio = gpio + DA850_EVM_BB_EXP_USER_SW1 + i;
 	}
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2017, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -29,6 +29,7 @@
 #include <linux/seq_file.h>
 #include <linux/clk/msm-clk.h>
 
+#if defined(CONFIG_COMMON_CLK_MSM)
 /*
  * Bit manipulation macros
  */
@@ -145,10 +146,10 @@ struct clk_ops {
 	int (*set_rate)(struct clk *clk, unsigned long rate);
 	void (*post_set_rate)(struct clk *clk, unsigned long old_rate);
 	int (*set_max_rate)(struct clk *clk, unsigned long rate);
-	int (*set_flags)(struct clk *clk, unsigned flags);
+	int (*set_flags)(struct clk *clk, unsigned long flags);
 	int (*set_duty_cycle)(struct clk *clk, u32 numerator, u32 denominator);
 	unsigned long (*get_rate)(struct clk *clk);
-	long (*list_rate)(struct clk *clk, unsigned n);
+	long (*list_rate)(struct clk *clk, unsigned long n);
 	int (*is_enabled)(struct clk *clk);
 	long (*round_rate)(struct clk *clk, unsigned long rate);
 	int (*set_parent)(struct clk *clk, struct clk *parent);
@@ -172,7 +173,7 @@ struct clk_ops {
  */
 struct clk {
 	uint32_t flags;
-	struct clk_ops *ops;
+	const struct clk_ops *ops;
 	const char *dbg_name;
 	struct clk *depends;
 	struct clk_vdd_class *vdd_class;
@@ -187,10 +188,10 @@ struct clk {
 	struct list_head siblings;
 	struct list_head list;
 
-	unsigned count;
-	unsigned notifier_count;
+	unsigned long count;
+	unsigned long notifier_count;
 	spinlock_t lock;
-	unsigned prepare_count;
+	unsigned long prepare_count;
 	struct mutex prepare_lock;
 
 	unsigned long init_rate;
@@ -222,7 +223,7 @@ int clock_rcgwr_init(struct platform_device *pdev);
 int clock_rcgwr_disable(struct platform_device *pdev);
 
 extern struct clk dummy_clk;
-extern struct clk_ops clk_ops_dummy;
+extern const  struct clk_ops clk_ops_dummy;
 
 #define CLK_DUMMY(clk_name, clk_id, clk_dev, flags) { \
 	.con_id = clk_name, \
@@ -238,7 +239,7 @@ extern struct clk_ops clk_ops_dummy;
 			.ops = &clk_ops_dummy, \
 			CLK_INIT(name.c), \
 		}, \
-	};
+	}
 
 #define CLK_LOOKUP(con, c, dev) { .con_id = con, .clk = &c, .dev_id = dev }
 #define CLK_LOOKUP_OF(con, _c, dev) { .con_id = con, .clk = &(&_c)->c, \
@@ -266,4 +267,5 @@ static inline const char *clk_name(struct clk *c)
 		return "(null)";
 	return c->dbg_name;
 };
+#endif /* CONFIG_COMMON_CLK_MSM */
 #endif

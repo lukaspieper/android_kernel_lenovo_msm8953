@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -97,7 +97,7 @@ static inline struct mux_clk *to_mux_clk(struct clk *c)
 	return container_of(c, struct mux_clk, c);
 }
 
-extern struct clk_ops clk_ops_gen_mux;
+extern const  struct clk_ops clk_ops_gen_mux;
 
 /* ==================== Divider clock ==================== */
 
@@ -119,7 +119,7 @@ struct div_data {
 	unsigned int max_div;
 	unsigned long rate_margin;
 	/*
-	 * Indicate whether this divider clock supports half-interger divider.
+	 * Indicate whether this divider clock supports half-integer divider.
 	 * If it is, all the min_div and max_div have been doubled. It means
 	 * they are 2*N.
 	 */
@@ -161,8 +161,8 @@ static inline struct div_clk *to_div_clk(struct clk *c)
 	return container_of(c, struct div_clk, c);
 }
 
-extern struct clk_ops clk_ops_div;
-extern struct clk_ops clk_ops_slave_div;
+extern const struct clk_ops clk_ops_div;
+extern const struct clk_ops clk_ops_slave_div;
 
 struct ext_clk {
 	struct clk c;
@@ -179,7 +179,7 @@ static inline struct ext_clk *to_ext_clk(struct clk *c)
 	return container_of(c, struct ext_clk, c);
 }
 
-extern struct clk_ops clk_ops_ext;
+extern const struct clk_ops clk_ops_ext;
 
 #define DEFINE_FIXED_DIV_CLK(clk_name, _div, _parent) \
 static struct div_clk clk_name = {	\
@@ -305,6 +305,6 @@ static inline struct mux_div_clk *to_mux_div_clk(struct clk *clk)
 	return container_of(clk, struct mux_div_clk, c);
 }
 
-extern struct clk_ops clk_ops_mux_div_clk;
+extern const struct clk_ops clk_ops_mux_div_clk;
 
 #endif

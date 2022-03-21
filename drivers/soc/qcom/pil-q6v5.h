@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,13 +35,17 @@ struct q6v5_data {
 	struct clk *snoc_axi_clk;
 	struct clk *mnoc_axi_clk;
 	struct clk *qdss_clk;
-	struct clk *qpic_clk;
+	struct clk *prng_clk;
+	struct clk *axis2_clk;
 	void __iomem *axi_halt_base; /* Halt base of q6, mss,
-					nc are in same 4K page */
+				      * nc are in same 4K page
+				      */
 	void __iomem *axi_halt_q6;
 	void __iomem *axi_halt_mss;
 	void __iomem *axi_halt_nc;
 	void __iomem *restart_reg;
+	void __iomem *pdc_sync;
+	void __iomem *alt_reset;
 	struct regulator *vreg;
 	struct regulator *vreg_cx;
 	struct regulator *vreg_mx;
@@ -65,12 +69,15 @@ struct q6v5_data {
 	bool qdsp6v62_1_2;
 	bool qdsp6v62_1_4;
 	bool qdsp6v62_1_5;
+	bool qdsp6v65_1_0;
 	bool non_elf_image;
 	bool restart_reg_sec;
 	bool override_acc;
 	int override_acc_1;
+	int mss_pdc_offset;
 	bool ahb_clk_vote;
 	bool mx_spike_wa;
+	bool reset_clk;
 };
 
 int pil_q6v5_make_proxy_votes(struct pil_desc *pil);

@@ -1285,7 +1285,8 @@ fsm_start:
 		break;
 	default:
 		poll_next = 0;
-		BUG();
+		WARN(true, "ata%d: SFF host state machine in invalid state %d",
+		     ap->print_id, ap->hsm_task_state);
 	}
 
 	return poll_next;
@@ -2741,14 +2742,12 @@ static void ata_bmdma_fill_sg_dumb(struct ata_queued_cmd *qc)
  *	LOCKING:
  *	spin_lock_irqsave(host lock)
  */
-enum ata_completion_errors ata_bmdma_qc_prep(struct ata_queued_cmd *qc)
+void ata_bmdma_qc_prep(struct ata_queued_cmd *qc)
 {
 	if (!(qc->flags & ATA_QCFLAG_DMAMAP))
-		return AC_ERR_OK;
+		return;
 
 	ata_bmdma_fill_sg(qc);
-
-	return AC_ERR_OK;
 }
 EXPORT_SYMBOL_GPL(ata_bmdma_qc_prep);
 
@@ -2761,14 +2760,12 @@ EXPORT_SYMBOL_GPL(ata_bmdma_qc_prep);
  *	LOCKING:
  *	spin_lock_irqsave(host lock)
  */
-enum ata_completion_errors ata_bmdma_dumb_qc_prep(struct ata_queued_cmd *qc)
+void ata_bmdma_dumb_qc_prep(struct ata_queued_cmd *qc)
 {
 	if (!(qc->flags & ATA_QCFLAG_DMAMAP))
-		return AC_ERR_OK;
+		return;
 
 	ata_bmdma_fill_sg_dumb(qc);
-
-	return AC_ERR_OK;
 }
 EXPORT_SYMBOL_GPL(ata_bmdma_dumb_qc_prep);
 
@@ -3219,11 +3216,11 @@ void ata_pci_bmdma_init(struct ata_host *host)
 	 * ->sff_irq_clear method.  Try to initialize bmdma_addr
 	 * regardless of dma masks.
 	 */
-	rc = pci_set_dma_mask(pdev, ATA_DMA_MASK);
+	rc = dma_set_mask(&pdev->dev, ATA_DMA_MASK);
 	if (rc)
 		ata_bmdma_nodma(host, "failed to set dma mask");
 	if (!rc) {
-		rc = pci_set_consistent_dma_mask(pdev, ATA_DMA_MASK);
+		rc = dma_set_coherent_mask(&pdev->dev, ATA_DMA_MASK);
 		if (rc)
 			ata_bmdma_nodma(host,
 					"failed to set consistent dma mask");

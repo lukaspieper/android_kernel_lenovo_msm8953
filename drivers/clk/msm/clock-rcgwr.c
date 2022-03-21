@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015, 2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -102,7 +102,7 @@ static int check_rcg_config(void __iomem *base)
 		udelay(1);
 	}
 
-	BUG_ON(count == 0);
+	WARN_ON(count == 0);
 
 	return -EINVAL;
 }
@@ -127,7 +127,7 @@ static int rc_config_update(void __iomem *base, u32 rc_value, u32 rc_ack_bit)
 		}
 		udelay(1);
 	}
-	BUG_ON(count == 0);
+	WARN_ON(count == 0);
 
 	/* Clear RC_CFG_UPDATE_EN */
 	writel_relaxed(0 << RC_CFG_UPDATE_EN_BIT, (base + RC_CFG_UPDATE));
@@ -139,7 +139,7 @@ static int rc_config_update(void __iomem *base, u32 rc_value, u32 rc_ack_bit)
 			return ret;
 		udelay(1);
 	}
-	BUG_ON(count == 0);
+	WARN_ON(count == 0);
 
 	return -EINVAL;
 }
@@ -470,7 +470,7 @@ int clock_rcgwr_init(struct platform_device *pdev)
 	rcgwr = devm_kzalloc(&pdev->dev, sizeof(struct rcgwr) * num_clusters,
 				GFP_KERNEL);
 	if (!rcgwr)
-		BUG();
+		return -ENOMEM;
 
 	for (i = 0; i < num_clusters; i++) {
 		rcgwr[i] = devm_kzalloc(&pdev->dev, sizeof(struct rcgwr),
@@ -543,7 +543,7 @@ int clock_rcgwr_init(struct platform_device *pdev)
 
 	debugfs_base = debugfs_create_dir("rcgwr", NULL);
 	if (debugfs_base) {
-		if (!debugfs_create_file("enable", S_IRUGO, debugfs_base, NULL,
+		if (!debugfs_create_file("enable", 0444, debugfs_base, NULL,
 				&rcgwr_enable_fops)) {
 			pr_err("Unable to create `enable` debugfs entry\n");
 			debugfs_remove(debugfs_base);

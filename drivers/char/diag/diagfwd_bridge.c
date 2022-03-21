@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -176,8 +176,8 @@ int diagfwd_bridge_register(int id, int ctxt, struct diag_remote_dev_ops *ops)
 		if (!ch->dci_read_buf)
 			return -ENOMEM;
 		ch->dci_read_len = 0;
-		strlcpy(wq_name, "diag_dci_", 10);
-		strlcat(wq_name, ch->name, sizeof(ch->name));
+		strlcpy(wq_name, "diag_dci_", sizeof(wq_name));
+		strlcat(wq_name, ch->name, sizeof(wq_name));
 		INIT_WORK(&(ch->dci_read_work), bridge_dci_read_work_fn);
 		ch->dci_wq = create_singlethread_workqueue(wq_name);
 		if (!ch->dci_wq) {
@@ -208,7 +208,6 @@ int diag_remote_dev_open(int id)
 
 void diag_remote_dev_close(int id)
 {
-	return;
 }
 
 int diag_remote_dev_read_done(int id, unsigned char *buf, int len)
@@ -245,6 +244,7 @@ int diag_remote_dev_read_done(int id, unsigned char *buf, int len)
 int diag_remote_dev_write_done(int id, unsigned char *buf, int len, int ctxt)
 {
 	int err = 0;
+
 	if (id < 0 || id >= NUM_REMOTE_DEV)
 		return -EINVAL;
 
@@ -265,7 +265,7 @@ int diag_remote_dev_write_done(int id, unsigned char *buf, int len, int ctxt)
 	return err;
 }
 
-int diagfwd_bridge_init()
+int diagfwd_bridge_init(void)
 {
 	int err = 0;
 
@@ -284,7 +284,7 @@ fail:
 	return err;
 }
 
-void diagfwd_bridge_exit()
+void diagfwd_bridge_exit(void)
 {
 	#ifdef USB_QCOM_DIAG_BRIDGE
 	diag_hsic_exit();
@@ -312,7 +312,7 @@ int diagfwd_bridge_write(int id, unsigned char *buf, int len)
 	return 0;
 }
 
-uint16_t diag_get_remote_device_mask()
+uint16_t diag_get_remote_device_mask(void)
 {
 	int i;
 	uint16_t remote_dev = 0;

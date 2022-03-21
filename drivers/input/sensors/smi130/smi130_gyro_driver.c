@@ -151,7 +151,7 @@
 #define SENSOR_NAME "smi130_gyro"
 #define SMI130_GYRO_ENABLE_INT1 1
 #define SENSOR_CHIP_ID_SMI_GYRO (0x0f)
-#define CHECK_CHIP_ID_TIME_MAX   5
+#define CHECK_CHIP_ID_TIME_MAX   1
 #define DRIVER_VERSION "0.0.53.0"
 #define SMI_GYRO_USE_FIFO          1
 #define SMI_GYRO_USE_BASIC_I2C_FUNC     1
@@ -163,7 +163,7 @@
 #define SMI_GYRO_I2C_WRITE_DELAY_TIME 1
 
 /* generic */
-#define SMI_GYRO_MAX_RETRY_I2C_XFER (100)
+#define SMI_GYRO_MAX_RETRY_I2C_XFER (2)
 #define SMI_GYRO_MAX_RETRY_WAKEUP (5)
 #define SMI_GYRO_MAX_RETRY_WAIT_DRDY (100)
 
@@ -294,11 +294,13 @@ struct smi_gyro_client_data {
 	bool read_gyro_boot_sample;
 	int gyro_bufsample_cnt;
 	bool gyro_buffer_smi130_samples;
+	bool gyro_enable;
 	struct kmem_cache *smi_gyro_cachepool;
 	struct smi_gyro_sample *smi130_gyro_samplist[SMI_GYRO_MAXSAMPLE];
 	int max_buffer_time;
 	struct input_dev *gyrobuf_dev;
 	int report_evt_cnt;
+	struct mutex gyro_sensor_buff;
 #endif
 };
 
@@ -312,10 +314,9 @@ static int smi_gyro_i2c_write(struct i2c_client *client, u8 reg_addr,
 static void smi_gyro_dump_reg(struct i2c_client *client);
 static int smi_gyro_check_chip_id(struct i2c_client *client);
 
-static int smi_gyro_pre_suspend(struct i2c_client *client);
-static int smi_gyro_post_resume(struct i2c_client *client);
-
 #ifdef CONFIG_HAS_EARLYSUSPEND
+static int smi_gyro_post_resume(struct i2c_client *client);
+static int smi_gyro_pre_suspend(struct i2c_client *client);
 static void smi_gyro_early_suspend(struct early_suspend *handler);
 static void smi_gyro_late_resume(struct early_suspend *handler);
 #endif
@@ -860,11 +861,23 @@ static inline int smi130_check_gyro_early_buff_enable_flag(
 	else
 		return 0;
 }
+static void smi130_check_gyro_enable_flag(
+		struct smi_gyro_client_data *client_data, unsigned long data)
+{
+	if (data == SMI130_GYRO_MODE_NORMAL)
+		client_data->gyro_enable = true;
+	else
+		client_data->gyro_enable = false;
+}
 #else
 static inline int smi130_check_gyro_early_buff_enable_flag(
 		struct smi_gyro_client_data *client_data)
 {
 	return 0;
+}
+static void smi130_check_gyro_enable_flag(
+		struct smi_gyro_client_data *client_data, unsigned long data)
+{
 }
 #endif
 
@@ -895,13 +908,17 @@ static ssize_t smi_gyro_store_op_mode(struct device *dev,
 
 	long op_mode;
 
-	err = smi130_check_gyro_early_buff_enable_flag(client_data);
-	if (err)
-		return count;
 
 	err = kstrtoul(buf, 10, &op_mode);
 	if (err)
 		return err;
+
+	smi130_check_gyro_enable_flag(client_data, op_mode);
+
+	err = smi130_check_gyro_early_buff_enable_flag(client_data);
+	if (err)
+		return count;
+
 	mutex_lock(&client_data->mutex_op_mode);
 
 	err = SMI_GYRO_CALL_API(set_mode)(op_mode);
@@ -1505,8 +1522,8 @@ static int smi_gyro_read_bootsampl(struct smi_gyro_client_data *client_data,
 {
 	int i = 0;
 
+	client_data->gyro_buffer_smi130_samples = false;
 	if (enable_read) {
-		client_data->gyro_buffer_smi130_samples = false;
 		for (i = 0; i < client_data->gyro_bufsample_cnt; i++) {
 			if (client_data->debug_level & 0x08)
 				PINFO("gyro=%d,x=%d,y=%d,z=%d,sec=%d,ns=%lld\n",
@@ -1572,7 +1589,9 @@ static ssize_t read_gyro_boot_sample_store(struct device *dev,
 		PERR("Invalid value of input, input=%ld\n", enable);
 		return -EINVAL;
 	}
+	mutex_lock(&client_data->gyro_sensor_buff);
 	err = smi_gyro_read_bootsampl(client_data, enable);
+	mutex_unlock(&client_data->gyro_sensor_buff);
 	if (err)
 		return err;
 	client_data->read_gyro_boot_sample = enable;
@@ -1585,7 +1604,7 @@ static ssize_t read_gyro_boot_sample_store(struct device *dev,
 static DEVICE_ATTR(chip_id, S_IRUSR,
 		smi_gyro_show_chip_id, NULL);
 #ifdef CONFIG_ENABLE_SMI_ACC_GYRO_BUFFERING
-static DEVICE_ATTR(read_gyro_boot_sample, S_IRUGO | S_IWUSR,
+static DEVICE_ATTR(read_gyro_boot_sample, 0644,
 		read_gyro_boot_sample_show, read_gyro_boot_sample_store);
 #endif
 static DEVICE_ATTR(op_mode, S_IRUGO | S_IWUSR,
@@ -1724,6 +1743,7 @@ static void store_gyro_boot_sample(struct smi_gyro_client_data *client_data,
 {
 	if (false == client_data->gyro_buffer_smi130_samples)
 		return;
+	mutex_lock(&client_data->gyro_sensor_buff);
 	if (ts.tv_sec <  client_data->max_buffer_time) {
 		if (client_data->gyro_bufsample_cnt < SMI_GYRO_MAXSAMPLE) {
 			client_data->smi130_gyro_samplist[client_data->
@@ -1742,7 +1762,12 @@ static void store_gyro_boot_sample(struct smi_gyro_client_data *client_data,
 		PINFO("End of GYRO buffering %d",
 				client_data->gyro_bufsample_cnt);
 		client_data->gyro_buffer_smi130_samples = false;
+		if (client_data->gyro_enable == false) {
+			smi130_gyro_set_mode(SMI130_GYRO_MODE_SUSPEND);
+			smi130_gyro_delay(5);
+		}
 	}
+	mutex_unlock(&client_data->gyro_sensor_buff);
 }
 #else
 static void store_gyro_boot_sample(struct smi_gyro_client_data *client_data,
@@ -1810,7 +1835,9 @@ static int smi130_gyro_early_buff_init(struct smi_gyro_client_data *client_data)
 	}
 
 	client_data->gyro_buffer_smi130_samples = true;
+	client_data->gyro_enable = false;
 
+	mutex_init(&client_data->gyro_sensor_buff);
 	smi130_gyro_set_mode(SMI130_GYRO_MODE_NORMAL);
 	smi130_gyro_delay(5);
 
@@ -1837,7 +1864,6 @@ clean_exit1:
 		kmem_cache_free(client_data->smi_gyro_cachepool,
 				client_data->smi130_gyro_samplist[i]);
 	kmem_cache_destroy(client_data->smi_gyro_cachepool);
-
 	return 0;
 }
 
@@ -2112,6 +2138,7 @@ exit_err_clean:
 	return err;
 }
 
+#ifdef CONFIG_HAS_EARLYSUSPEND
 static int smi_gyro_pre_suspend(struct i2c_client *client)
 {
 	int err = 0;
@@ -2161,7 +2188,6 @@ static int smi_gyro_post_resume(struct i2c_client *client)
 	return err;
 }
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
 static void smi_gyro_early_suspend(struct early_suspend *handler)
 {
 	int err = 0;
@@ -2201,45 +2227,6 @@ static void smi_gyro_late_resume(struct early_suspend *handler)
 	smi_gyro_post_resume(client);
 
 	mutex_unlock(&client_data->mutex_op_mode);
-}
-#else
-static int smi_gyro_suspend(struct i2c_client *client, pm_message_t mesg)
-{
-	int err = 0;
-	struct smi_gyro_client_data *client_data =
-		(struct smi_gyro_client_data *)i2c_get_clientdata(client);
-
-	PINFO("function entrance");
-
-	mutex_lock(&client_data->mutex_op_mode);
-	if (client_data->enable) {
-		err = smi_gyro_pre_suspend(client);
-		err = SMI_GYRO_CALL_API(set_mode)(
-				SMI_GYRO_VAL_NAME(MODE_SUSPEND));
-	}
-	mutex_unlock(&client_data->mutex_op_mode);
-	return err;
-}
-
-static int smi_gyro_resume(struct i2c_client *client)
-{
-
-	int err = 0;
-	struct smi_gyro_client_data *client_data =
-		(struct smi_gyro_client_data *)i2c_get_clientdata(client);
-
-	PINFO("function entrance");
-
-	mutex_lock(&client_data->mutex_op_mode);
-
-	if (client_data->enable)
-		err = SMI_GYRO_CALL_API(set_mode)(SMI_GYRO_VAL_NAME(MODE_NORMAL));
-
-	/* post resume operation */
-	smi_gyro_post_resume(client);
-
-	mutex_unlock(&client_data->mutex_op_mode);
-	return err;
 }
 #endif
 
@@ -2312,10 +2299,6 @@ static struct i2c_driver smi_gyro_driver = {
 	.probe = smi_gyro_probe,
 	.remove = smi_gyro_remove,
 	.shutdown = smi_gyro_shutdown,
-#ifndef CONFIG_HAS_EARLYSUSPEND
-	.suspend = smi_gyro_suspend,
-	.resume = smi_gyro_resume,
-#endif
 };
 
 static int __init SMI_GYRO_init(void)

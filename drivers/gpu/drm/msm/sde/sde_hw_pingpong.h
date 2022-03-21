@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,6 +12,12 @@
 
 #ifndef _SDE_HW_PINGPONG_H
 #define _SDE_HW_PINGPONG_H
+
+#include "sde_hw_catalog.h"
+#include "sde_hw_mdss.h"
+#include "sde_hw_util.h"
+#include "sde_hw_blk.h"
+#include <uapi/drm/msm_drm_pp.h>
 
 struct sde_hw_pingpong;
 
@@ -36,9 +42,10 @@ struct sde_hw_autorefresh {
 };
 
 struct sde_hw_pp_vsync_info {
-	u32 init_val; /* value of rd pointer at vsync edge */
-	u32 vsync_count;    /* mdp clocks to complete one line */
-	u32 line_count;   /* current line count */
+	u32 rd_ptr_init_val;	/* value of rd pointer at vsync edge */
+	u32 rd_ptr_frame_count;	/* num frames sent since enabling interface */
+	u32 rd_ptr_line_count;	/* current line on panel (rd ptr) */
+	u32 wr_ptr_line_count;	/* current line within pp fifo (wr ptr) */
 };
 
 struct sde_hw_dsc_cfg {
@@ -49,11 +56,15 @@ struct sde_hw_dsc_cfg {
  *
  * struct sde_hw_pingpong_ops : Interface to the pingpong Hw driver functions
  *  Assumption is these functions will be called after clocks are enabled
- *  @setup_tearcheck :
- *  @enable_tearcheck :
- *  @get_vsync_info :
- *  @setup_autorefresh :
- *  #setup_dsc :
+ *  @setup_tearcheck : program tear check values
+ *  @enable_tearcheck : enables tear check
+ *  @get_vsync_info : retries timing info of the panel
+ *  @setup_autorefresh : program auto refresh
+ *  @setup_dsc : program DSC block with encoding details
+ *  @enable_dsc : enables DSC encoder
+ *  @disable_dsc : disables DSC encoder
+ *  @setup_dither : function to program the dither hw block
+ *  @get_line_count: obtain current vertical line counter
  */
 struct sde_hw_pingpong_ops {
 	/**
@@ -70,6 +81,13 @@ struct sde_hw_pingpong_ops {
 			bool enable);
 
 	/**
+	 * read, modify, write to either set or clear listening to external TE
+	 * @Return: 1 if TE was originally connected, 0 if not, or -ERROR
+	 */
+	int (*connect_external_te)(struct sde_hw_pingpong *pp,
+			bool enable_external_te);
+
+	/**
 	 * provides the programmed and current
 	 * line_count
 	 */
@@ -83,23 +101,70 @@ struct sde_hw_pingpong_ops {
 			struct sde_hw_autorefresh *cfg);
 
 	/**
+	 * retrieve autorefresh config from hardware
+	 */
+	int (*get_autorefresh)(struct sde_hw_pingpong *pp,
+			struct sde_hw_autorefresh *cfg);
+
+	/**
+	 * poll until write pointer transmission starts
+	 * @Return: 0 on success, -ETIMEDOUT on timeout
+	 */
+	int (*poll_timeout_wr_ptr)(struct sde_hw_pingpong *pp, u32 timeout_us);
+
+	/**
 	 * Program the dsc compression block
 	 */
-	int (*setup_dsc)(struct sde_hw_pingpong *pp,
-			struct sde_hw_dsc_cfg *cfg);
+	int (*setup_dsc)(struct sde_hw_pingpong *pp);
+
+	/**
+	 * Enables DSC encoder
+	 */
+	void (*enable_dsc)(struct sde_hw_pingpong *pp);
+
+	/**
+	 * Disables DSC encoder
+	 */
+	void (*disable_dsc)(struct sde_hw_pingpong *pp);
+
+	/**
+	 * Get DSC status
+	 * @Return: register value of DSC config
+	 */
+	u32 (*get_dsc_status)(struct sde_hw_pingpong *pp);
+
+	/**
+	 * Program the dither hw block
+	 */
+	int (*setup_dither)(struct sde_hw_pingpong *pp, void *cfg, size_t len);
+
+	/**
+	 * Obtain current vertical line counter
+	 */
+	u32 (*get_line_count)(struct sde_hw_pingpong *pp);
 };
 
 struct sde_hw_pingpong {
-	/* base */
+	struct sde_hw_blk base;
 	struct sde_hw_blk_reg_map hw;
 
 	/* pingpong */
 	enum sde_pingpong idx;
-	const struct sde_pingpong_cfg *pingpong_hw_cap;
+	const struct sde_pingpong_cfg *caps;
 
 	/* ops */
 	struct sde_hw_pingpong_ops ops;
 };
+
+/**
+ * sde_hw_pingpong - convert base object sde_hw_base to container
+ * @hw: Pointer to base hardware block
+ * return: Pointer to hardware block container
+ */
+static inline struct sde_hw_pingpong *to_sde_hw_pingpong(struct sde_hw_blk *hw)
+{
+	return container_of(hw, struct sde_hw_pingpong, base);
+}
 
 /**
  * sde_hw_pingpong_init - initializes the pingpong driver for the passed

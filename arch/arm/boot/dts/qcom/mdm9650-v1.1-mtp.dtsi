@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2017 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,18 +13,6 @@
 #include <dt-bindings/interrupt-controller/irq.h>
 #include "mdm9650-v1.1.dtsi"
 #include "mdm9650-pinctrl.dtsi"
-
-&soc {
-	qcom,ntn_avb {
-		compatible = "qcom,ntn_avb";
-		qcom,ntn-rst-delay-msec = <100>;
-		qcom,ntn-rc-num = <0>;
-		qcom,ntn-fw-load-delay-msec = <200>;
-		qcom,ntn-pcierst-resx;
-		qcom,ntn-timestamp-valid-window = <4>; /* 4 is approx 67 ms */
-		qcom,ntn-phy-addr = <7>;
-	};
-};
 
 &blsp1_uart3 {
 	status = "ok";

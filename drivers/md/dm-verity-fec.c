@@ -567,6 +567,7 @@ void verity_fec_dtr(struct dm_verity *v)
 	mempool_destroy(f->rs_pool);
 	mempool_destroy(f->prealloc_pool);
 	mempool_destroy(f->extra_pool);
+	mempool_destroy(f->output_pool);
 	kmem_cache_destroy(f->cache);
 
 	if (f->data_bufio)
@@ -864,7 +865,7 @@ int verity_fec_ctr(struct dm_verity *v)
 	}
 
 	/* Reserve space for our per-bio data */
-	ti->per_bio_data_size += sizeof(struct dm_verity_fec_io);
+	ti->per_io_data_size += sizeof(struct dm_verity_fec_io);
 
 	return 0;
 }

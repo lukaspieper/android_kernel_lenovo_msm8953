@@ -34,7 +34,7 @@
 static int get_trip_level(struct thermal_zone_device *tz)
 {
 	int count = 0;
-	unsigned long trip_temp;
+	int trip_temp;
 	enum thermal_trip_type trip_type;
 
 	if (tz->trips == 0 || !tz->ops->get_trip_temp)
@@ -52,7 +52,7 @@ static int get_trip_level(struct thermal_zone_device *tz)
 	 */
 	if (count > 0) {
 		tz->ops->get_trip_type(tz, count - 1, &trip_type);
-		trace_thermal_zone_trip(tz, count - 1, trip_type);
+		trace_thermal_zone_trip(tz, count - 1, trip_type, true);
 	}
 
 	return count;
@@ -69,7 +69,7 @@ static long get_target_state(struct thermal_zone_device *tz,
 }
 
 /**
- * fair_share_throttle - throttles devices asscciated with the given zone
+ * fair_share_throttle - throttles devices associated with the given zone
  * @tz - thermal_zone_device
  *
  * Throttling Logic: This uses three parameters to calculate the new
@@ -116,7 +116,9 @@ static int fair_share_throttle(struct thermal_zone_device *tz, int trip)
 		instance->target = get_target_state(tz, cdev, percentage,
 						    cur_trip_level);
 
+		mutex_lock(&instance->cdev->lock);
 		instance->cdev->updated = false;
+		mutex_unlock(&instance->cdev->lock);
 		thermal_cdev_update(cdev);
 	}
 	return 0;

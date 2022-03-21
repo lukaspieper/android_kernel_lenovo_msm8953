@@ -1,7 +1,7 @@
 /* drivers/soc/qcom/smd_debug.c
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2009-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2014, 2017, The Linux Foundation. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -27,7 +27,7 @@
 
 #if defined(CONFIG_DEBUG_FS)
 
-static char *chstate(unsigned n)
+static char *chstate(unsigned int n)
 {
 	switch (n) {
 	case SMD_SS_CLOSED:
@@ -155,7 +155,7 @@ static char *pid_to_str(int pid)
 static void print_half_ch_state(struct seq_file *s,
 				void *half_ch,
 				struct smd_half_channel_access *half_ch_funcs,
-				unsigned size,
+				unsigned int size,
 				int proc,
 				bool is_restricted)
 {
@@ -217,17 +217,17 @@ static char *smd_xfer_type_to_str(uint32_t xfer_type)
  */
 static void print_smd_ch_table(struct seq_file *s,
 				struct smd_alloc_elm *tbl,
-				unsigned num_tbl_entries,
-				unsigned ch_base_id,
-				unsigned fifo_base_id,
-				unsigned pid,
-				unsigned flags)
+				unsigned int num_tbl_entries,
+				unsigned int ch_base_id,
+				unsigned int fifo_base_id,
+				unsigned int pid,
+				unsigned int flags)
 {
 	void *half_ch;
-	unsigned half_ch_size;
+	unsigned int half_ch_size;
 	uint32_t ch_type;
 	void *buffer;
-	unsigned buffer_size;
+	unsigned int buffer_size;
 	int n;
 	bool is_restricted;
 
@@ -314,7 +314,7 @@ static void debug_ch(struct seq_file *s)
 	struct smd_alloc_elm *tbl;
 	struct smd_alloc_elm *default_pri_tbl;
 	struct smd_alloc_elm *default_sec_tbl;
-	unsigned tbl_size;
+	unsigned int tbl_size;
 	int i;
 
 	tbl = smem_get_entry(ID_CH_ALLOC_TBL, &tbl_size, 0, SMEM_ANY_HOST_FLAG);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015,2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -33,13 +33,14 @@ static DEFINE_PER_CPU(struct cpu_sync, sync_info);
 static struct workqueue_struct *cpu_boost_wq;
 
 static struct work_struct input_boost_work;
+
 static bool input_boost_enabled;
 
 static unsigned int input_boost_ms = 40;
 module_param(input_boost_ms, uint, 0644);
 
-static bool sched_boost_on_input;
-module_param(sched_boost_on_input, bool, 0644);
+static unsigned int sched_boost_on_input;
+module_param(sched_boost_on_input, uint, 0644);
 
 static bool sched_boost_active;
 
@@ -74,7 +75,7 @@ static int set_input_boost_freq(const char *buf, const struct kernel_param *kp)
 	for (i = 0; i < ntokens; i += 2) {
 		if (sscanf(cp, "%u:%u", &cpu, &val) != 2)
 			return -EINVAL;
-		if (cpu > num_possible_cpus())
+		if (cpu >= num_possible_cpus())
 			return -EINVAL;
 
 		per_cpu(sync_info, cpu).input_boost_freq = val;
@@ -118,12 +119,6 @@ module_param_cb(input_boost_freq, &param_ops_input_boost_freq, NULL, 0644);
  * The CPUFREQ_ADJUST notifier is used to override the current policy min to
  * make sure policy min >= boost_min. The cpufreq framework then does the job
  * of enforcing the new policy.
- *
- * The sync kthread needs to run on the CPU in question to avoid deadlocks in
- * the wake up code. Achieve this by binding the thread to the respective
- * CPU. But a CPU going offline unbinds threads from that CPU. So, set it up
- * again each time the CPU comes back up. We can use CPUFREQ_START to figure
- * out a CPU is coming online instead of registering for hotplug notifiers.
  */
 static int boost_adjust_notify(struct notifier_block *nb, unsigned long val,
 				void *data)
@@ -214,8 +209,8 @@ static void do_input_boost(struct work_struct *work)
 	update_policy_online();
 
 	/* Enable scheduler boost to migrate tasks to big cluster */
-	if (sched_boost_on_input) {
-		ret = sched_set_boost(1);
+	if (sched_boost_on_input > 0) {
+		ret = sched_set_boost(sched_boost_on_input);
 		if (ret)
 			pr_err("cpu-boost: HMP boost enable failed\n");
 		else
@@ -333,8 +328,8 @@ static int cpu_boost_init(void)
 		s->cpu = cpu;
 	}
 	cpufreq_register_notifier(&boost_adjust_nb, CPUFREQ_POLICY_NOTIFIER);
-	ret = input_register_handler(&cpuboost_input_handler);
 
-	return ret;
+	ret = input_register_handler(&cpuboost_input_handler);
+	return 0;
 }
 late_initcall(cpu_boost_init);

@@ -40,16 +40,30 @@
 /* No upper/lower limit requirement */
 #define THERMAL_NO_LIMIT	((u32)~0)
 
+/* upper limit requirement */
+#define THERMAL_MAX_LIMIT	(THERMAL_NO_LIMIT - 1)
+
 /* Default weight of a bound cooling device */
 #define THERMAL_WEIGHT_DEFAULT 0
+
+/* Max sensors that can be used for a single virtual thermalzone */
+#define THERMAL_MAX_VIRT_SENSORS 10
 
 /* use value, which < 0K, to indicate an invalid/uninitialized temperature */
 #define THERMAL_TEMP_INVALID	-274000
 
+/*
+ * use a high value for low temp tracking zone,
+ * to indicate an invalid/uninitialized temperature
+ */
+#define THERMAL_TEMP_INVALID_LOW 274000
+
 /* Unit conversion macros */
-#define KELVIN_TO_CELSIUS(t)	(long)(((long)t-2732 >= 0) ?	\
-				((long)t-2732+5)/10 : ((long)t-2732-5)/10)
-#define CELSIUS_TO_KELVIN(t)	((t)*10+2732)
+#define DECI_KELVIN_TO_CELSIUS(t)	({			\
+	long _t = (t);						\
+	((_t-2732 >= 0) ? (_t-2732+5)/10 : (_t-2732-5)/10);	\
+})
+#define CELSIUS_TO_DECI_KELVIN(t)	((t)*10+2732)
 #define DECI_KELVIN_TO_MILLICELSIUS_WITH_OFFSET(t, off) (((t) - (off)) * 100)
 #define DECI_KELVIN_TO_MILLICELSIUS(t) DECI_KELVIN_TO_MILLICELSIUS_WITH_OFFSET(t, 2732)
 #define MILLICELSIUS_TO_DECI_KELVIN_WITH_OFFSET(t, off) (((t) / 100) + (off))
@@ -98,40 +112,51 @@ enum thermal_trend {
 	THERMAL_TREND_DROP_FULL, /* apply lowest cooling action */
 };
 
+/* Thermal notification reason */
+enum thermal_notify_event {
+	THERMAL_EVENT_UNSPECIFIED, /* Unspecified event */
+	THERMAL_EVENT_TEMP_SAMPLE, /* New Temperature sample */
+	THERMAL_TRIP_VIOLATED, /* TRIP Point violation */
+	THERMAL_TRIP_CHANGED, /* TRIP Point temperature changed */
+	THERMAL_DEVICE_DOWN, /* Thermal device is down */
+	THERMAL_DEVICE_UP, /* Thermal device is up after a down event */
+	THERMAL_DEVICE_POWER_CAPABILITY_CHANGED, /* power capability changed */
+};
+
 struct thermal_zone_device_ops {
 	int (*bind) (struct thermal_zone_device *,
 		     struct thermal_cooling_device *);
 	int (*unbind) (struct thermal_zone_device *,
 		       struct thermal_cooling_device *);
-	int (*get_temp) (struct thermal_zone_device *, unsigned long *);
+	int (*get_temp) (struct thermal_zone_device *, int *);
+	int (*set_trips) (struct thermal_zone_device *, int, int);
 	int (*get_mode) (struct thermal_zone_device *,
 			 enum thermal_device_mode *);
 	int (*set_mode) (struct thermal_zone_device *,
 		enum thermal_device_mode);
 	int (*get_trip_type) (struct thermal_zone_device *, int,
 		enum thermal_trip_type *);
-	int (*activate_trip_type) (struct thermal_zone_device *, int,
+	int (*get_trip_temp) (struct thermal_zone_device *, int, int *);
+	int (*set_trip_temp) (struct thermal_zone_device *, int, int);
+	int (*get_trip_hyst) (struct thermal_zone_device *, int, int *);
+	int (*set_trip_hyst) (struct thermal_zone_device *, int, int);
+	int (*get_crit_temp) (struct thermal_zone_device *, int *);
+	int (*set_emul_temp) (struct thermal_zone_device *, int);
+	int (*activate_trip_type)(struct thermal_zone_device *, int,
 		enum thermal_trip_activation_mode);
-	int (*get_trip_temp) (struct thermal_zone_device *, int,
-			      unsigned long *);
-	int (*set_trip_temp) (struct thermal_zone_device *, int,
-			      unsigned long);
-	int (*get_trip_hyst) (struct thermal_zone_device *, int,
-			      unsigned long *);
-	int (*set_trip_hyst) (struct thermal_zone_device *, int,
-			      unsigned long);
-	int (*get_crit_temp) (struct thermal_zone_device *, unsigned long *);
-	int (*set_emul_temp) (struct thermal_zone_device *, unsigned long);
 	int (*get_trend) (struct thermal_zone_device *, int,
 			  enum thermal_trend *);
 	int (*notify) (struct thermal_zone_device *, int,
 		       enum thermal_trip_type);
+	bool (*is_wakeable)(struct thermal_zone_device *);
 };
 
 struct thermal_cooling_device_ops {
 	int (*get_max_state) (struct thermal_cooling_device *, unsigned long *);
 	int (*get_cur_state) (struct thermal_cooling_device *, unsigned long *);
 	int (*set_cur_state) (struct thermal_cooling_device *, unsigned long);
+	int (*set_min_state)(struct thermal_cooling_device *, unsigned long);
+	int (*get_min_state)(struct thermal_cooling_device *, unsigned long *);
 	int (*get_requested_power)(struct thermal_cooling_device *,
 				   struct thermal_zone_device *, u32 *);
 	int (*state2power)(struct thermal_cooling_device *,
@@ -151,35 +176,13 @@ struct thermal_cooling_device {
 	struct mutex lock; /* protect thermal_instances list */
 	struct list_head thermal_instances;
 	struct list_head node;
+	unsigned long sysfs_cur_state_req;
+	unsigned long sysfs_min_state_req;
 };
 
 struct thermal_attr {
 	struct device_attribute attr;
 	char name[THERMAL_NAME_LENGTH];
-};
-
-struct sensor_threshold {
-	long temp;
-	enum thermal_trip_type trip;
-	int (*notify)(enum thermal_trip_type type, int temp, void *data);
-	void *data;
-	uint8_t active;
-	struct list_head list;
-};
-
-struct sensor_info {
-	uint32_t sensor_id;
-	struct thermal_zone_device *tz;
-	long threshold_min;
-	long threshold_max;
-	int max_idx;
-	int min_idx;
-	struct list_head sensor_list;
-	struct list_head threshold_list;
-	struct mutex lock;
-	struct work_struct work;
-	struct task_struct *sysfs_notify_thread;
-	struct completion sysfs_notify_complete;
 };
 
 /**
@@ -204,6 +207,10 @@ struct sensor_info {
  * @last_temperature:	previous temperature read
  * @emul_temperature:	emulated temperature when using CONFIG_THERMAL_EMULATION
  * @passive:		1 if you've crossed a passive trip point, 0 otherwise.
+ * @prev_low_trip:	the low current temperature if you've crossed a passive
+			trip point.
+ * @prev_high_trip:	the above current temperature if you've crossed a
+			passive trip point.
  * @forced_passive:	If > 0, temperature at which to switch on all ACPI
  *			processor cooling devices.  Currently only used by the
  *			step-wise governor.
@@ -218,6 +225,7 @@ struct sensor_info {
  * @lock:	lock to protect thermal_instances list
  * @node:	node in thermal_tz_list (in thermal_core.c)
  * @poll_queue:	delayed work for polling
+ * @notify_event: Last notification event
  */
 struct thermal_zone_device {
 	int id;
@@ -235,6 +243,8 @@ struct thermal_zone_device {
 	int last_temperature;
 	int emul_temperature;
 	int passive;
+	int prev_low_trip;
+	int prev_high_trip;
 	unsigned int forced_passive;
 	atomic_t need_update;
 	struct thermal_zone_device_ops *ops;
@@ -246,8 +256,7 @@ struct thermal_zone_device {
 	struct mutex lock;
 	struct list_head node;
 	struct delayed_work poll_queue;
-	struct sensor_threshold tz_threshold[2];
-	struct sensor_info sensor;
+	enum thermal_notify_event notify_event;
 };
 
 /**
@@ -268,6 +277,7 @@ struct thermal_governor {
 	void (*unbind_from_tz)(struct thermal_zone_device *tz);
 	int (*throttle)(struct thermal_zone_device *tz, int trip);
 	struct list_head	governor_list;
+	int min_state_throttle;
 };
 
 /* Structure that holds binding parameters for a zone */
@@ -356,6 +366,12 @@ struct thermal_zone_params {
 	 * 		Used by thermal zone drivers (default 0).
 	 */
 	int offset;
+
+	/*
+	 * @tracks_low:	Indicates that the thermal zone params are for
+	 *		temperatures falling below the thresholds.
+	 */
+	bool tracks_low;
 };
 
 struct thermal_genl_event {
@@ -371,13 +387,23 @@ struct thermal_genl_event {
  *
  * Optional:
  * @get_trend: a pointer to a function that reads the sensor temperature trend.
+ * @set_trips: a pointer to a function that sets a temperature window. When
+ *	       this window is left the driver must inform the thermal core via
+ *	       thermal_zone_device_update.
  * @set_emul_temp: a pointer to a function that sets sensor emulated
  *		   temperature.
+ * @set_trip_temp: a pointer to a function that sets the trip temperature on
+ *		   hardware.
+ * @get_trip_temp: a pointer to a function that gets the trip temperature on
+ *		   hardware.
  */
 struct thermal_zone_of_device_ops {
-	int (*get_temp)(void *, long *);
-	int (*get_trend)(void *, long *);
-	int (*set_emul_temp)(void *, unsigned long);
+	int (*get_temp)(void *, int *);
+	int (*get_trend)(void *, int, enum thermal_trend *);
+	int (*set_trips)(void *, int, int);
+	int (*set_emul_temp)(void *, int);
+	int (*set_trip_temp)(void *, int, int);
+	int (*get_trip_temp)(void *, int, int *);
 };
 
 /**
@@ -390,9 +416,42 @@ struct thermal_zone_of_device_ops {
 
 struct thermal_trip {
 	struct device_node *np;
-	unsigned long int temperature;
-	unsigned long int hysteresis;
+	int temperature;
+	int hysteresis;
 	enum thermal_trip_type type;
+};
+
+/* Different aggregation logic supported for virtual sensors */
+enum aggregation_logic {
+	VIRT_WEIGHTED_AVG,
+	VIRT_MAXIMUM,
+	VIRT_MINIMUM,
+	VIRT_AGGREGATION_NR,
+};
+
+/*
+ * struct virtual_sensor_data - Data structure used to provide
+ *			      information about the virtual zone.
+ * @virt_zone_name - Virtual thermal zone name
+ * @num_sensors - Number of sensors this virtual zone uses to compute
+ *		  temperature
+ * @sensor_names - Array of sensor names
+ * @logic - Temperature aggregation logic to be used
+ * @coefficients - Coefficients to be used for weighted average logic
+ * @coefficient_ct - number of coefficients provided as input
+ * @avg_offset - offset value to be used for the weighted aggregation logic
+ * @avg_denominator - denominator value to be used for the weighted aggregation
+ *			logic
+ */
+struct virtual_sensor_data {
+	int                    num_sensors;
+	char                   virt_zone_name[THERMAL_NAME_LENGTH];
+	char                   *sensor_names[THERMAL_MAX_VIRT_SENSORS];
+	enum aggregation_logic logic;
+	int                    coefficients[THERMAL_MAX_VIRT_SENSORS];
+	int                    coefficient_ct;
+	int                    avg_offset;
+	int                    avg_denominator;
 };
 
 /* Function declarations */
@@ -402,18 +461,47 @@ thermal_zone_of_sensor_register(struct device *dev, int id, void *data,
 				const struct thermal_zone_of_device_ops *ops);
 void thermal_zone_of_sensor_unregister(struct device *dev,
 				       struct thermal_zone_device *tz);
+struct thermal_zone_device *devm_thermal_zone_of_sensor_register(
+		struct device *dev, int id, void *data,
+		const struct thermal_zone_of_device_ops *ops);
+void devm_thermal_zone_of_sensor_unregister(struct device *dev,
+					    struct thermal_zone_device *tz);
+struct thermal_zone_device *devm_thermal_of_virtual_sensor_register(
+		struct device *dev,
+		const struct virtual_sensor_data *sensor_data);
 #else
 static inline struct thermal_zone_device *
 thermal_zone_of_sensor_register(struct device *dev, int id, void *data,
 				const struct thermal_zone_of_device_ops *ops)
 {
-	return NULL;
+	return ERR_PTR(-ENODEV);
 }
 
 static inline
 void thermal_zone_of_sensor_unregister(struct device *dev,
 				       struct thermal_zone_device *tz)
 {
+}
+
+static inline struct thermal_zone_device *devm_thermal_zone_of_sensor_register(
+		struct device *dev, int id, void *data,
+		const struct thermal_zone_of_device_ops *ops)
+{
+	return ERR_PTR(-ENODEV);
+}
+
+static inline
+void devm_thermal_zone_of_sensor_unregister(struct device *dev,
+					    struct thermal_zone_device *tz)
+{
+}
+
+static inline
+struct thermal_zone_device *devm_thermal_of_virtual_sensor_register(
+		struct device *dev,
+		const struct virtual_sensor_data *sensor_data)
+{
+	return ERR_PTR(-ENODEV);
 }
 
 #endif
@@ -427,6 +515,8 @@ static inline bool cdev_is_power_actor(struct thermal_cooling_device *cdev)
 
 int power_actor_get_max_power(struct thermal_cooling_device *,
 			      struct thermal_zone_device *tz, u32 *max_power);
+int power_actor_get_min_power(struct thermal_cooling_device *,
+			      struct thermal_zone_device *tz, u32 *min_power);
 int power_actor_set_power(struct thermal_cooling_device *,
 			  struct thermal_instance *, u32);
 struct thermal_zone_device *thermal_zone_device_register(const char *, int, int,
@@ -440,7 +530,11 @@ int thermal_zone_bind_cooling_device(struct thermal_zone_device *, int,
 				     unsigned int);
 int thermal_zone_unbind_cooling_device(struct thermal_zone_device *, int,
 				       struct thermal_cooling_device *);
-void thermal_zone_device_update(struct thermal_zone_device *);
+void thermal_zone_device_update(struct thermal_zone_device *,
+				enum thermal_notify_event);
+void thermal_zone_device_update_temp(struct thermal_zone_device *tz,
+				enum thermal_notify_event event, int temp);
+void thermal_zone_set_trips(struct thermal_zone_device *);
 
 struct thermal_cooling_device *thermal_cooling_device_register(char *, void *,
 		const struct thermal_cooling_device_ops *);
@@ -449,29 +543,25 @@ thermal_of_cooling_device_register(struct device_node *np, char *, void *,
 				   const struct thermal_cooling_device_ops *);
 void thermal_cooling_device_unregister(struct thermal_cooling_device *);
 struct thermal_zone_device *thermal_zone_get_zone_by_name(const char *name);
-int thermal_zone_get_temp(struct thermal_zone_device *tz, unsigned long *temp);
+int thermal_zone_get_temp(struct thermal_zone_device *tz, int *temp);
+int thermal_zone_get_slope(struct thermal_zone_device *tz);
+int thermal_zone_get_offset(struct thermal_zone_device *tz);
 
 int get_tz_trend(struct thermal_zone_device *, int);
 struct thermal_instance *get_thermal_instance(struct thermal_zone_device *,
 		struct thermal_cooling_device *, int);
 void thermal_cdev_update(struct thermal_cooling_device *);
 void thermal_notify_framework(struct thermal_zone_device *, int);
-
-int sensor_get_temp(uint32_t sensor_id, long *temp);
-int sensor_get_id(char *name);
-int sensor_set_trip(uint32_t sensor_id, struct sensor_threshold *threshold);
-int sensor_cancel_trip(uint32_t sensor_id, struct sensor_threshold *threshold);
-int sensor_activate_trip(uint32_t sensor_id, struct sensor_threshold *threshold,
-		bool enable);
-int thermal_sensor_trip(struct thermal_zone_device *tz,
-		enum thermal_trip_type trip, long temp);
-
 #else
 static inline bool cdev_is_power_actor(struct thermal_cooling_device *cdev)
 { return false; }
 static inline int power_actor_get_max_power(struct thermal_cooling_device *cdev,
 			      struct thermal_zone_device *tz, u32 *max_power)
 { return 0; }
+static inline int power_actor_get_min_power(struct thermal_cooling_device *cdev,
+					    struct thermal_zone_device *tz,
+					    u32 *min_power)
+{ return -ENODEV; }
 static inline int power_actor_set_power(struct thermal_cooling_device *cdev,
 			  struct thermal_instance *tz, u32 power)
 { return 0; }
@@ -487,13 +577,21 @@ static inline void thermal_zone_device_unregister(
 static inline int thermal_zone_bind_cooling_device(
 	struct thermal_zone_device *tz, int trip,
 	struct thermal_cooling_device *cdev,
-	unsigned long upper, unsigned long lower)
+	unsigned long upper, unsigned long lower,
+	unsigned int weight)
 { return -ENODEV; }
 static inline int thermal_zone_unbind_cooling_device(
 	struct thermal_zone_device *tz, int trip,
 	struct thermal_cooling_device *cdev)
 { return -ENODEV; }
-static inline void thermal_zone_device_update(struct thermal_zone_device *tz)
+static inline void thermal_zone_device_update(struct thermal_zone_device *tz,
+					      enum thermal_notify_event event)
+{ }
+static inline void thermal_zone_device_update_temp(
+		struct thermal_zone_device *tz, enum thermal_notify_event event,
+		int temp)
+{ }
+static inline void thermal_zone_set_trips(struct thermal_zone_device *tz)
 { }
 static inline struct thermal_cooling_device *
 thermal_cooling_device_register(char *type, void *devdata,
@@ -510,7 +608,13 @@ static inline struct thermal_zone_device *thermal_zone_get_zone_by_name(
 		const char *name)
 { return ERR_PTR(-ENODEV); }
 static inline int thermal_zone_get_temp(
-		struct thermal_zone_device *tz, unsigned long *temp)
+		struct thermal_zone_device *tz, int *temp)
+{ return -ENODEV; }
+static inline int thermal_zone_get_slope(
+		struct thermal_zone_device *tz)
+{ return -ENODEV; }
+static inline int thermal_zone_get_offset(
+		struct thermal_zone_device *tz)
 { return -ENODEV; }
 static inline int get_tz_trend(struct thermal_zone_device *tz, int trip)
 { return -ENODEV; }
@@ -523,22 +627,6 @@ static inline void thermal_cdev_update(struct thermal_cooling_device *cdev)
 static inline void thermal_notify_framework(struct thermal_zone_device *tz,
 	int trip)
 { }
-
-static inline int sensor_get_temp(uint32_t sensor_id, long *temp)
-{ return -ENODEV; }
-static inline int sensor_get_id(char *name)
-{ return -ENODEV; }
-static inline int sensor_set_trip(uint32_t sensor_id, struct sensor_threshold *threshold)
-{ return -ENODEV; }
-static inline int sensor_cancel_trip(uint32_t sensor_id, struct sensor_threshold *threshold)
-{ return -ENODEV; }
-static inline int sensor_activate_trip(uint32_t sensor_id, struct sensor_threshold *threshold,
-		bool enable)
-{ return -ENODEV; }
-static inline int thermal_sensor_trip(struct thermal_zone_device *tz,
-		enum thermal_trip_type trip, long temp)
-{ return -ENODEV; }
-
 #endif /* CONFIG_THERMAL */
 
 #if defined(CONFIG_NET) && IS_ENABLED(CONFIG_THERMAL)

@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -45,7 +45,8 @@
 #define IPA_HW_NUM_FEATURES 0x8
 
 /**
- * enum ipa3_hw_features - Values that represent the features supported in IPA HW
+ * enum ipa3_hw_features - Values that represent the features supported
+ * in IPA HW
  * @IPA_HW_FEATURE_COMMON : Feature related to common operation of IPA HW
  * @IPA_HW_FEATURE_MHI : Feature related to MHI operation in IPA HW
  * @IPA_HW_FEATURE_POWER_COLLAPSE: Feature related to IPA Power collapse
@@ -91,6 +92,8 @@ enum ipa3_hw_2_cpu_events {
  * @IPA_HW_INVALID_OPCODE : Invalid opcode sent
  * @IPA_HW_INVALID_PARAMS : Invalid params for the requested command
  * @IPA_HW_GSI_CH_NOT_EMPTY_FAILURE : GSI channel emptiness validation failed
+ * @IPA_HW_CONS_STOP_FAILURE : NTN/ETH CONS stop failed
+ * @IPA_HW_PROD_STOP_FAILURE : NTN/ETH PROD stop failed
  */
 enum ipa3_hw_errors {
 	IPA_HW_ERROR_NONE              =
@@ -110,7 +113,11 @@ enum ipa3_hw_errors {
 	IPA_HW_PROD_DISABLE_CMD_GSI_STOP_FAILURE =
 		FEATURE_ENUM_VAL(IPA_HW_FEATURE_COMMON, 7),
 	IPA_HW_GSI_CH_NOT_EMPTY_FAILURE =
-		FEATURE_ENUM_VAL(IPA_HW_FEATURE_COMMON, 8)
+		FEATURE_ENUM_VAL(IPA_HW_FEATURE_COMMON, 8),
+	IPA_HW_CONS_STOP_FAILURE =
+		FEATURE_ENUM_VAL(IPA_HW_FEATURE_COMMON, 9),
+	IPA_HW_PROD_STOP_FAILURE =
+		FEATURE_ENUM_VAL(IPA_HW_FEATURE_COMMON, 10)
 };
 
 /**
@@ -127,12 +134,14 @@ enum ipa3_hw_errors {
  * bits of parameters (immediate parameters) and point on structure in system
  * memory
  * @eventOp : HW->CPU event opcode. See IPA_HW_2_CPU_EVENTS
- * @eventParams : HW->CPU event parameter. The parameter filed can hold 32 bits of
- * parameters (immediate parameters) and point on structure in system memory
+ * @eventParams : HW->CPU event parameter. The parameter filed can hold 32
+ *		bits of parameters (immediate parameters) and point on
+ *		structure in system memory
  * @firstErrorAddress : Contains the address of first error-source on SNOC
- * @hwState : State of HW. The state carries information regarding the error type.
- * @warningCounter : The warnings counter. The counter carries information regarding
- * non fatal errors in HW
+ * @hwState : State of HW. The state carries information regarding the
+ *				error type.
+ * @warningCounter : The warnings counter. The counter carries information
+ *						regarding non fatal errors in HW
  * @interfaceVersionCommon : The Common interface version as reported by HW
  *
  * The shared memory is used for communication between IPA HW and CPU.
@@ -512,10 +521,13 @@ enum ipa_cpu_2_hw_offload_commands {
 /**
  * enum ipa3_hw_offload_channel_states - Values that represent
  * offload channel state machine.
- * @IPA_HW_OFFLOAD_CHANNEL_STATE_INITED_DISABLED : Channel is initialized but disabled
- * @IPA_HW_OFFLOAD_CHANNEL_STATE_RUNNING : Channel is running. Entered after SET_UP_COMMAND is processed successfully
+ * @IPA_HW_OFFLOAD_CHANNEL_STATE_INITED_DISABLED : Channel is
+ *			initialized but disabled
+ * @IPA_HW_OFFLOAD_CHANNEL_STATE_RUNNING : Channel is running.
+ *			Entered after SET_UP_COMMAND is processed successfully
  * @IPA_HW_OFFLOAD_CHANNEL_STATE_ERROR : Channel is in error state
- * @IPA_HW_OFFLOAD_CHANNEL_STATE_INVALID : Invalid state. Shall not be in use in operational scenario
+ * @IPA_HW_OFFLOAD_CHANNEL_STATE_INVALID : Invalid state. Shall not
+ *				be in use in operational scenario
  *
  * These states apply to both Tx and Rx paths. These do not
  * reflect the sub-state the state machine may be in
@@ -586,6 +598,16 @@ struct IpaHwOffloadSetUpCmdData_t {
 } __packed;
 
 /**
+ * struct IpaHwOffloadSetUpCmdData_t_v4_0  -
+ *
+ *
+ */
+struct IpaHwOffloadSetUpCmdData_t_v4_0 {
+	u32 protocol;
+	union IpaHwSetUpCmd SetupCh_params;
+} __packed;
+
+/**
  * struct IpaHwCommonChCmd  - Structure holding the parameters
  * for IPA_CPU_2_HW_CMD_OFFLOAD_TEAR_DOWN
  *
@@ -600,5 +622,11 @@ struct IpaHwOffloadCommonChCmdData_t {
 	u8 protocol;
 	union IpaHwCommonChCmd CommonCh_params;
 } __packed;
+
+struct IpaHwOffloadCommonChCmdData_t_v4_0 {
+	u32 protocol;
+	union IpaHwCommonChCmd CommonCh_params;
+} __packed;
+
 
 #endif /* _IPA_UC_OFFLOAD_I_H_ */

@@ -39,7 +39,7 @@ static struct clk_ops shadow_post_n1_div_clk_src_ops;
 static struct clk_ops clk_ops_gen_mux_dsi;
 
 /* Op structures */
-static struct clk_ops clk_ops_dsi_vco = {
+static const struct clk_ops clk_ops_dsi_vco = {
 	.set_rate = pll_vco_set_rate_8996,
 	.round_rate = pll_vco_round_rate_8996,
 	.handoff = pll_vco_handoff_8996,
@@ -68,7 +68,7 @@ static struct clk_mux_ops mdss_pixel_mux_ops = {
 };
 
 /* Shadow ops for dynamic refresh */
-static struct clk_ops clk_ops_shadow_dsi_vco = {
+static const struct clk_ops clk_ops_shadow_dsi_vco = {
 	.set_rate = shadow_pll_vco_set_rate_8996,
 	.round_rate = pll_vco_round_rate_8996,
 	.handoff = shadow_pll_vco_handoff_8996,
@@ -494,7 +494,7 @@ int dsi_pll_clock_register_8996(struct platform_device *pdev,
 
 	/* Set clock source operations */
 
-	/* hr_oclk3, pixel */
+	/* hr_oclk3, pixel_clock */
 	n2_clk_src_ops = clk_ops_slave_div;
 	n2_clk_src_ops.prepare = dsi_pll_div_prepare;
 

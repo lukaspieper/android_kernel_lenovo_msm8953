@@ -387,7 +387,7 @@ static struct llc_conn_state_trans *llc_qualify_conn_ev(struct sock *sk,
 							struct sk_buff *skb)
 {
 	struct llc_conn_state_trans **next_trans;
-	llc_conn_ev_qfyr_t *next_qualifier;
+	const llc_conn_ev_qfyr_t *next_qualifier;
 	struct llc_conn_state_ev *ev = llc_conn_ev(skb);
 	struct llc_sock *llc = llc_sk(sk);
 	struct llc_conn_state *curr_state =
@@ -435,7 +435,7 @@ static int llc_exec_conn_trans_actions(struct sock *sk,
 				       struct sk_buff *skb)
 {
 	int rc = 0;
-	llc_conn_action_t *next_action;
+	const llc_conn_action_t *next_action;
 
 	for (next_action = trans->ev_actions;
 	     next_action && *next_action; next_action++) {
@@ -701,6 +701,7 @@ void llc_sap_add_socket(struct llc_sap *sap, struct sock *sk)
 	llc_sk(sk)->sap = sap;
 
 	spin_lock_bh(&sap->sk_lock);
+	sock_set_flag(sk, SOCK_RCU_FREE);
 	sap->sk_count++;
 	sk_nulls_add_node_rcu(sk, laddr_hb);
 	hlist_add_head(&llc->dev_hash_node, dev_hb);
@@ -749,7 +750,7 @@ static struct sock *llc_create_incoming_sock(struct sock *sk,
 					     struct llc_addr *daddr)
 {
 	struct sock *newsk = llc_sk_alloc(sock_net(sk), sk->sk_family, GFP_ATOMIC,
-					  sk->sk_prot);
+					  sk->sk_prot, 0);
 	struct llc_sock *newllc, *llc = llc_sk(sk);
 
 	if (!newsk)
@@ -915,9 +916,9 @@ static void llc_sk_init(struct sock *sk)
  *	Allocates a LLC sock and initializes it. Returns the new LLC sock
  *	or %NULL if there's no memory available for one
  */
-struct sock *llc_sk_alloc(struct net *net, int family, gfp_t priority, struct proto *prot)
+struct sock *llc_sk_alloc(struct net *net, int family, gfp_t priority, struct proto *prot, int kern)
 {
-	struct sock *sk = sk_alloc(net, family, priority, prot);
+	struct sock *sk = sk_alloc(net, family, priority, prot, kern);
 
 	if (!sk)
 		goto out;

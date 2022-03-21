@@ -185,8 +185,6 @@ bool f2fs_need_SSR(struct f2fs_sb_info *sbi)
 
 void f2fs_register_inmem_page(struct inode *inode, struct page *page)
 {
-	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
-	struct f2fs_inode_info *fi = F2FS_I(inode);
 	struct inmem_pages *new;
 
 	f2fs_trace_pid(page);
@@ -200,15 +198,11 @@ void f2fs_register_inmem_page(struct inode *inode, struct page *page)
 	INIT_LIST_HEAD(&new->list);
 
 	/* increase reference count with clean state */
-	mutex_lock(&fi->inmem_lock);
 	get_page(page);
-	list_add_tail(&new->list, &fi->inmem_pages);
-	spin_lock(&sbi->inode_lock[ATOMIC_FILE]);
-	if (list_empty(&fi->inmem_ilist))
-		list_add_tail(&fi->inmem_ilist, &sbi->inode_list[ATOMIC_FILE]);
-	spin_unlock(&sbi->inode_lock[ATOMIC_FILE]);
+	mutex_lock(&F2FS_I(inode)->inmem_lock);
+	list_add_tail(&new->list, &F2FS_I(inode)->inmem_pages);
 	inc_page_count(F2FS_I_SB(inode), F2FS_INMEM_PAGES);
-	mutex_unlock(&fi->inmem_lock);
+	mutex_unlock(&F2FS_I(inode)->inmem_lock);
 
 	trace_f2fs_register_inmem_page(page, INMEM);
 }
@@ -330,19 +324,17 @@ void f2fs_drop_inmem_pages(struct inode *inode)
 		mutex_lock(&fi->inmem_lock);
 		__revoke_inmem_pages(inode, &fi->inmem_pages,
 						true, false, true);
-
-		if (list_empty(&fi->inmem_pages)) {
-			spin_lock(&sbi->inode_lock[ATOMIC_FILE]);
-			if (!list_empty(&fi->inmem_ilist))
-				list_del_init(&fi->inmem_ilist);
-			spin_unlock(&sbi->inode_lock[ATOMIC_FILE]);
-		}
 		mutex_unlock(&fi->inmem_lock);
 	}
 
 	clear_inode_flag(inode, FI_ATOMIC_FILE);
 	fi->i_gc_failures[GC_FAILURE_ATOMIC] = 0;
 	stat_dec_atomic_write(inode);
+
+	spin_lock(&sbi->inode_lock[ATOMIC_FILE]);
+	if (!list_empty(&fi->inmem_ilist))
+		list_del_init(&fi->inmem_ilist);
+	spin_unlock(&sbi->inode_lock[ATOMIC_FILE]);
 }
 
 void f2fs_drop_inmem_page(struct inode *inode, struct page *page)
@@ -471,11 +463,6 @@ int f2fs_commit_inmem_pages(struct inode *inode)
 
 	mutex_lock(&fi->inmem_lock);
 	err = __f2fs_commit_inmem_pages(inode);
-
-	spin_lock(&sbi->inode_lock[ATOMIC_FILE]);
-	if (!list_empty(&fi->inmem_ilist))
-		list_del_init(&fi->inmem_ilist);
-	spin_unlock(&sbi->inode_lock[ATOMIC_FILE]);
 	mutex_unlock(&fi->inmem_lock);
 
 	clear_inode_flag(inode, FI_ATOMIC_COMMIT);
@@ -569,9 +556,9 @@ static int __submit_flush_wait(struct f2fs_sb_info *sbi,
 	if (!bio)
 		return -ENOMEM;
 
-	bio->bi_rw = REQ_OP_WRITE;
+	bio->bi_opf = REQ_OP_WRITE | REQ_SYNC | REQ_PREFLUSH;
 	bio->bi_bdev = bdev;
-	ret = submit_bio_wait(WRITE_FLUSH, bio);
+	ret = submit_bio_wait(bio);
 	bio_put(bio);
 
 	trace_f2fs_issue_flush(bdev, test_opt(sbi, NOBARRIER),
@@ -1021,12 +1008,12 @@ static void __remove_discard_cmd(struct f2fs_sb_info *sbi,
 	__detach_discard_cmd(dcc, dc);
 }
 
-static void f2fs_submit_discard_endio(struct bio *bio, int err)
+static void f2fs_submit_discard_endio(struct bio *bio)
 {
 	struct discard_cmd *dc = (struct discard_cmd *)bio->bi_private;
 	unsigned long flags;
 
-	dc->error = err;
+	dc->error = bio->bi_error;
 
 	spin_lock_irqsave(&dc->lock, flags);
 	dc->bio_ref--;
@@ -1036,88 +1023,6 @@ static void f2fs_submit_discard_endio(struct bio *bio, int err)
 	}
 	spin_unlock_irqrestore(&dc->lock, flags);
 	bio_put(bio);
-}
-
-/* copied from block/blk-lib.c in 4.10-rc1 */
-static int __blkdev_issue_discard(struct block_device *bdev, sector_t sector,
-		sector_t nr_sects, gfp_t gfp_mask, int flags,
-		struct bio **biop)
-{
-	struct request_queue *q = bdev_get_queue(bdev);
-	struct bio *bio = *biop;
-	unsigned int granularity;
-	int op = REQ_WRITE | REQ_DISCARD;
-	int alignment;
-	sector_t bs_mask;
-
-	if (!q)
-		return -ENXIO;
-
-	if (!blk_queue_discard(q))
-		return -EOPNOTSUPP;
-
-	if (flags & BLKDEV_DISCARD_SECURE) {
-		if (!blk_queue_secdiscard(q))
-			return -EOPNOTSUPP;
-		op |= REQ_SECURE;
-	}
-
-	bs_mask = (bdev_logical_block_size(bdev) >> 9) - 1;
-	if ((sector | nr_sects) & bs_mask)
-		return -EINVAL;
-
-	/* Zero-sector (unknown) and one-sector granularities are the same.  */
-	granularity = max(q->limits.discard_granularity >> 9, 1U);
-	alignment = (bdev_discard_alignment(bdev) >> 9) % granularity;
-
-	while (nr_sects) {
-		unsigned int req_sects;
-		sector_t end_sect, tmp;
-
-		/* Make sure bi_size doesn't overflow */
-		req_sects = min_t(sector_t, nr_sects, UINT_MAX >> 9);
-
-		/**
-		 * If splitting a request, and the next starting sector would be
-		 * misaligned, stop the discard at the previous aligned sector.
-		 */
-		end_sect = sector + req_sects;
-		tmp = end_sect;
-		if (req_sects < nr_sects &&
-		    sector_div(tmp, granularity) != alignment) {
-			end_sect = end_sect - alignment;
-			sector_div(end_sect, granularity);
-			end_sect = end_sect * granularity + alignment;
-			req_sects = end_sect - sector;
-		}
-
-		if (bio) {
-			int ret = submit_bio_wait(op, bio);
-			bio_put(bio);
-			if (ret)
-				return ret;
-		}
-
-		bio = bio_alloc(GFP_NOIO | __GFP_NOFAIL, 1);
-		bio->bi_iter.bi_sector = sector;
-		bio->bi_bdev = bdev;
-		bio_set_op_attrs(bio, op, 0);
-
-		bio->bi_iter.bi_size = req_sects << 9;
-		nr_sects -= req_sects;
-		sector = end_sect;
-
-		/*
-		 * We can loop for a long time in here, if someone does
-		 * full device discards (like mkfs). Be nice and allow
-		 * us to schedule out to avoid softlocking if preempt
-		 * is disabled.
-		 */
-		cond_resched();
-	}
-
-	*biop = bio;
-	return 0;
 }
 
 static void __check_sit_bitmap(struct f2fs_sb_info *sbi,
@@ -1280,7 +1185,8 @@ submit:
 
 		bio->bi_private = dc;
 		bio->bi_end_io = f2fs_submit_discard_endio;
-		submit_bio(flag, bio);
+		bio->bi_opf |= flag;
+		submit_bio(bio);
 
 		atomic_inc(&dcc->issued_discard);
 
@@ -4100,7 +4006,7 @@ static int build_sit_info(struct f2fs_sb_info *sbi)
 	sit_i->dirty_sentries = 0;
 	sit_i->sents_per_block = SIT_ENTRY_PER_BLOCK;
 	sit_i->elapsed_time = le64_to_cpu(sbi->ckpt->elapsed_time);
-	sit_i->mounted_time = CURRENT_TIME_SEC.tv_sec;
+	sit_i->mounted_time = ktime_get_real_seconds();
 	init_rwsem(&sit_i->sentry_lock);
 	return 0;
 }

@@ -39,8 +39,9 @@
 #define ADIE_CODEC_DIGITAL_OFF                                     0x0600
 
 /* State to which client asks the drv to write the default values
- * to the registers */
-#define ADIE_CODEC_FLASH_IMAGE 					   0x0001
+ * to the registers
+ */
+#define ADIE_CODEC_FLASH_IMAGE                                     0x0001
 
 /* Path type */
 #define ADIE_CODEC_RX 0
@@ -62,7 +63,7 @@ struct adie_codec_action_unit {
 	u32 action;
 };
 
-struct adie_codec_hwsetting_entry{
+struct adie_codec_hwsetting_entry {
 	struct adie_codec_action_unit *actions;
 	u32 action_sz;
 	u32 freq_plan;
@@ -98,28 +99,28 @@ struct adie_codec_anc_data {
 
 struct adie_codec_operations {
 	int	 codec_id;
-	int (*codec_open) (struct adie_codec_dev_profile *profile,
+	int (*codec_open)(struct adie_codec_dev_profile *profile,
 				struct adie_codec_path **path_pptr);
-	int (*codec_close) (struct adie_codec_path *path_ptr);
-	int (*codec_setpath) (struct adie_codec_path *path_ptr,
+	int (*codec_close)(struct adie_codec_path *path_ptr);
+	int (*codec_setpath)(struct adie_codec_path *path_ptr,
 				u32 freq_plan, u32 osr);
-	int (*codec_proceed_stage) (struct adie_codec_path *path_ptr,
+	int (*codec_proceed_stage)(struct adie_codec_path *path_ptr,
 					u32 state);
-	u32 (*codec_freq_supported) (struct adie_codec_dev_profile *profile,
+	u32 (*codec_freq_supported)(struct adie_codec_dev_profile *profile,
 					u32 requested_freq);
-	int (*codec_enable_sidetone) (struct adie_codec_path *rx_path_ptr,
+	int (*codec_enable_sidetone)(struct adie_codec_path *rx_path_ptr,
 					u32 enable);
-	int (*codec_enable_anc) (struct adie_codec_path *rx_path_ptr,
+	int (*codec_enable_anc)(struct adie_codec_path *rx_path_ptr,
 		u32 enable, struct adie_codec_anc_data *calibration_writes);
-	int (*codec_set_device_digital_volume) (
+	int (*codec_set_device_digital_volume)(
 					struct adie_codec_path *path_ptr,
 					u32 num_channels,
 					u32 vol_percentage);
 
-	int (*codec_set_device_analog_volume) (struct adie_codec_path *path_ptr,
+	int (*codec_set_device_analog_volume)(struct adie_codec_path *path_ptr,
 						u32 num_channels,
 						u32 volume);
-	int (*codec_set_master_mode) (struct adie_codec_path *path_ptr,
+	int (*codec_set_master_mode)(struct adie_codec_path *path_ptr,
 					u8 master);
 };
 

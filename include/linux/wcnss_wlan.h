@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,7 +38,6 @@ struct vregs_level {
 };
 
 struct wcnss_wlan_config {
-	bool	wcn_external_gpio_support;
 	int	use_48mhz_xo;
 	int	is_pronto_vadc;
 	int	is_pronto_v3;
@@ -62,6 +61,13 @@ enum {
 	WCNSS_WLAN_SET,
 	WCNSS_WLAN_CLK,
 	WCNSS_WLAN_MAX_GPIO,
+};
+
+enum wcnss_log_type {
+	ERR,
+	WARN,
+	INFO,
+	DBG,
 };
 
 #define WCNSS_VBATT_THRESHOLD           3500000
@@ -101,18 +107,19 @@ int wcnss_wlan_get_dxe_rx_irq(struct device *dev);
 void wcnss_wlan_register_pm_ops(struct device *dev,
 				const struct dev_pm_ops *pm_ops);
 void wcnss_wlan_unregister_pm_ops(struct device *dev,
-				const struct dev_pm_ops *pm_ops);
+				  const struct dev_pm_ops *pm_ops);
 void wcnss_register_thermal_mitigation(struct device *dev,
-				void (*tm_notify)(struct device *dev, int));
-void wcnss_unregister_thermal_mitigation(
-				void (*tm_notify)(struct device *dev, int));
+				       void (*tm_notify)(struct device *dev,
+							 int));
+void wcnss_unregister_thermal_mitigation(void (*tm_notify)(struct device *dev,
+							   int));
 struct platform_device *wcnss_get_platform_device(void);
 struct wcnss_wlan_config *wcnss_get_wlan_config(void);
 void wcnss_set_iris_xo_mode(int iris_xo_mode_set);
 int wcnss_wlan_power(struct device *dev,
-				struct wcnss_wlan_config *cfg,
-				enum wcnss_opcode opcode,
-				int *iris_xo_mode_set);
+		     struct wcnss_wlan_config *cfg,
+		     enum wcnss_opcode opcode,
+		     int *iris_xo_mode_set);
 int wcnss_req_power_on_lock(char *driver_name);
 int wcnss_free_power_on_lock(char *driver_name);
 unsigned int wcnss_get_serial_number(void);
@@ -127,7 +134,6 @@ void wcnss_suspend_notify(void);
 void wcnss_resume_notify(void);
 void wcnss_riva_log_debug_regs(void);
 void wcnss_pronto_log_debug_regs(void);
-void wcnss_pronto_dump_regs(void);
 int wcnss_is_hw_pronto_ver3(void);
 int wcnss_device_ready(void);
 bool wcnss_cbc_complete(void);
@@ -139,11 +145,14 @@ int wcnss_wlan_iris_xo_mode(void);
 int wcnss_wlan_dual_band_disabled(void);
 void wcnss_flush_work(struct work_struct *work);
 void wcnss_flush_delayed_work(struct delayed_work *dwork);
-void wcnss_init_work(struct work_struct *work , void *callbackptr);
-void wcnss_init_delayed_work(struct delayed_work *dwork , void *callbackptr);
+void wcnss_init_work(struct work_struct *work, void *callbackptr);
+void wcnss_init_delayed_work(struct delayed_work *dwork, void *callbackptr);
 int wcnss_get_iris_name(char *iris_version);
 void wcnss_dump_stack(struct task_struct *task);
 void wcnss_snoc_vote(bool clk_chk_en);
+int wcnss_parse_voltage_regulator(struct wcnss_wlan_config *wlan_config,
+				  struct device *dev);
+void wcnss_log(enum wcnss_log_type type, const char *_fmt, ...);
 
 #ifdef CONFIG_WCNSS_REGISTER_DUMP_ON_BITE
 void wcnss_log_debug_regs_on_bite(void);

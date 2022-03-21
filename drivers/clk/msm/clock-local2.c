@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -161,6 +161,7 @@ static void __set_rate_hid(struct rcg_clk *rcg, struct clk_freq_tbl *nf)
 void set_rate_hid(struct rcg_clk *rcg, struct clk_freq_tbl *nf)
 {
 	unsigned long flags;
+
 	spin_lock_irqsave(&local_clock_reg_lock, flags);
 	__set_rate_hid(rcg, nf);
 	spin_unlock_irqrestore(&local_clock_reg_lock, flags);
@@ -192,6 +193,7 @@ static void __set_rate_mnd(struct rcg_clk *rcg, struct clk_freq_tbl *nf)
 void set_rate_mnd(struct rcg_clk *rcg, struct clk_freq_tbl *nf)
 {
 	unsigned long flags;
+
 	spin_lock_irqsave(&local_clock_reg_lock, flags);
 	__set_rate_mnd(rcg, nf);
 	spin_unlock_irqrestore(&local_clock_reg_lock, flags);
@@ -229,8 +231,8 @@ static int rcg_clk_enable(struct clk *c)
 	struct rcg_clk *rcg = to_rcg_clk(c);
 
 	WARN(rcg->current_freq == &rcg_dummy_freq,
-		"Attempting to prepare %s before setting its rate. "
-		"Set the rate first!\n", rcg->c.dbg_name);
+		"Attempting to prepare %s before setting its rate."
+		, rcg->c.dbg_name);
 
 	if (rcg->force_enable_rcgr) {
 		rcg_set_force_enable(rcg);
@@ -423,7 +425,7 @@ static int rcg_clk_set_rate(struct clk *c, unsigned long rate)
 	if (rc)
 		return rc;
 
-	BUG_ON(!rcg->set_rate);
+	WARN_ON(!rcg->set_rate);
 
 	/* Perform clock-specific frequency switch operations. */
 	if ((rcg->non_local_children && c->count) ||
@@ -477,7 +479,7 @@ static long rcg_clk_round_rate(struct clk *c, unsigned long rate)
 }
 
 /* Return the nth supported frequency for a given clock. */
-static long rcg_clk_list_rate(struct clk *c, unsigned n)
+static long rcg_clk_list_rate(struct clk *c, unsigned long  n)
 {
 	struct rcg_clk *rcg = to_rcg_clk(c);
 
@@ -691,6 +693,7 @@ static void branch_clk_halt_check(struct clk *c, u32 halt_check,
 	} else if (halt_check == HALT) {
 		int count;
 		u32 val;
+
 		for (count = HALT_CHECK_MAX_LOOPS; count > 0; count--) {
 			val = readl_relaxed(cbcr_reg);
 			val &= BRANCH_CHECK_MASK;
@@ -726,7 +729,7 @@ static unsigned long branch_clk_aggregate_rate(const struct clk *parent)
 	return rate;
 }
 
-static int cbcr_set_flags(void * __iomem regaddr, unsigned flags)
+static int cbcr_set_flags(void * __iomem regaddr, unsigned long flags)
 {
 	u32 cbcr_val;
 	unsigned long irq_flags;
@@ -769,7 +772,7 @@ static int cbcr_set_flags(void * __iomem regaddr, unsigned flags)
 	return ret;
 }
 
-static int branch_clk_set_flags(struct clk *c, unsigned flags)
+static int branch_clk_set_flags(struct clk *c, unsigned long flags)
 {
 	return cbcr_set_flags(CBCR_REG(to_branch_clk(c)), flags);
 }
@@ -953,7 +956,7 @@ static unsigned long branch_clk_get_rate(struct clk *c)
 	return clk_get_rate(c->parent);
 }
 
-static long branch_clk_list_rate(struct clk *c, unsigned n)
+static long branch_clk_list_rate(struct clk *c, unsigned long  n)
 {
 	int level;
 	unsigned long fmax = 0, rate;
@@ -1129,7 +1132,7 @@ static enum handoff local_vote_clk_handoff(struct clk *c)
 }
 
 /* Sample clock for 'ticks' reference clock ticks. */
-static u32 run_measurement(unsigned ticks, void __iomem *ctl_reg,
+static u32 run_measurement(unsigned long ticks, void __iomem *ctl_reg,
 				void __iomem *status_reg)
 {
 	/* Stop counters and set the XO4 counter start value. */
@@ -1157,7 +1160,7 @@ unsigned long measure_get_rate(struct clk *c)
 	unsigned long flags;
 	u32 gcc_xo4_reg, regval;
 	u64 raw_count_short, raw_count_full;
-	unsigned ret;
+	unsigned long ret;
 	u32 sample_ticks = 0x10000;
 	u32 multiplier = to_mux_clk(c)->post_div + 1;
 	struct measure_clk_data *data = to_mux_clk(c)->priv;
@@ -1483,8 +1486,8 @@ static int set_rate_pixel(struct clk *clk, unsigned long rate)
 {
 	struct rcg_clk *rcg = to_rcg_clk(clk);
 	struct clk_freq_tbl *pixel_freq = rcg->current_freq;
-	int frac_num[] = {3, 2, 4, 1};
-	int frac_den[] = {8, 9, 9, 1};
+	int frac_num[] = {1, 3, 2, 4};
+	int frac_den[] = {1, 8, 9, 9};
 	int delta = 100000;
 	int i, rc;
 
@@ -1749,7 +1752,7 @@ static enum handoff gate_clk_handoff(struct clk *c)
 	return HANDOFF_DISABLED_CLK;
 }
 
-static int gate_clk_set_flags(struct clk *c, unsigned flags)
+static int gate_clk_set_flags(struct clk *c, unsigned long flags)
 {
 	return cbcr_set_flags(GATE_EN_REG(to_gate_clk(c)), flags);
 }
@@ -1837,12 +1840,14 @@ static int mux_reg_set_mux_sel(struct mux_clk *clk, int sel)
 static int mux_reg_get_mux_sel(struct mux_clk *clk)
 {
 	u32 regval = readl_relaxed(MUX_REG(clk));
+
 	return (regval >> clk->shift) & clk->mask;
 }
 
 static bool mux_reg_is_enabled(struct mux_clk *clk)
 {
 	u32 regval = readl_relaxed(MUX_REG(clk));
+
 	return !!(regval & clk->en_mask);
 }
 
@@ -2139,14 +2144,14 @@ static void __iomem *rcg_list_registers(struct mux_div_clk *md, int n,
 	return RCGR_CMD_REG(md);
 }
 
-struct clk_ops clk_ops_empty;
+const struct clk_ops clk_ops_empty;
 
-struct clk_ops clk_ops_rst = {
+const struct clk_ops clk_ops_rst = {
 	.reset = reset_clk_rst,
 	.list_registers = reset_clk_list_registers,
 };
 
-struct clk_ops clk_ops_rcg = {
+const struct clk_ops clk_ops_rcg = {
 	.enable = rcg_clk_enable,
 	.disable = rcg_clk_disable,
 	.set_rate = rcg_clk_set_rate,
@@ -2158,7 +2163,7 @@ struct clk_ops clk_ops_rcg = {
 	.list_registers = rcg_hid_clk_list_registers,
 };
 
-struct clk_ops clk_ops_rcg_mnd = {
+const struct clk_ops clk_ops_rcg_mnd = {
 	.enable = rcg_clk_enable,
 	.disable = rcg_clk_disable,
 	.set_rate = rcg_clk_set_rate,
@@ -2171,7 +2176,7 @@ struct clk_ops clk_ops_rcg_mnd = {
 	.list_registers = rcg_mnd_clk_list_registers,
 };
 
-struct clk_ops clk_ops_pixel = {
+const struct clk_ops clk_ops_pixel = {
 	.enable = rcg_clk_enable,
 	.disable = rcg_clk_disable,
 	.set_rate = set_rate_pixel,
@@ -2181,7 +2186,7 @@ struct clk_ops clk_ops_pixel = {
 	.list_registers = rcg_mnd_clk_list_registers,
 };
 
-struct clk_ops clk_ops_pixel_multiparent = {
+const struct clk_ops clk_ops_pixel_multiparent = {
 	.enable = rcg_clk_enable,
 	.disable = rcg_clk_disable,
 	.set_rate = set_rate_pixel,
@@ -2193,7 +2198,7 @@ struct clk_ops clk_ops_pixel_multiparent = {
 	.set_parent = rcg_clk_set_parent,
 };
 
-struct clk_ops clk_ops_edppixel = {
+const struct clk_ops clk_ops_edppixel = {
 	.enable = rcg_clk_enable,
 	.disable = rcg_clk_disable,
 	.set_rate = set_rate_edp_pixel,
@@ -2203,7 +2208,7 @@ struct clk_ops clk_ops_edppixel = {
 	.list_registers = rcg_mnd_clk_list_registers,
 };
 
-struct clk_ops clk_ops_byte = {
+const struct clk_ops clk_ops_byte = {
 	.enable = rcg_clk_enable,
 	.disable = rcg_clk_disable,
 	.set_rate = set_rate_byte,
@@ -2213,7 +2218,7 @@ struct clk_ops clk_ops_byte = {
 	.list_registers = rcg_hid_clk_list_registers,
 };
 
-struct clk_ops clk_ops_byte_multiparent = {
+const struct clk_ops clk_ops_byte_multiparent = {
 	.enable = rcg_clk_enable,
 	.disable = rcg_clk_disable,
 	.set_rate = set_rate_byte,
@@ -2225,7 +2230,7 @@ struct clk_ops clk_ops_byte_multiparent = {
 	.set_parent = rcg_clk_set_parent,
 };
 
-struct clk_ops clk_ops_rcg_hdmi = {
+const struct clk_ops clk_ops_rcg_hdmi = {
 	.enable = rcg_clk_enable,
 	.disable = rcg_clk_disable,
 	.set_rate = rcg_clk_set_rate_hdmi,
@@ -2236,7 +2241,7 @@ struct clk_ops clk_ops_rcg_hdmi = {
 	.list_registers = rcg_hid_clk_list_registers,
 };
 
-struct clk_ops clk_ops_rcg_edp = {
+const struct clk_ops clk_ops_rcg_edp = {
 	.enable = rcg_clk_enable,
 	.disable = rcg_clk_disable,
 	.set_rate = rcg_clk_set_rate_edp,
@@ -2247,7 +2252,7 @@ struct clk_ops clk_ops_rcg_edp = {
 	.list_registers = rcg_hid_clk_list_registers,
 };
 
-struct clk_ops clk_ops_branch = {
+const struct clk_ops clk_ops_branch = {
 	.enable = branch_clk_enable,
 	.prepare = branch_clk_prepare,
 	.disable = branch_clk_disable,
@@ -2262,7 +2267,7 @@ struct clk_ops clk_ops_branch = {
 	.list_registers = branch_clk_list_registers,
 };
 
-struct clk_ops clk_ops_vote = {
+const struct clk_ops clk_ops_vote = {
 	.enable = local_vote_clk_enable,
 	.disable = local_vote_clk_disable,
 	.reset = local_vote_clk_reset,
@@ -2270,7 +2275,7 @@ struct clk_ops clk_ops_vote = {
 	.list_registers = local_vote_clk_list_registers,
 };
 
-struct clk_ops clk_ops_gate = {
+const struct clk_ops clk_ops_gate = {
 	.enable = gate_clk_enable,
 	.disable = gate_clk_disable,
 	.set_rate = parent_set_rate,
@@ -2295,7 +2300,7 @@ struct clk_div_ops div_reg_ops = {
 	.get_div = div_reg_get_div,
 };
 
-struct clk_div_ops postdiv_reg_ops = {
+const struct clk_div_ops postdiv_reg_ops = {
 	.set_div = postdiv_reg_set_div,
 	.get_div = postdiv_reg_get_div,
 };
@@ -2316,10 +2321,8 @@ static void *cbc_dt_parser(struct device *dev, struct device_node *np)
 	u32 rc;
 
 	branch_clk = devm_kzalloc(dev, sizeof(*branch_clk), GFP_KERNEL);
-	if (!branch_clk) {
-		dt_err(np, "memory alloc failure\n");
+	if (!branch_clk)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	drv = msmclk_parse_phandle(dev, np->parent->phandle);
 	if (IS_ERR_OR_NULL(drv))
@@ -2356,10 +2359,8 @@ static void *local_vote_clk_dt_parser(struct device *dev,
 	int rc, val;
 
 	vote_clk = devm_kzalloc(dev, sizeof(*vote_clk), GFP_KERNEL);
-	if (!vote_clk) {
-		dt_err(np, "failed to alloc memory\n");
+	if (!vote_clk)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	drv = msmclk_parse_phandle(dev, np->parent->phandle);
 	if (IS_ERR_OR_NULL(drv))
@@ -2402,10 +2403,8 @@ static void *gate_clk_dt_parser(struct device *dev, struct device_node *np)
 	u32 en_bit, rc;
 
 	gate_clk = devm_kzalloc(dev, sizeof(*gate_clk), GFP_KERNEL);
-	if (!gate_clk) {
-		dt_err(np, "memory alloc failure\n");
+	if (!gate_clk)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	drv = msmclk_parse_phandle(dev, np->parent->phandle);
 	if (IS_ERR_OR_NULL(drv))
@@ -2488,10 +2487,8 @@ struct clk_src *msmclk_parse_clk_src(struct device *dev,
 	num_parents = prop_len / len;
 
 	clks = devm_kzalloc(dev, sizeof(*clks) * num_parents, GFP_KERNEL);
-	if (!clks) {
-		dt_err(np, "memory alloc failure\n");
+	if (!clks)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	/* Assume that u32 and phandle have the same size */
 	for (i = 0; i < num_parents; i++) {
@@ -2596,10 +2593,8 @@ static void *rcg_clk_dt_parser(struct device *dev, struct device_node *np)
 	int rc;
 
 	rcg = devm_kzalloc(dev, sizeof(*rcg), GFP_KERNEL);
-	if (!rcg) {
-		dt_err(np, "memory alloc failure\n");
+	if (!rcg)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	drv = msmclk_parse_phandle(dev, np->parent->phandle);
 	if (IS_ERR_OR_NULL(drv))
@@ -2685,10 +2680,8 @@ static void *mux_reg_clk_dt_parser(struct device *dev, struct device_node *np)
 	int rc;
 
 	mux = devm_kzalloc(dev, sizeof(*mux), GFP_KERNEL);
-	if (!mux) {
-		dt_err(np, "memory alloc failure\n");
+	if (!mux)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	mux->parents = msmclk_parse_clk_src(dev, np, &mux->num_parents);
 	if (IS_ERR(mux->parents))
@@ -2754,10 +2747,8 @@ static void *measure_clk_dt_parser(struct device *dev,
 	mux = to_mux_clk(c);
 
 	p = devm_kzalloc(dev, sizeof(*p), GFP_KERNEL);
-	if (!p) {
-		dt_err(np, "memory alloc failure\n");
+	if (!p)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	rc = of_property_read_phandle_index(np, "qcom,cxo", 0, &cxo);
 	if (rc) {
@@ -2790,10 +2781,8 @@ static void *measure_clk_dt_parser(struct device *dev,
 
 	clk_ops_measure_mux = devm_kzalloc(dev, sizeof(*clk_ops_measure_mux),
 								GFP_KERNEL);
-	if (!clk_ops_measure_mux) {
-		dt_err(np, "memory alloc failure\n");
+	if (!clk_ops_measure_mux)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	*clk_ops_measure_mux = clk_ops_gen_mux;
 	clk_ops_measure_mux->get_rate = measure_get_rate;
@@ -2813,10 +2802,8 @@ static void *div_clk_dt_parser(struct device *dev,
 	int rc;
 
 	div_clk = devm_kzalloc(dev, sizeof(*div_clk), GFP_KERNEL);
-	if (!div_clk) {
-		dt_err(np, "memory alloc failed\n");
+	if (!div_clk)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	rc = of_property_read_u32(np, "qcom,max-div", &div_clk->data.max_div);
 	if (rc) {
@@ -2870,10 +2857,8 @@ static void *fixed_div_clk_dt_parser(struct device *dev,
 	int rc;
 
 	div_clk = devm_kzalloc(dev, sizeof(*div_clk), GFP_KERNEL);
-	if (!div_clk) {
-		dt_err(np, "memory alloc failed\n");
+	if (!div_clk)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	rc = of_property_read_u32(np, "qcom,div", &div_clk->data.div);
 	if (rc) {
@@ -2901,10 +2886,8 @@ static void *reset_clk_dt_parser(struct device *dev,
 	int rc;
 
 	reset_clk = devm_kzalloc(dev, sizeof(*reset_clk), GFP_KERNEL);
-	if (!reset_clk) {
-		dt_err(np, "memory alloc failed\n");
+	if (!reset_clk)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	rc = of_property_read_u32(np, "qcom,base-offset",
 						&reset_clk->reset_reg);

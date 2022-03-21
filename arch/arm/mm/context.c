@@ -15,7 +15,6 @@
 #include <linux/mm.h>
 #include <linux/smp.h>
 #include <linux/percpu.h>
-#include <linux/msm_rtb.h>
 
 #include <asm/mmu_context.h>
 #include <asm/smp_plat.h>
@@ -121,7 +120,6 @@ static int contextidr_notifier(struct notifier_block *unused, unsigned long cmd,
 	"	mcr	p15, 0, %0, c13, c0, 1\n"
 	: "=r" (contextidr), "+r" (pid)
 	: "I" (~ASID_MASK));
-	uncached_logk(LOGK_CTXID, (void *)contextidr);
 	isb();
 
 	return NOTIFY_OK;
@@ -278,5 +276,6 @@ void check_and_switch_context(struct mm_struct *mm, struct task_struct *tsk)
 	raw_spin_unlock_irqrestore(&cpu_asid_lock, flags);
 
 switch_mm_fastpath:
+	arm_apply_bp_hardening();
 	cpu_switch_mm(mm->pgd, mm);
 }

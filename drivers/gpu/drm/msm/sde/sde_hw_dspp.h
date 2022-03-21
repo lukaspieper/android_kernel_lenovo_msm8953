@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,6 +12,8 @@
 
 #ifndef _SDE_HW_DSPP_H
 #define _SDE_HW_DSPP_H
+
+#include "sde_hw_blk.h"
 
 struct sde_hw_dspp;
 
@@ -36,18 +38,25 @@ struct sde_hw_dspp_ops {
 	void (*read_histogram)(struct sde_hw_dspp *ctx, void *cfg);
 
 	/**
-	 * update_igc - update dspp igc
+	 * lock_histogram - lock dspp histogram buffer
 	 * @ctx: Pointer to dspp context
 	 * @cfg: Pointer to configuration
 	 */
-	void (*update_igc)(struct sde_hw_dspp *ctx, void *cfg);
+	void (*lock_histogram)(struct sde_hw_dspp *ctx, void *cfg);
 
 	/**
-	 * setup_pa - setup dspp pa
+	 * setup_igc - update dspp igc
 	 * @ctx: Pointer to dspp context
 	 * @cfg: Pointer to configuration
 	 */
-	void (*setup_pa)(struct sde_hw_dspp *dspp, void *cfg);
+	void (*setup_igc)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * setup_pa_hsic - setup dspp pa hsic
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 */
+	void (*setup_pa_hsic)(struct sde_hw_dspp *dspp, void *cfg);
 
 	/**
 	 * setup_pcc - setup dspp pcc
@@ -64,18 +73,39 @@ struct sde_hw_dspp_ops {
 	void (*setup_sharpening)(struct sde_hw_dspp *ctx, void *cfg);
 
 	/**
-	 * setup_pa_memcolor - setup dspp memcolor
+	 * setup_pa_memcol_skin - setup dspp memcolor skin
 	 * @ctx: Pointer to dspp context
 	 * @cfg: Pointer to configuration
 	 */
-	void (*setup_pa_memcolor)(struct sde_hw_dspp *ctx, void *cfg);
+	void (*setup_pa_memcol_skin)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * setup_pa_memcol_sky - setup dspp memcolor sky
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 */
+	void (*setup_pa_memcol_sky)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * setup_pa_memcol_foliage - setup dspp memcolor foliage
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 */
+	void (*setup_pa_memcol_foliage)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * setup_pa_memcol_prot - setup dspp memcolor protection
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 */
+	void (*setup_pa_memcol_prot)(struct sde_hw_dspp *ctx, void *cfg);
 
 	/**
 	 * setup_sixzone - setup dspp six zone
 	 * @ctx: Pointer to dspp context
 	 * @cfg: Pointer to configuration
 	 */
-	void (*setup_sixzone)(struct sde_hw_dspp *dspp);
+	void (*setup_sixzone)(struct sde_hw_dspp *dspp, void *cfg);
 
 	/**
 	 * setup_danger_safe - setup danger safe LUTS
@@ -83,28 +113,75 @@ struct sde_hw_dspp_ops {
 	 * @cfg: Pointer to configuration
 	 */
 	void (*setup_danger_safe)(struct sde_hw_dspp *ctx, void *cfg);
+
 	/**
-	 * setup_dither - setup dspp dither
+	 * setup_pa_dither - setup dspp PA dither
 	 * @ctx: Pointer to dspp context
 	 * @cfg: Pointer to configuration
 	 */
-	void (*setup_dither)(struct sde_hw_dspp *ctx, void *cfg);
+	void (*setup_pa_dither)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * setup_vlut - setup dspp PA VLUT
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 */
+	void (*setup_vlut)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * setup_gc - update dspp gc
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 */
+	void (*setup_gc)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * setup_gamut - update dspp gamut
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 */
+	void (*setup_gamut)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * validate_ad - check if ad property can be set
+	 * @ctx: Pointer to dspp context
+	 * @prop: Pointer to ad property being validated
+	 */
+	int (*validate_ad)(struct sde_hw_dspp *ctx, u32 *prop);
+
+	/**
+	 * setup_ad - update the ad property
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to ad configuration
+	 */
+	void (*setup_ad)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * ad_read_intr_resp - function to get interrupt response for ad
+	 * @event: Event for which response needs to be read
+	 * @resp_in: Pointer to u32 where resp ad4 input value is dumped.
+	 * @resp_out: Pointer to u32 where resp ad4 output value is dumped.
+	 */
+	void (*ad_read_intr_resp)(struct sde_hw_dspp *ctx, u32 event,
+			u32 *resp_in, u32 *resp_out);
+
 };
 
 /**
  * struct sde_hw_dspp - dspp description
- * @base_off:     MDP register mapped offset
- * @blk_off:      DSPP offset relative to mdss offset
- * @length        Length of register block offset
- * @hwversion     Mdss hw version number
- * @idx:          DSPP index
- * @dspp_hw_cap:  Pointer to layer_cfg
- * @highest_bank_bit:
- * @ops:          Pointer to operations possible for this dspp
+ * @base: Hardware block base structure
+ * @hw: Block hardware details
+ * @hw_top: Block hardware top details
+ * @idx: DSPP index
+ * @cap: Pointer to layer_cfg
+ * @ops: Pointer to operations possible for this DSPP
  */
 struct sde_hw_dspp {
-	/* base */
-	 struct sde_hw_blk_reg_map hw;
+	struct sde_hw_blk base;
+	struct sde_hw_blk_reg_map hw;
+
+	/* dspp top */
+	struct sde_hw_blk_reg_map hw_top;
 
 	/* dspp */
 	enum sde_dspp idx;
@@ -115,10 +192,21 @@ struct sde_hw_dspp {
 };
 
 /**
+ * sde_hw_dspp - convert base object sde_hw_base to container
+ * @hw: Pointer to base hardware block
+ * return: Pointer to hardware block container
+ */
+static inline struct sde_hw_dspp *to_sde_hw_dspp(struct sde_hw_blk *hw)
+{
+	return container_of(hw, struct sde_hw_dspp, base);
+}
+
+/**
  * sde_hw_dspp_init - initializes the dspp hw driver object.
  * should be called once before accessing every dspp.
  * @idx:  DSPP index for which driver object is required
  * @addr: Mapped register io address of MDP
+ * @Return: pointer to structure or ERR_PTR
  */
 struct sde_hw_dspp *sde_hw_dspp_init(enum sde_dspp idx,
 			void __iomem *addr,

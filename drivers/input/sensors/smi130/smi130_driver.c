@@ -2914,6 +2914,7 @@ static ssize_t smi130_store_reg_val(struct device *dev
 	struct smi_client_data *client_data = input_get_drvdata(input);
 	ssize_t ret;
 	u8 reg_data[32] = {0};
+
 	int i, j, status, digit;
 
 	if (client_data == NULL) {

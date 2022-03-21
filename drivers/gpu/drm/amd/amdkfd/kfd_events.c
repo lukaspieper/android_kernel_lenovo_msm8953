@@ -177,9 +177,9 @@ static bool allocate_event_notification_slot(struct file *devkfd,
 	bool ret;
 
 	ret = allocate_free_slot(p, page, signal_slot_index);
-	if (ret == false) {
+	if (!ret) {
 		ret = allocate_signal_page(devkfd, p);
-		if (ret == true)
+		if (ret)
 			ret = allocate_free_slot(p, page, signal_slot_index);
 	}
 
@@ -739,8 +739,10 @@ int kfd_wait_on_events(struct kfd_process *p,
 		struct kfd_event_data event_data;
 
 		if (copy_from_user(&event_data, &events[i],
-				sizeof(struct kfd_event_data)))
+				sizeof(struct kfd_event_data))) {
+			ret = -EFAULT;
 			goto fail;
+		}
 
 		ret = init_event_waiter(p, &event_waiters[i],
 				event_data.event_id, i);

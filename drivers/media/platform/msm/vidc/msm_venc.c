@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,57 +15,40 @@
 #include "msm_vidc_common.h"
 #include "vidc_hfi_api.h"
 #include "msm_vidc_debug.h"
-#include "msm_vidc_dcvs.h"
+#include "msm_vidc_clocks.h"
 
 #define MSM_VENC_DVC_NAME "msm_venc_8974"
-#define MIN_NUM_OUTPUT_BUFFERS 4
-#define MIN_NUM_CAPTURE_BUFFERS 4
 #define MIN_BIT_RATE 32000
 #define MAX_BIT_RATE 300000000
 #define DEFAULT_BIT_RATE 64000
-#define BIT_RATE_STEP 100
+#define BIT_RATE_STEP 1
 #define DEFAULT_FRAME_RATE 15
-#define MAX_OPERATING_FRAME_RATE (300 << 16)
 #define OPERATING_FRAME_RATE_STEP (1 << 16)
+#define MIN_FRAME_QUALITY 0
+#define MAX_FRAME_QUALITY 100
+#define DEFAULT_FRAME_QUALITY 80
+#define FRAME_QUALITY_STEP 1
+#define MIN_GRID_DIMENSION 512
+#define MAX_GRID_DIMENSION 8192
+#define DEFAULT_GRID_DIMENSION 512
+#define GRID_DIMENSION_STEP 256
 #define MAX_SLICE_BYTE_SIZE ((MAX_BIT_RATE)>>3)
 #define MIN_SLICE_BYTE_SIZE 512
 #define MAX_SLICE_MB_SIZE ((4096 * 2304) >> 8)
-#define I_FRAME_QP 26
-#define P_FRAME_QP 28
-#define B_FRAME_QP 30
+#define I_FRAME_QP 127
+#define P_FRAME_QP 127
+#define B_FRAME_QP 127
 #define MAX_INTRA_REFRESH_MBS ((4096 * 2304) >> 8)
 #define MAX_NUM_B_FRAMES 4
 #define MAX_LTR_FRAME_COUNT 10
 #define MAX_HYBRID_HIER_P_LAYERS 6
 
 #define L_MODE V4L2_MPEG_VIDEO_H264_LOOP_FILTER_MODE_DISABLED_AT_SLICE_BOUNDARY
-#define CODING V4L2_MPEG_VIDEO_MPEG4_PROFILE_ADVANCED_CODING_EFFICIENCY
-#define BITSTREAM_RESTRICT_ENABLED \
-	V4L2_MPEG_VIDC_VIDEO_H264_VUI_BITSTREAM_RESTRICT_ENABLED
-#define BITSTREAM_RESTRICT_DISABLED \
-	V4L2_MPEG_VIDC_VIDEO_H264_VUI_BITSTREAM_RESTRICT_DISABLED
 #define MIN_TIME_RESOLUTION 1
 #define MAX_TIME_RESOLUTION 0xFFFFFF
 #define DEFAULT_TIME_RESOLUTION 0x7530
-
-/*
- * Default 601 to 709 conversion coefficients for resolution: 176x144 negative
- * coeffs are converted to s4.9 format (e.g. -22 converted to ((1 << 13) - 22)
- * 3x3 transformation matrix coefficients in s4.9 fixed point format
- */
-static u32 vpe_csc_601_to_709_matrix_coeff[HAL_MAX_MATRIX_COEFFS] = {
-	470, 8170, 8148, 0, 490, 50, 0, 34, 483
-};
-
-/* offset coefficients in s9 fixed point format */
-static u32 vpe_csc_601_to_709_bias_coeff[HAL_MAX_BIAS_COEFFS] = {
-	34, 0, 4
-};
-
-/* clamping value for Y/U/V([min,max] for Y/U/V) */
-static u32 vpe_csc_601_to_709_limit_coeff[HAL_MAX_LIMIT_COEFFS] = {
-	16, 235, 16, 240, 16, 240
-};
+#define MIN_NUM_ENC_OUTPUT_BUFFERS 4
+#define MIN_NUM_ENC_CAPTURE_BUFFERS 5
 
 static const char *const mpeg_video_rate_control[] = {
 	"No Rate Control",
@@ -75,6 +58,7 @@ static const char *const mpeg_video_rate_control[] = {
 	"CBR CFR",
 	"MBR CFR",
 	"MBR VFR",
+	"CQ",
 	NULL
 };
 
@@ -86,34 +70,19 @@ static const char *const mpeg_video_rotation[] = {
 	NULL
 };
 
+static const char *const mpeg_video_flip[] = {
+	"No Flip",
+	"Horizontal Flip",
+	"Vertical Flip",
+	"Both",
+	NULL
+};
+
 static const char *const h264_video_entropy_cabac_model[] = {
 	"Model 0",
 	"Model 1",
 	"Model 2",
 	NULL
-};
-
-static const char *const h263_level[] = {
-	"1.0",
-	"2.0",
-	"3.0",
-	"4.0",
-	"4.5",
-	"5.0",
-	"6.0",
-	"7.0",
-};
-
-static const char *const h263_profile[] = {
-	"Baseline",
-	"H320 Coding",
-	"Backward Compatible",
-	"ISWV2",
-	"ISWV3",
-	"High Compression",
-	"Internet",
-	"Interlace",
-	"High Latency",
 };
 
 static const char *const hevc_tier_level[] = {
@@ -143,6 +112,18 @@ static const char *const hevc_tier_level[] = {
 	"High Tier Level 6",
 	"High Tier Level 6.1",
 	"High Tier Level 6.2",
+	"Level unknown",
+};
+
+static const char *const tme_profile[] = {
+	"0",
+	"1",
+	"2",
+	"3",
+};
+
+static const char *const tme_level[] = {
+	"Integer",
 };
 
 static const char *const hevc_profile[] = {
@@ -192,6 +173,15 @@ static const char *const iframe_sizes[] = {
 	"Unlimited"
 };
 
+static const char *const mpeg_video_stream_format[] = {
+	"NAL Format Start Codes",
+	"NAL Format One NAL Per Buffer",
+	"NAL Format One Byte Length",
+	"NAL Format Two Byte Length",
+	"NAL Format Four Byte Length",
+	NULL
+};
+
 static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_IDR_PERIOD,
@@ -216,6 +206,116 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.qmenu = NULL,
 	},
 	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP,
+		.name = "I Frame Quantization",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 127,
+		.default_value = I_FRAME_QP,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP,
+		.name = "P Frame Quantization",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 127,
+		.default_value = P_FRAME_QP,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP,
+		.name = "B Frame Quantization",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 127,
+		.default_value = B_FRAME_QP,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP_MIN,
+		.name = "I Frame Quantization Range Minimum",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 127,
+		.default_value = I_FRAME_QP,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP_MIN,
+		.name = "P Frame Quantization Range Minimum",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 127,
+		.default_value = P_FRAME_QP,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP_MIN,
+		.name = "B Frame Quantization Range Minimum",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 127,
+		.default_value = B_FRAME_QP,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP_MAX,
+		.name = "I Frame Quantization Range Maximum",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 127,
+		.default_value = I_FRAME_QP,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP_MAX,
+		.name = "P Frame Quantization Range Maximum",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 127,
+		.default_value = P_FRAME_QP,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP_MAX,
+		.name = "B Frame Quantization Range Maximum",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 127,
+		.default_value = B_FRAME_QP,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_QP_MASK,
+		.name = "QP mask for diff frame types",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 1,
+		.maximum = 7,
+		.default_value = 7,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+	},
+	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_NUM_B_FRAMES,
 		.name = "Intra Period for B frames",
 		.type = V4L2_CTRL_TYPE_INTEGER,
@@ -226,6 +326,31 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.menu_skip_mask = 0,
 		.qmenu = NULL,
 	},
+	{
+		.id = V4L2_CID_MIN_BUFFERS_FOR_CAPTURE,
+		.name = "CAPTURE Count",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = MIN_NUM_CAPTURE_BUFFERS,
+		.maximum = MAX_NUM_CAPTURE_BUFFERS,
+		.default_value = MIN_NUM_CAPTURE_BUFFERS,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+		.flags = V4L2_CTRL_FLAG_VOLATILE,
+	},
+	{
+		.id = V4L2_CID_MIN_BUFFERS_FOR_OUTPUT,
+		.name = "OUTPUT Count",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = MIN_NUM_OUTPUT_BUFFERS,
+		.maximum = MAX_NUM_OUTPUT_BUFFERS,
+		.default_value = MIN_NUM_OUTPUT_BUFFERS,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+		.flags = V4L2_CTRL_FLAG_VOLATILE,
+	},
+
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_REQUEST_IFRAME,
 		.name = "Request I Frame",
@@ -242,7 +367,7 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.name = "Video Framerate and Bitrate Control",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.minimum = V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_OFF,
-		.maximum = V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_MBR_VFR,
+		.maximum = V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CQ,
 		.default_value = V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_OFF,
 		.step = 0,
 		.menu_skip_mask = ~(
@@ -252,23 +377,33 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		(1 << V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_VFR) |
 		(1 << V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_CFR) |
 		(1 << V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_MBR_CFR) |
-		(1 << V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_MBR_VFR)
+		(1 << V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_MBR_VFR) |
+		(1 << V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CQ)
 		),
 		.qmenu = mpeg_video_rate_control,
 	},
 	{
-		.id = V4L2_CID_MPEG_VIDEO_BITRATE_MODE,
-		.name = "Bitrate Control",
-		.type = V4L2_CTRL_TYPE_MENU,
-		.minimum = V4L2_MPEG_VIDEO_BITRATE_MODE_VBR,
-		.maximum = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR,
-		.default_value = V4L2_MPEG_VIDEO_BITRATE_MODE_VBR,
-		.step = 0,
-		.menu_skip_mask = ~(
-		(1 << V4L2_MPEG_VIDEO_BITRATE_MODE_VBR) |
-		(1 << V4L2_MPEG_VIDEO_BITRATE_MODE_CBR)
-		),
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_FRAME_QUALITY,
+		.name = "Frame quality",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = MIN_FRAME_QUALITY,
+		.maximum = MAX_FRAME_QUALITY,
+		.default_value = DEFAULT_FRAME_QUALITY,
+		.step = FRAME_QUALITY_STEP,
+		.menu_skip_mask = 0,
 		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_IMG_GRID_DIMENSION,
+		.name = "Image grid",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = MIN_GRID_DIMENSION,
+		.maximum = MAX_GRID_DIMENSION,
+		.default_value = DEFAULT_GRID_DIMENSION,
+		.step = GRID_DIMENSION_STEP,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+		.flags = V4L2_CTRL_FLAG_VOLATILE,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDEO_BITRATE,
@@ -319,24 +454,6 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.qmenu = h264_video_entropy_cabac_model,
 	},
 	{
-		.id = V4L2_CID_MPEG_VIDEO_MPEG4_PROFILE,
-		.name = "MPEG4 Profile",
-		.type = V4L2_CTRL_TYPE_MENU,
-		.minimum = V4L2_MPEG_VIDEO_MPEG4_PROFILE_SIMPLE,
-		.maximum = CODING,
-		.default_value = V4L2_MPEG_VIDEO_MPEG4_PROFILE_SIMPLE,
-		.menu_skip_mask = 0,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_MPEG4_LEVEL,
-		.name = "MPEG4 Level",
-		.type = V4L2_CTRL_TYPE_MENU,
-		.minimum = V4L2_MPEG_VIDEO_MPEG4_LEVEL_0,
-		.maximum = V4L2_MPEG_VIDEO_MPEG4_LEVEL_5,
-		.default_value = V4L2_MPEG_VIDEO_MPEG4_LEVEL_0,
-		.menu_skip_mask = 0,
-	},
-	{
 		.id = V4L2_CID_MPEG_VIDEO_H264_PROFILE,
 		.name = "H264 Profile",
 		.type = V4L2_CTRL_TYPE_MENU,
@@ -350,60 +467,18 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.name = "H264 Level",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.minimum = V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
-		.maximum = V4L2_MPEG_VIDEO_H264_LEVEL_5_2,
-		.default_value = V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
+		.maximum = V4L2_MPEG_VIDEO_H264_LEVEL_UNKNOWN,
+		.default_value = V4L2_MPEG_VIDEO_H264_LEVEL_UNKNOWN,
 		.menu_skip_mask = 0,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_H263_PROFILE,
-		.name = "H263 Profile",
-		.type = V4L2_CTRL_TYPE_MENU,
-		.minimum = V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_BASELINE,
-		.maximum = V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_HIGHLATENCY,
-		.default_value = V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_BASELINE,
-		.menu_skip_mask = ~(
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_BASELINE) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_H320CODING) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_BACKWARDCOMPATIBLE) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_ISWV2) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_ISWV3) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_HIGHCOMPRESSION) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_INTERNET) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_INTERLACE) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_HIGHLATENCY)
-		),
-		.qmenu = h263_profile,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_H263_LEVEL,
-		.name = "H263 Level",
-		.type = V4L2_CTRL_TYPE_MENU,
-		.minimum = V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_1_0,
-		.maximum = V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_7_0,
-		.default_value = V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_1_0,
-		.menu_skip_mask = ~(
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_1_0) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_2_0) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_3_0) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_4_0) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_5_0) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_6_0) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_7_0)
-		),
-		.qmenu = h263_level,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_VP8_PROFILE_LEVEL,
 		.name = "VP8 Profile Level",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.minimum = V4L2_MPEG_VIDC_VIDEO_VP8_UNUSED,
-		.maximum = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_1,
+		.maximum = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_3,
 		.default_value = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_0,
-		.menu_skip_mask = ~(
-		(1 << V4L2_MPEG_VIDC_VIDEO_VP8_UNUSED) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_0) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_1)
-		),
+		.menu_skip_mask = 0,
 		.qmenu = vp8_profile_level,
 	},
 	{
@@ -425,9 +500,9 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.name = "HEVC Tier and Level",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.minimum = V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_1,
-		.maximum = V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_5_2,
+		.maximum = V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_UNKNOWN,
 		.default_value =
-			V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_1,
+			V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_UNKNOWN,
 		.menu_skip_mask = ~(
 		(1 << V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_1) |
 		(1 << V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_2) |
@@ -447,9 +522,50 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		(1 << V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_4) |
 		(1 << V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_4_1) |
 		(1 << V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_5) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_5_1)
+		(1 << V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_5_1) |
+		(1 << V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_UNKNOWN)
 		),
 		.qmenu = hevc_tier_level,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_TME_PROFILE,
+		.name = "TME Profile",
+		.type = V4L2_CTRL_TYPE_MENU,
+		.minimum = V4L2_MPEG_VIDC_VIDEO_TME_PROFILE_0,
+		.maximum = V4L2_MPEG_VIDC_VIDEO_TME_PROFILE_3,
+		.default_value =
+			V4L2_MPEG_VIDC_VIDEO_TME_PROFILE_0,
+		.menu_skip_mask = ~(
+		(1 << V4L2_MPEG_VIDC_VIDEO_TME_PROFILE_0) |
+		(1 << V4L2_MPEG_VIDC_VIDEO_TME_PROFILE_1) |
+		(1 << V4L2_MPEG_VIDC_VIDEO_TME_PROFILE_2) |
+		(1 << V4L2_MPEG_VIDC_VIDEO_TME_PROFILE_3)
+		),
+		.qmenu = tme_profile,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_TME_LEVEL,
+		.name = "TME Level",
+		.type = V4L2_CTRL_TYPE_MENU,
+		.minimum = V4L2_MPEG_VIDC_VIDEO_TME_LEVEL_INTEGER,
+		.maximum = V4L2_MPEG_VIDC_VIDEO_TME_LEVEL_INTEGER,
+		.default_value = V4L2_MPEG_VIDC_VIDEO_TME_LEVEL_INTEGER,
+		.menu_skip_mask =  ~(
+		(1 << V4L2_MPEG_VIDC_VIDEO_TME_LEVEL_INTEGER)
+		),
+		.qmenu = tme_level,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_TME_PAYLOAD_VERSION,
+		.name = "TME Payload Version",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 0,
+		.maximum = 0xFFFFFFF,
+		.default_value = 0,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.flags = V4L2_CTRL_FLAG_READ_ONLY,
+		.qmenu = NULL,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_ROTATION,
@@ -467,203 +583,16 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.qmenu = mpeg_video_rotation,
 	},
 	{
-		.id = V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP,
-		.name = "H264 I Frame Quantization",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = 127,
-		.default_value = I_FRAME_QP,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_H264_P_FRAME_QP,
-		.name = "H264 P Frame Quantization",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = 127,
-		.default_value = P_FRAME_QP,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_H264_B_FRAME_QP,
-		.name = "H264 B Frame Quantization",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = 127,
-		.default_value = B_FRAME_QP,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_H263_I_FRAME_QP,
-		.name = "H263 I Frame Quantization",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 31,
-		.default_value = I_FRAME_QP,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_H263_P_FRAME_QP,
-		.name = "H263 P Frame Quantization",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 31,
-		.default_value = P_FRAME_QP,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_H263_B_FRAME_QP,
-		.name = "H263 B Frame Quantization",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 31,
-		.default_value = B_FRAME_QP,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_VPX_I_FRAME_QP,
-		.name = "VPX I Frame Quantization",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = 127,
-		.default_value = I_FRAME_QP,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_VPX_P_FRAME_QP,
-		.name = "VPX P Frame Quantization",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = 127,
-		.default_value = P_FRAME_QP,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_H264_MIN_QP,
-		.name = "H264 Minimum QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 51,
-		.default_value = 1,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_H264_MAX_QP,
-		.name = "H264 Maximum QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 51,
-		.default_value = 51,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_VPX_MIN_QP,
-		.name = "VPX Minimum QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = 127,
-		.default_value = 0,
-		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_VPX_MAX_QP,
-		.name = "VPX Maximum QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = 127,
-		.default_value = 127,
-		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_VP8_MIN_QP,
-		.name = "VP8 Minimum QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 128,
-		.default_value = 1,
-		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_VP8_MAX_QP,
-		.name = "VP8 Maximum QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 128,
-		.default_value = 128,
-		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_MPEG4_MIN_QP,
-		.name = "MPEG4 Minimum QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 31,
-		.default_value = 1,
-		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_MPEG4_MAX_QP,
-		.name = "MPEG4 Maximum QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 31,
-		.default_value = 31,
-		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_MIN_QP_PACKED,
-		.name = "H264 Minimum QP PACKED",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0x00010101,
-		.maximum = 0x00333333,
-		.default_value = 0x00010101,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_MAX_QP_PACKED,
-		.name = "H264 Maximum QP PACKED",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0x00010101,
-		.maximum = 0x00333333,
-		.default_value = 0x00333333,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
 		.id = V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE,
 		.name = "Slice Mode",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.minimum = V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE,
-		.maximum = V4L2_MPEG_VIDEO_MULTI_SLICE_GOB,
+		.maximum = V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_BYTES,
 		.default_value = V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE,
 		.menu_skip_mask = ~(
 		(1 << V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE) |
 		(1 << V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB) |
-		(1 << V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_BYTES) |
-		(1 << V4L2_MPEG_VIDEO_MULTI_SLICE_GOB)
+		(1 << V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_BYTES)
 		),
 	},
 	{
@@ -680,17 +609,6 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 	{
 		.id = V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_MB,
 		.name = "Slice MB Size",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = MAX_SLICE_MB_SIZE,
-		.default_value = 1,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDEO_MULTI_SLICE_GOB,
-		.name = "Slice GOB",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.minimum = 1,
 		.maximum = MAX_SLICE_MB_SIZE,
@@ -720,37 +638,13 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.menu_skip_mask = ~(
 		(1 << V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_NONE) |
 		(1 << V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_CYCLIC) |
-		(1 << V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_ADAPTIVE) |
-		(1 << V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_CYCLIC_ADAPTIVE) |
 		(1 << V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_RANDOM)
 		),
 		.qmenu = intra_refresh_modes,
 	},
 	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS,
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_IR_MBS,
 		.name = "Intra Refresh AIR MBS",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = MAX_INTRA_REFRESH_MBS,
-		.default_value = 0,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF,
-		.name = "Intra Refresh AIR REF",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = MAX_INTRA_REFRESH_MBS,
-		.default_value = 0,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_CIR_MBS,
-		.name = "Intra Refresh CIR MBS",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.minimum = 0,
 		.maximum = MAX_INTRA_REFRESH_MBS,
@@ -799,12 +693,12 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.name = "Sequence Header Mode",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.minimum = V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE,
-		.maximum = V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_I_FRAME,
+		.maximum = V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME,
 		.default_value =
-			V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_I_FRAME,
+			V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME,
 		.menu_skip_mask = ~(
 		(1 << V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE) |
-		(1 << V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_I_FRAME)
+		(1 << V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME)
 		),
 	},
 	{
@@ -823,14 +717,12 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.name = "Extradata Type",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.minimum = V4L2_MPEG_VIDC_EXTRADATA_NONE,
-		.maximum = V4L2_MPEG_VIDC_EXTRADATA_PQ_INFO,
+		.maximum = V4L2_MPEG_VIDC_EXTRADATA_ENC_FRAME_QP,
 		.default_value = V4L2_MPEG_VIDC_EXTRADATA_NONE,
 		.menu_skip_mask = ~(
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_NONE) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_MB_QUANTIZATION) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_INTERLACE_VIDEO) |
-			(1 << V4L2_MPEG_VIDC_EXTRADATA_VC1_FRAMEDISP) |
-			(1 << V4L2_MPEG_VIDC_EXTRADATA_VC1_SEQDISP) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_TIMESTAMP) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_S3D_FRAME_PACKING) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_FRAME_RATE) |
@@ -845,42 +737,30 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_LTR) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_METADATA_MBI) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_YUV_STATS)|
-			(1 << V4L2_MPEG_VIDC_EXTRADATA_ROI_QP) |
+			(1 << V4L2_MPEG_VIDC_EXTRADATA_ROI_QP)|
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_PQ_INFO)
 			),
 		.qmenu = mpeg_video_vidc_extradata,
 	},
 	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO,
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_VUI_TIMING_INFO,
 		.name = "H264 VUI Timing Info",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
-		.minimum = V4L2_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO_DISABLED,
-		.maximum = V4L2_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO_ENABLED,
+		.minimum = V4L2_MPEG_VIDC_VIDEO_VUI_TIMING_INFO_DISABLED,
+		.maximum = V4L2_MPEG_VIDC_VIDEO_VUI_TIMING_INFO_ENABLED,
 		.default_value =
-			V4L2_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO_DISABLED,
+			V4L2_MPEG_VIDC_VIDEO_VUI_TIMING_INFO_DISABLED,
 		.step = 1,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_AU_DELIMITER,
-		.name = "H264 AU Delimiter",
+		.name = "AU Delimiter",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.minimum = V4L2_MPEG_VIDC_VIDEO_AU_DELIMITER_DISABLED,
 		.maximum = V4L2_MPEG_VIDC_VIDEO_AU_DELIMITER_ENABLED,
 		.step = 1,
 		.default_value =
 			V4L2_MPEG_VIDC_VIDEO_AU_DELIMITER_DISABLED,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_SET_PERF_LEVEL,
-		.name = "Encoder Performance Level",
-		.type = V4L2_CTRL_TYPE_MENU,
-		.minimum = V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL,
-		.maximum = V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO,
-		.default_value = V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL,
-		.menu_skip_mask = ~(
-			(1 << V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL) |
-			(1 << V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO)),
-		.qmenu = perf_level,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDEO_CYCLIC_INTRA_REFRESH_MB,
@@ -894,15 +774,6 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.qmenu = NULL,
 	},
 	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_H264_VUI_BITSTREAM_RESTRICT,
-		.name = "H264 VUI Timing Info",
-		.type = V4L2_CTRL_TYPE_BOOLEAN,
-		.minimum = BITSTREAM_RESTRICT_DISABLED,
-		.maximum = BITSTREAM_RESTRICT_ENABLED,
-		.default_value = BITSTREAM_RESTRICT_ENABLED,
-		.step = 1,
-	},
-	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_PRESERVE_TEXT_QUALITY,
 		.name = "Preserve Text Qualty",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
@@ -911,37 +782,6 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.default_value =
 			V4L2_MPEG_VIDC_VIDEO_PRESERVE_TEXT_QUALITY_DISABLED,
 		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE,
-		.name = "Deinterlace for encoder",
-		.type = V4L2_CTRL_TYPE_BOOLEAN,
-		.minimum = V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE_DISABLED,
-		.maximum = V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE_ENABLED,
-		.default_value = V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE_DISABLED,
-		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_MPEG4_TIME_RESOLUTION,
-		.name = "Vop time increment resolution",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = MIN_TIME_RESOLUTION,
-		.maximum = MAX_TIME_RESOLUTION,
-		.default_value = DEFAULT_TIME_RESOLUTION,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_REQUEST_SEQ_HEADER,
-		.name = "Request Seq Header",
-		.type = V4L2_CTRL_TYPE_BUTTON,
-		.minimum = 0,
-		.maximum = 0,
-		.default_value = 0,
-		.step = 0,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_USELTRFRAME,
@@ -994,21 +834,6 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.qmenu = NULL,
 	},
 	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_TIMESTAMP_MODE,
-		.name = "Encoder Timestamp Mode",
-		.type = V4L2_CTRL_TYPE_MENU,
-		.minimum =
-			V4L2_MPEG_VIDC_VIDEO_RATE_CONTROL_TIMESTAMP_MODE_HONOR,
-		.maximum =
-			V4L2_MPEG_VIDC_VIDEO_RATE_CONTROL_TIMESTAMP_MODE_IGNORE,
-		.default_value =
-			V4L2_MPEG_VIDC_VIDEO_RATE_CONTROL_TIMESTAMP_MODE_HONOR,
-		.menu_skip_mask = ~(
-		(1 << V4L2_MPEG_VIDC_VIDEO_RATE_CONTROL_TIMESTAMP_MODE_HONOR) |
-		(1 << V4L2_MPEG_VIDC_VIDEO_RATE_CONTROL_TIMESTAMP_MODE_IGNORE)),
-		.qmenu = timestamp_mode,
-	},
-	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_VPX_ERROR_RESILIENCE,
 		.name = "VP8 Error Resilience mode",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
@@ -1016,162 +841,6 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.maximum = V4L2_MPEG_VIDC_VIDEO_VPX_ERROR_RESILIENCE_ENABLED,
 		.default_value =
 			V4L2_MPEG_VIDC_VIDEO_VPX_ERROR_RESILIENCE_DISABLED,
-		.step = 1,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_ENABLE_INITIAL_QP,
-		.name = "Enable setting initial QP",
-		.type = V4L2_CTRL_TYPE_BITMASK,
-		.minimum = 0,
-		.maximum = V4L2_CID_MPEG_VIDC_VIDEO_ENABLE_INITIAL_QP_IFRAME |
-			V4L2_CID_MPEG_VIDC_VIDEO_ENABLE_INITIAL_QP_PFRAME |
-			V4L2_CID_MPEG_VIDC_VIDEO_ENABLE_INITIAL_QP_BFRAME,
-		.default_value = 0,
-		.step = 0,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_I_FRAME_QP,
-		.name = "Iframe initial QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 127,
-		.default_value = 1,
-		.step = 1,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_P_FRAME_QP,
-		.name = "Pframe initial QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 127,
-		.default_value = 1,
-		.step = 1,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_B_FRAME_QP,
-		.name = "Bframe initial QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 127,
-		.default_value = 1,
-		.step = 1,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP,
-		.name = "Iframe initial QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 51,
-		.default_value = 1,
-		.step = 1,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP,
-		.name = "Pframe initial QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 51,
-		.default_value = 1,
-		.step = 1,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP,
-		.name = "Bframe initial QP",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 51,
-		.default_value = 1,
-		.step = 1,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_X_RANGE,
-		.name = "I-Frame X coordinate search range",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 4,
-		.maximum = 128,
-		.default_value = 4,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_Y_RANGE,
-		.name = "I-Frame Y coordinate search range",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 4,
-		.maximum = 128,
-		.default_value = 4,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_PFRAME_X_RANGE,
-		.name = "P-Frame X coordinate search range",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 4,
-		.maximum = 128,
-		.default_value = 4,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_PFRAME_Y_RANGE,
-		.name = "P-Frame Y coordinate search range",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 4,
-		.maximum = 128,
-		.default_value = 4,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_BFRAME_X_RANGE,
-		.name = "B-Frame X coordinate search range",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 4,
-		.maximum = 128,
-		.default_value = 4,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_BFRAME_Y_RANGE,
-		.name = "B-Frame Y coordinate search range",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 4,
-		.maximum = 128,
-		.default_value = 4,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_H264_NAL_SVC,
-		.name = "Enable H264 SVC NAL",
-		.type = V4L2_CTRL_TYPE_BOOLEAN,
-		.minimum = V4L2_CID_MPEG_VIDC_VIDEO_H264_NAL_SVC_DISABLED,
-		.maximum = V4L2_CID_MPEG_VIDC_VIDEO_H264_NAL_SVC_ENABLED,
-		.default_value = V4L2_CID_MPEG_VIDC_VIDEO_H264_NAL_SVC_DISABLED,
-		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_PERF_MODE,
-		.name = "Set Encoder performance mode",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = V4L2_MPEG_VIDC_VIDEO_PERF_MAX_QUALITY,
-		.maximum = V4L2_MPEG_VIDC_VIDEO_PERF_POWER_SAVE,
-		.default_value = V4L2_MPEG_VIDC_VIDEO_PERF_MAX_QUALITY,
 		.step = 1,
 		.qmenu = NULL,
 	},
@@ -1194,20 +863,6 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.default_value = 0,
 		.step = 1,
 		.qmenu = NULL,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_MBI_STATISTICS_MODE,
-		.name = "MBI Statistics Mode",
-		.type = V4L2_CTRL_TYPE_MENU,
-		.minimum = V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_DEFAULT,
-		.maximum = V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_3,
-		.default_value = V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_DEFAULT,
-		.menu_skip_mask = ~(
-			(1 << V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_DEFAULT) |
-			(1 << V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_1) |
-			(1 << V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_2) |
-			(1 << V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_3)),
-		.qmenu = mbi_statistics,
 	},
 	{
 		.id = V4L2_CID_VIDC_QBUF_MODE,
@@ -1239,12 +894,22 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.qmenu = NULL,
 	},
 	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_CONFIG_QP,
-		.name = "Set frame level QP",
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_LAYER_ID,
+		.name = "Layer ID for different settings",
 		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 1,
-		.maximum = 127,
-		.default_value = 1,
+		.minimum = 0,
+		.maximum = MSM_VIDC_ALL_LAYER_ID,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_FRAME_QP,
+		.name = "Dynamic Frame QP",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 0,
+		.maximum = MSM_VIDC_ALL_LAYER_ID,
+		.default_value = 0,
 		.step = 1,
 		.qmenu = NULL,
 	},
@@ -1302,9 +967,18 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.name = "Set Encoder Operating rate",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.minimum = 0,
-		.maximum = MAX_OPERATING_FRAME_RATE,
+		.maximum = INT_MAX,
 		.default_value = 0,
-		.step = OPERATING_FRAME_RATE_STEP,
+		.step = 1,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_FRAME_RATE,
+		.name = "Set Encoder Frame rate",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 0,
+		.maximum = INT_MAX,
+		.default_value = 0,
+		.step = 1,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_VENC_BITRATE_TYPE,
@@ -1314,16 +988,6 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.maximum = V4L2_CID_MPEG_VIDC_VIDEO_VENC_BITRATE_ENABLE,
 		.default_value = V4L2_CID_MPEG_VIDC_VIDEO_VENC_BITRATE_ENABLE,
 		.step = 1,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_H264_PIC_ORDER_CNT,
-		.name = "Set H264 Picture Order Count",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = 0,
-		.maximum = 2,
-		.default_value = 0,
-		.step = 2,
-		.qmenu = NULL,
 	},
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC,
@@ -1359,6 +1023,15 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.minimum = 0,
 		.maximum = 2048,
 		.default_value = 0,
+		.step = 1,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_H264_TRANSFORM_8x8,
+		.name = "Transform 8x8",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.minimum = V4L2_MPEG_VIDC_VIDEO_H264_TRANSFORM_8x8_DISABLE,
+		.maximum = V4L2_MPEG_VIDC_VIDEO_H264_TRANSFORM_8x8_ENABLE,
+		.default_value = V4L2_MPEG_VIDC_VIDEO_H264_TRANSFORM_8x8_ENABLE,
 		.step = 1,
 	},
 	{
@@ -1401,15 +1074,6 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.qmenu = NULL,
 	},
 	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_H264_TRANSFORM_8x8,
-		.name = "Transform 8x8",
-		.type = V4L2_CTRL_TYPE_BOOLEAN,
-		.minimum = V4L2_MPEG_VIDC_VIDEO_H264_TRANSFORM_8x8_DISABLE,
-		.maximum = V4L2_MPEG_VIDC_VIDEO_H264_TRANSFORM_8x8_ENABLE,
-		.default_value = V4L2_MPEG_VIDC_VIDEO_H264_TRANSFORM_8x8_ENABLE,
-		.step = 1,
-	},
-	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_SIZE_TYPE,
 		.name = "Bounds of I-frame size",
 		.type = V4L2_CTRL_TYPE_MENU,
@@ -1423,38 +1087,192 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 			(1 << V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_SIZE_UNLIMITED)),
 		.qmenu = iframe_sizes,
 	},
+	{
+		.id = V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE,
+		.name = "Frame Rate based Rate Control",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.minimum = 0,
+		.maximum = 1,
+		.default_value = 0,
+		.step = 1,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_CUSTOM_MATRIX,
+		.name = "Enable/Disable CSC Custom Matrix",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.minimum = 0,
+		.maximum = 1,
+		.default_value = 0,
+		.step = 1,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_FLIP,
+		.name = "Flip",
+		.type = V4L2_CTRL_TYPE_MENU,
+		.minimum = V4L2_CID_MPEG_VIDC_VIDEO_FLIP_NONE,
+		.maximum = V4L2_CID_MPEG_VIDC_VIDEO_FLIP_BOTH,
+		.default_value = V4L2_CID_MPEG_VIDC_VIDEO_FLIP_NONE,
+		.menu_skip_mask = ~(
+		(1 << V4L2_CID_MPEG_VIDC_VIDEO_FLIP_NONE) |
+		(1 << V4L2_CID_MPEG_VIDC_VIDEO_FLIP_HORI) |
+		(1 << V4L2_CID_MPEG_VIDC_VIDEO_FLIP_VERT) |
+		(1 << V4L2_CID_MPEG_VIDC_VIDEO_FLIP_BOTH)
+		),
+		.qmenu = mpeg_video_flip,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_HDR_INFO,
+		.name = "Enable/Disable HDR INFO",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.minimum = V4L2_MPEG_VIDC_VENC_HDR_INFO_DISABLED,
+		.maximum = V4L2_MPEG_VIDC_VENC_HDR_INFO_ENABLED,
+		.default_value = V4L2_MPEG_VIDC_VENC_HDR_INFO_DISABLED,
+		.step = 1,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_00,
+		.name = "RGB PRIMARIES[0][0]",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_01,
+		.name = "RGB PRIMARIES[0][1]",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_10,
+		.name = "RGB PRIMARIES[1][0]",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_11,
+		.name = "RGB PRIMARIES[1][1]",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_20,
+		.name = "RGB PRIMARIES[2][0]",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_21,
+		.name = "RGB PRIMARIES[2][1]",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_WHITEPOINT_X,
+		.name = "WHITE POINT X",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_WHITEPOINT_Y,
+		.name = "WHITE POINT Y",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_MAX_DISP_LUM,
+		.name = "MAX DISPLAY LUMINANCE",
+		.type =  V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_MIN_DISP_LUM,
+		.name = "MIN DISPLAY LUMINANCE",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_MAX_CLL,
+		.name = "MAX CLL",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VENC_MAX_FLL,
+		.name = "MAX FLL",
+		.type = V4L2_CTRL_TYPE_U32,
+		.minimum = 0,
+		.maximum = UINT_MAX,
+		.default_value = 0,
+		.step = 1,
+		.qmenu = NULL,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_VIDEO_STREAM_FORMAT,
+		.name = "NAL Format",
+		.type = V4L2_CTRL_TYPE_MENU,
+		.minimum = V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_STARTCODES,
+		.maximum = V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_FOUR_BYTE_LENGTH,
+		.default_value = V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_STARTCODES,
+		.menu_skip_mask = ~(
+		(1 << V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_STARTCODES) |
+		(1 << V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_ONE_NAL_PER_BUFFER) |
+		(1 << V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_ONE_BYTE_LENGTH) |
+		(1 << V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_TWO_BYTE_LENGTH) |
+		(1 << V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_FOUR_BYTE_LENGTH)
+		),
+		.qmenu = mpeg_video_stream_format,
+	},
 };
 
 #define NUM_CTRLS ARRAY_SIZE(msm_venc_ctrls)
 
-static u32 get_frame_size_nv12(int plane, u32 height, u32 width)
-{
-	return VENUS_BUFFER_SIZE(COLOR_FMT_NV12, width, height);
-}
-
-static u32 get_frame_size_nv12_ubwc(int plane, u32 height, u32 width)
-{
-	return VENUS_BUFFER_SIZE(COLOR_FMT_NV12_UBWC, width, height);
-}
-
-static u32 get_frame_size_rgba(int plane, u32 height, u32 width)
-{
-	return VENUS_BUFFER_SIZE(COLOR_FMT_RGBA8888, width, height);
-}
-
-static u32 get_frame_size_rgba_ubwc(int plane, u32 height, u32 width)
-{
-	return VENUS_BUFFER_SIZE(COLOR_FMT_RGBA8888_UBWC, width, height);
-}
-
-static u32 get_frame_size_nv21(int plane, u32 height, u32 width)
-{
-	return VENUS_BUFFER_SIZE(COLOR_FMT_NV21, width, height);
-}
-
 static u32 get_frame_size_compressed(int plane, u32 height, u32 width)
 {
 	int sz = ALIGN(height, 32) * ALIGN(width, 32) * 3 / 2;
+
 	return ALIGN(sz, SZ_4K);
 }
 
@@ -1463,7 +1281,6 @@ static struct msm_vidc_format venc_formats[] = {
 		.name = "YCbCr Semiplanar 4:2:0",
 		.description = "Y/CbCr 4:2:0",
 		.fourcc = V4L2_PIX_FMT_NV12,
-		.num_planes = 1,
 		.get_frame_size = get_frame_size_nv12,
 		.type = OUTPUT_PORT,
 	},
@@ -1471,7 +1288,6 @@ static struct msm_vidc_format venc_formats[] = {
 		.name = "UBWC YCbCr Semiplanar 4:2:0",
 		.description = "UBWC Y/CbCr 4:2:0",
 		.fourcc = V4L2_PIX_FMT_NV12_UBWC,
-		.num_planes = 1,
 		.get_frame_size = get_frame_size_nv12_ubwc,
 		.type = OUTPUT_PORT,
 	},
@@ -1479,39 +1295,13 @@ static struct msm_vidc_format venc_formats[] = {
 		.name = "RGBA 8:8:8:8",
 		.description = "RGBA 8:8:8:8",
 		.fourcc = V4L2_PIX_FMT_RGB32,
-		.num_planes = 1,
 		.get_frame_size = get_frame_size_rgba,
 		.type = OUTPUT_PORT,
-	},
-	{
-		.name = "UBWC RGBA 8:8:8:8",
-		.description = "UBWC RGBA 8:8:8:8",
-		.fourcc = V4L2_PIX_FMT_RGBA8888_UBWC,
-		.num_planes = 1,
-		.get_frame_size = get_frame_size_rgba_ubwc,
-		.type = OUTPUT_PORT,
-	},
-	{
-		.name = "Mpeg4",
-		.description = "Mpeg4 compressed format",
-		.fourcc = V4L2_PIX_FMT_MPEG4,
-		.num_planes = 1,
-		.get_frame_size = get_frame_size_compressed,
-		.type = CAPTURE_PORT,
-	},
-	{
-		.name = "H263",
-		.description = "H263 compressed format",
-		.fourcc = V4L2_PIX_FMT_H263,
-		.num_planes = 1,
-		.get_frame_size = get_frame_size_compressed,
-		.type = CAPTURE_PORT,
 	},
 	{
 		.name = "H264",
 		.description = "H264 compressed format",
 		.fourcc = V4L2_PIX_FMT_H264,
-		.num_planes = 1,
 		.get_frame_size = get_frame_size_compressed,
 		.type = CAPTURE_PORT,
 	},
@@ -1519,7 +1309,6 @@ static struct msm_vidc_format venc_formats[] = {
 		.name = "VP8",
 		.description = "VP8 compressed format",
 		.fourcc = V4L2_PIX_FMT_VP8,
-		.num_planes = 1,
 		.get_frame_size = get_frame_size_compressed,
 		.type = CAPTURE_PORT,
 	},
@@ -1527,7 +1316,6 @@ static struct msm_vidc_format venc_formats[] = {
 		.name = "HEVC",
 		.description = "HEVC compressed format",
 		.fourcc = V4L2_PIX_FMT_HEVC,
-		.num_planes = 1,
 		.get_frame_size = get_frame_size_compressed,
 		.type = CAPTURE_PORT,
 	},
@@ -1535,222 +1323,41 @@ static struct msm_vidc_format venc_formats[] = {
 		.name = "YCrCb Semiplanar 4:2:0",
 		.description = "Y/CrCb 4:2:0",
 		.fourcc = V4L2_PIX_FMT_NV21,
-		.num_planes = 1,
 		.get_frame_size = get_frame_size_nv21,
+		.type = OUTPUT_PORT,
+	},
+	{
+		.name = "TP10 UBWC 4:2:0",
+		.description = "TP10 UBWC 4:2:0",
+		.fourcc = V4L2_PIX_FMT_NV12_TP10_UBWC,
+		.get_frame_size = get_frame_size_tp10_ubwc,
+		.type = OUTPUT_PORT,
+	},
+	{
+		.name = "TME",
+		.description = "TME MBI format",
+		.fourcc = V4L2_PIX_FMT_TME,
+		.get_frame_size = get_frame_size_compressed,
+		.type = CAPTURE_PORT,
+	},
+	{
+		.name = "YCbCr Semiplanar 4:2:0 10bit",
+		.description = "Y/CbCr 4:2:0 10bit",
+		.fourcc = V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010_VENUS,
+		.get_frame_size = get_frame_size_p010,
+		.type = OUTPUT_PORT,
+	},
+	{
+		.name = "YCbCr Semiplanar 4:2:0 512 aligned",
+		.description = "Y/CbCr 4:2:0 512 aligned",
+		.fourcc = V4L2_PIX_FMT_NV12_512,
+		.get_frame_size = get_frame_size_nv12_512,
 		.type = OUTPUT_PORT,
 	},
 };
 
-static void msm_venc_update_plane_count(struct msm_vidc_inst *inst, int type)
-{
-	struct v4l2_ctrl *ctrl = NULL;
-	u32 extradata = 0;
-
-	if (!inst)
-		return;
-
-	inst->fmts[type].num_planes = 1;
-
-	ctrl = v4l2_ctrl_find(&inst->ctrl_handler,
-		V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA);
-
-	if (ctrl)
-		extradata = v4l2_ctrl_g_ctrl(ctrl);
-
-	if (type == CAPTURE_PORT) {
-		switch (extradata) {
-		case V4L2_MPEG_VIDC_EXTRADATA_MULTISLICE_INFO:
-		case V4L2_MPEG_VIDC_EXTRADATA_NUM_CONCEALED_MB:
-		case V4L2_MPEG_VIDC_EXTRADATA_METADATA_FILLER:
-		case V4L2_MPEG_VIDC_EXTRADATA_LTR:
-		case V4L2_MPEG_VIDC_EXTRADATA_METADATA_MBI:
-			inst->fmts[CAPTURE_PORT].num_planes = 2;
-		default:
-			break;
-		}
-	} else if (type == OUTPUT_PORT) {
-		switch (extradata) {
-		case V4L2_MPEG_VIDC_EXTRADATA_INPUT_CROP:
-		case V4L2_MPEG_VIDC_EXTRADATA_DIGITAL_ZOOM:
-		case V4L2_MPEG_VIDC_EXTRADATA_ASPECT_RATIO:
-		case V4L2_MPEG_VIDC_EXTRADATA_YUV_STATS:
-		case V4L2_MPEG_VIDC_EXTRADATA_ROI_QP:
-		case V4L2_MPEG_VIDC_EXTRADATA_PQ_INFO:
-			inst->fmts[OUTPUT_PORT].num_planes = 2;
-			break;
-		default:
-			break;
-		}
-	}
-}
-
-static int msm_venc_set_csc(struct msm_vidc_inst *inst);
-
-static int msm_venc_queue_setup(struct vb2_queue *q,
-				const struct v4l2_format *fmt,
-				unsigned int *num_buffers,
-				unsigned int *num_planes, unsigned int sizes[],
-				void *alloc_ctxs[])
-{
-	int i, temp, rc = 0;
-	struct msm_vidc_inst *inst;
-	struct hal_buffer_count_actual new_buf_count;
-	enum hal_property property_id;
-	struct hfi_device *hdev;
-	struct hal_buffer_requirements *buff_req;
-	u32 extra_idx = 0;
-	struct hal_buffer_requirements *buff_req_buffer = NULL;
-
-	if (!q || !q->drv_priv) {
-		dprintk(VIDC_ERR, "Invalid input\n");
-		return -EINVAL;
-	}
-	inst = q->drv_priv;
-
-	if (!inst || !inst->core || !inst->core->device) {
-		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
-		return -EINVAL;
-	}
-	hdev = inst->core->device;
-
-	rc = msm_comm_try_state(inst, MSM_VIDC_OPEN_DONE);
-	if (rc) {
-		dprintk(VIDC_ERR, "Failed to open instance\n");
-		return rc;
-	}
-
-	rc = msm_comm_try_get_bufreqs(inst);
-	if (rc) {
-		dprintk(VIDC_ERR,
-				"Failed to get buffer requirements: %d\n", rc);
-		return rc;
-	}
-
-	switch (q->type) {
-	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
-		*num_planes = 1;
-
-		buff_req = get_buff_req_buffer(inst, HAL_BUFFER_OUTPUT);
-		if (buff_req) {
-			/*
-			 * Pretend as if the FW itself is asking for additional
-			 * buffers, which are required for DCVS
-			 */
-			unsigned int min_req_buffers =
-				buff_req->buffer_count_min +
-				msm_dcvs_get_extra_buff_count(inst);
-			*num_buffers = max(*num_buffers, min_req_buffers);
-		}
-
-		if (*num_buffers < MIN_NUM_CAPTURE_BUFFERS ||
-				*num_buffers > VB2_MAX_FRAME) {
-			int temp = *num_buffers;
-
-			*num_buffers = clamp_val(*num_buffers,
-					MIN_NUM_CAPTURE_BUFFERS,
-					VB2_MAX_FRAME);
-			dprintk(VIDC_INFO,
-				"Changing buffer count on CAPTURE_MPLANE from %d to %d for best effort encoding\n",
-				temp, *num_buffers);
-		}
-
-		msm_venc_update_plane_count(inst, CAPTURE_PORT);
-		*num_planes = inst->fmts[CAPTURE_PORT].num_planes;
-
-		for (i = 0; i < *num_planes; i++) {
-			int extra_idx = EXTRADATA_IDX(*num_planes);
-
-			buff_req_buffer = get_buff_req_buffer(inst,
-					HAL_BUFFER_OUTPUT);
-
-			sizes[i] = buff_req_buffer ?
-				buff_req_buffer->buffer_size : 0;
-
-			if (extra_idx && i == extra_idx &&
-					extra_idx < VIDEO_MAX_PLANES) {
-				buff_req_buffer = get_buff_req_buffer(inst,
-						HAL_BUFFER_EXTRADATA_OUTPUT);
-				if (!buff_req_buffer) {
-					dprintk(VIDC_ERR,
-						"%s: failed - invalid buffer req\n",
-						__func__);
-					return -EINVAL;
-				}
-
-				sizes[i] = buff_req_buffer->buffer_size;
-			}
-		}
-
-		dprintk(VIDC_DBG, "actual output buffer count set to fw = %d\n",
-				*num_buffers);
-		property_id = HAL_PARAM_BUFFER_COUNT_ACTUAL;
-		new_buf_count.buffer_type = HAL_BUFFER_OUTPUT;
-		new_buf_count.buffer_count_actual = *num_buffers;
-		rc = call_hfi_op(hdev, session_set_property, inst->session,
-			property_id, &new_buf_count);
-
-		break;
-	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
-		*num_planes = 1;
-
-		*num_buffers = inst->buff_req.buffer[0].buffer_count_actual =
-			max(*num_buffers, inst->buff_req.buffer[0].
-				buffer_count_min);
-
-		temp = *num_buffers;
-
-		*num_buffers = clamp_val(*num_buffers,
-				MIN_NUM_OUTPUT_BUFFERS,
-				VB2_MAX_FRAME);
-		dprintk(VIDC_INFO,
-			"Changing buffer count on OUTPUT_MPLANE from %d to %d for best effort encoding\n",
-			temp, *num_buffers);
-
-		property_id = HAL_PARAM_BUFFER_COUNT_ACTUAL;
-		new_buf_count.buffer_type = HAL_BUFFER_INPUT;
-		new_buf_count.buffer_count_actual = *num_buffers;
-
-		dprintk(VIDC_DBG, "actual input buffer count set to fw = %d\n",
-				*num_buffers);
-		msm_venc_update_plane_count(inst, OUTPUT_PORT);
-		*num_planes = inst->fmts[OUTPUT_PORT].num_planes;
-
-		rc = call_hfi_op(hdev, session_set_property, inst->session,
-					property_id, &new_buf_count);
-		if (rc)
-			dprintk(VIDC_ERR, "failed to set count to fw\n");
-
-		dprintk(VIDC_DBG, "size = %d, alignment = %d, count = %d\n",
-				inst->buff_req.buffer[0].buffer_size,
-				inst->buff_req.buffer[0].buffer_alignment,
-				inst->buff_req.buffer[0].buffer_count_actual);
-		sizes[0] = inst->fmts[OUTPUT_PORT].get_frame_size(
-				0, inst->prop.height[OUTPUT_PORT],
-				inst->prop.width[OUTPUT_PORT]);
-
-		extra_idx =
-			EXTRADATA_IDX(inst->fmts[OUTPUT_PORT].num_planes);
-		if (extra_idx && (extra_idx < VIDEO_MAX_PLANES)) {
-			buff_req_buffer = get_buff_req_buffer(inst,
-				HAL_BUFFER_EXTRADATA_INPUT);
-			if (!buff_req_buffer) {
-				dprintk(VIDC_ERR,
-					"%s: failed - invalid buffer req\n",
-					__func__);
-				return -EINVAL;
-			}
-
-			sizes[extra_idx] = buff_req_buffer->buffer_size;
-		}
-
-		break;
-	default:
-		dprintk(VIDC_ERR, "Invalid q type = %d\n", q->type);
-		rc = -EINVAL;
-		break;
-	}
-	return rc;
-}
+static int msm_venc_set_csc(struct msm_vidc_inst *inst,
+					u32 color_primaries, u32 custom_matrix);
 
 static int msm_venc_toggle_hier_p(struct msm_vidc_inst *inst, int layers)
 {
@@ -1767,7 +1374,7 @@ static int msm_venc_toggle_hier_p(struct msm_vidc_inst *inst, int layers)
 	if (inst->fmts[CAPTURE_PORT].fourcc != V4L2_PIX_FMT_VP8)
 		return 0;
 
-	num_enh_layers = layers ? : 0;
+	num_enh_layers = layers ? layers : 0;
 	dprintk(VIDC_DBG, "%s Hier-P in firmware\n",
 			num_enh_layers ? "Enable" : "Disable");
 
@@ -1783,198 +1390,6 @@ static int msm_venc_toggle_hier_p(struct msm_vidc_inst *inst, int layers)
 	return rc;
 }
 
-static inline int msm_venc_power_save_mode_enable(struct msm_vidc_inst *inst)
-{
-	u32 rc = 0;
-	u32 prop_id = 0, power_save_min = 0, power_save_max = 0, inst_load = 0;
-	void *pdata = NULL;
-	struct hfi_device *hdev = NULL;
-	enum hal_perf_mode venc_mode;
-	enum load_calc_quirks quirks = LOAD_CALC_IGNORE_TURBO_LOAD |
-		LOAD_CALC_IGNORE_THUMBNAIL_LOAD;
-
-	if (!inst || !inst->core || !inst->core->device) {
-		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
-		return -EINVAL;
-	}
-
-	inst_load = msm_comm_get_inst_load(inst, quirks);
-	power_save_min = inst->capability.mbs_per_sec_power_save.min;
-	power_save_max = inst->capability.mbs_per_sec_power_save.max;
-
-	dprintk(VIDC_DBG,
-		"Power Save Mode min mb's %d max mb's %d inst load %d\n",
-		power_save_min, power_save_max, inst_load);
-
-	if (!power_save_min || !power_save_max)
-		return rc;
-
-	hdev = inst->core->device;
-	if (inst_load >= power_save_min) {
-		prop_id = HAL_CONFIG_VENC_PERF_MODE;
-		venc_mode = HAL_PERF_MODE_POWER_SAVE;
-		pdata = &venc_mode;
-		rc = call_hfi_op(hdev, session_set_property,
-				(void *)inst->session, prop_id, pdata);
-		if (rc) {
-			dprintk(VIDC_ERR,
-				"%s: Failed to set power save mode for inst: %pK\n",
-				__func__, inst);
-			goto fail_power_mode_set;
-		}
-		inst->flags |= VIDC_LOW_POWER;
-		msm_dcvs_enc_set_power_save_mode(inst, true);
-		dprintk(VIDC_INFO, "Power Save Mode set for inst: %pK\n", inst);
-	}
-
-fail_power_mode_set:
-	return rc;
-}
-
-static inline int start_streaming(struct msm_vidc_inst *inst)
-{
-	int rc = 0;
-
-	if (!inst || !inst->core || !inst->core->device) {
-		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
-		return -EINVAL;
-	}
-	msm_venc_power_save_mode_enable(inst);
-	if (inst->capability.pixelprocess_capabilities &
-		HAL_VIDEO_ENCODER_SCALING_CAPABILITY)
-		rc = msm_vidc_check_scaling_supported(inst);
-	if (rc) {
-		dprintk(VIDC_ERR, "H/w scaling is not in valid range\n");
-		return -EINVAL;
-	}
-	rc = msm_comm_try_get_bufreqs(inst);
-	if (rc) {
-		dprintk(VIDC_ERR,
-			"Failed to get Buffer Requirements : %d\n", rc);
-		goto fail_start;
-	}
-	rc = msm_comm_set_scratch_buffers(inst);
-	if (rc) {
-		dprintk(VIDC_ERR, "Failed to set scratch buffers: %d\n", rc);
-		goto fail_start;
-	}
-	rc = msm_comm_set_persist_buffers(inst);
-	if (rc) {
-		dprintk(VIDC_ERR, "Failed to set persist buffers: %d\n", rc);
-		goto fail_start;
-	}
-
-	msm_comm_scale_clocks_and_bus(inst);
-
-	rc = msm_comm_try_state(inst, MSM_VIDC_START_DONE);
-	if (rc) {
-		dprintk(VIDC_ERR,
-			"Failed to move inst: %pK to start done state\n", inst);
-		goto fail_start;
-	}
-
-	msm_comm_scale_clocks_and_bus(inst);
-
-	msm_dcvs_init_load(inst);
-
-fail_start:
-	return rc;
-}
-
-static int msm_venc_start_streaming(struct vb2_queue *q, unsigned int count)
-{
-	struct msm_vidc_inst *inst;
-	int rc = 0;
-	if (!q || !q->drv_priv) {
-		dprintk(VIDC_ERR, "Invalid input, q = %pK\n", q);
-		return -EINVAL;
-	}
-	inst = q->drv_priv;
-	dprintk(VIDC_DBG, "Streamon called on: %d capability for inst: %pK\n",
-		q->type, inst);
-	switch (q->type) {
-	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
-		if (inst->bufq[CAPTURE_PORT].vb2_bufq.streaming)
-			rc = start_streaming(inst);
-		break;
-	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
-		if (inst->bufq[OUTPUT_PORT].vb2_bufq.streaming)
-			rc = start_streaming(inst);
-		break;
-	default:
-		dprintk(VIDC_ERR, "Queue type is not supported: %d\n", q->type);
-		rc = -EINVAL;
-		goto stream_start_failed;
-	}
-	if (rc) {
-		dprintk(VIDC_ERR,
-			"Streamon failed on: %d capability for inst: %pK\n",
-			q->type, inst);
-		goto stream_start_failed;
-	}
-
-	rc = msm_comm_qbuf(inst, NULL);
-	if (rc) {
-		dprintk(VIDC_ERR,
-				"Failed to commit buffers queued before STREAM_ON to hardware: %d\n",
-				rc);
-		goto stream_start_failed;
-	}
-
-stream_start_failed:
-	return rc;
-}
-
-static void msm_venc_stop_streaming(struct vb2_queue *q)
-{
-	struct msm_vidc_inst *inst;
-	int rc = 0;
-	if (!q || !q->drv_priv) {
-		dprintk(VIDC_ERR, "%s - Invalid input, q = %pK\n", __func__, q);
-		return;
-	}
-
-	inst = q->drv_priv;
-	dprintk(VIDC_DBG, "Streamoff called on: %d capability\n", q->type);
-	switch (q->type) {
-	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
-		break;
-	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
-		rc = msm_comm_try_state(inst, MSM_VIDC_RELEASE_RESOURCES_DONE);
-		break;
-	default:
-		dprintk(VIDC_ERR, "Q-type is not supported: %d\n", q->type);
-		rc = -EINVAL;
-		break;
-	}
-
-	msm_comm_scale_clocks_and_bus(inst);
-
-	if (rc)
-		dprintk(VIDC_ERR,
-			"Failed to move inst: %pK, cap = %d to state: %d\n",
-			inst, q->type, MSM_VIDC_CLOSE_DONE);
-}
-
-static void msm_venc_buf_queue(struct vb2_buffer *vb)
-{
-	int rc = msm_comm_qbuf(vb2_get_drv_priv(vb->vb2_queue), vb);
-	if (rc)
-		dprintk(VIDC_ERR, "Failed to queue buffer: %d\n", rc);
-}
-
-static const struct vb2_ops msm_venc_vb2q_ops = {
-	.queue_setup = msm_venc_queue_setup,
-	.start_streaming = msm_venc_start_streaming,
-	.buf_queue = msm_venc_buf_queue,
-	.stop_streaming = msm_venc_stop_streaming,
-};
-
-const struct vb2_ops *msm_venc_get_vb2q_ops(void)
-{
-	return &msm_venc_vb2q_ops;
-}
-
 static struct v4l2_ctrl *get_ctrl_from_cluster(int id,
 		struct v4l2_ctrl **cluster, int ncontrols)
 {
@@ -1986,306 +1401,47 @@ static struct v4l2_ctrl *get_ctrl_from_cluster(int id,
 	return NULL;
 }
 
-/* Helper function to translate V4L2_* to HAL_* */
-static inline int venc_v4l2_to_hal(int id, int value)
+int msm_venc_s_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 {
-	switch (id) {
-	/* MPEG4 */
-	case V4L2_CID_MPEG_VIDEO_MPEG4_LEVEL:
-		switch (value) {
-		case V4L2_MPEG_VIDEO_MPEG4_LEVEL_0:
-			return HAL_MPEG4_LEVEL_0;
-		case V4L2_MPEG_VIDEO_MPEG4_LEVEL_0B:
-			return HAL_MPEG4_LEVEL_0b;
-		case V4L2_MPEG_VIDEO_MPEG4_LEVEL_1:
-			return HAL_MPEG4_LEVEL_1;
-		case V4L2_MPEG_VIDEO_MPEG4_LEVEL_2:
-			return HAL_MPEG4_LEVEL_2;
-		case V4L2_MPEG_VIDEO_MPEG4_LEVEL_3:
-			return HAL_MPEG4_LEVEL_3;
-		case V4L2_MPEG_VIDEO_MPEG4_LEVEL_4:
-			return HAL_MPEG4_LEVEL_4;
-		case V4L2_MPEG_VIDEO_MPEG4_LEVEL_5:
-			return HAL_MPEG4_LEVEL_5;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDEO_MPEG4_PROFILE:
-		switch (value) {
-		case V4L2_MPEG_VIDEO_MPEG4_PROFILE_SIMPLE:
-			return HAL_MPEG4_PROFILE_SIMPLE;
-		case V4L2_MPEG_VIDEO_MPEG4_PROFILE_ADVANCED_SIMPLE:
-			return HAL_MPEG4_PROFILE_ADVANCEDSIMPLE;
-		default:
-			goto unknown_value;
-		}
-	/* H264 */
-	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
-		switch (value) {
-		case V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE:
-			return HAL_H264_PROFILE_BASELINE;
-		case V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE:
-			return HAL_H264_PROFILE_CONSTRAINED_BASE;
-		case V4L2_MPEG_VIDEO_H264_PROFILE_MAIN:
-			return HAL_H264_PROFILE_MAIN;
-		case V4L2_MPEG_VIDEO_H264_PROFILE_EXTENDED:
-			return HAL_H264_PROFILE_EXTENDED;
-		case V4L2_MPEG_VIDEO_H264_PROFILE_HIGH:
-			return HAL_H264_PROFILE_HIGH;
-		case V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10:
-			return HAL_H264_PROFILE_HIGH10;
-		case V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_422:
-			return HAL_H264_PROFILE_HIGH422;
-		case V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_444_PREDICTIVE:
-			return HAL_H264_PROFILE_HIGH444;
-		case V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH:
-			return HAL_H264_PROFILE_CONSTRAINED_HIGH;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDEO_H264_LEVEL:
-		switch (value) {
-		case V4L2_MPEG_VIDEO_H264_LEVEL_1_0:
-			return HAL_H264_LEVEL_1;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_1B:
-			return HAL_H264_LEVEL_1b;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_1_1:
-			return HAL_H264_LEVEL_11;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_1_2:
-			return HAL_H264_LEVEL_12;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_1_3:
-			return HAL_H264_LEVEL_13;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_2_0:
-			return HAL_H264_LEVEL_2;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_2_1:
-			return HAL_H264_LEVEL_21;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_2_2:
-			return HAL_H264_LEVEL_22;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_3_0:
-			return HAL_H264_LEVEL_3;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_3_1:
-			return HAL_H264_LEVEL_31;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_3_2:
-			return HAL_H264_LEVEL_32;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_4_0:
-			return HAL_H264_LEVEL_4;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_4_1:
-			return HAL_H264_LEVEL_41;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_4_2:
-			return HAL_H264_LEVEL_42;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_5_0:
-			return HAL_H264_LEVEL_5;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_5_1:
-			return HAL_H264_LEVEL_51;
-		case V4L2_MPEG_VIDEO_H264_LEVEL_5_2:
-			return HAL_H264_LEVEL_52;
-		default:
-			goto unknown_value;
-		}
-	/* H263 */
-	case V4L2_CID_MPEG_VIDC_VIDEO_H263_PROFILE:
-		switch (value) {
-		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_BASELINE:
-			return HAL_H263_PROFILE_BASELINE;
-		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_H320CODING:
-			return HAL_H263_PROFILE_H320CODING;
-		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_BACKWARDCOMPATIBLE:
-			return HAL_H263_PROFILE_BACKWARDCOMPATIBLE;
-		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_ISWV2:
-			return HAL_H263_PROFILE_ISWV2;
-		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_ISWV3:
-			return HAL_H263_PROFILE_ISWV3;
-		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_HIGHCOMPRESSION:
-			return HAL_H263_PROFILE_HIGHCOMPRESSION;
-		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_INTERNET:
-			return HAL_H263_PROFILE_INTERNET;
-		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_INTERLACE:
-			return HAL_H263_PROFILE_INTERLACE;
-		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_HIGHLATENCY:
-			return HAL_H263_PROFILE_HIGHLATENCY;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE:
-		switch (value) {
-		case V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CAVLC:
-			return HAL_H264_ENTROPY_CAVLC;
-		case V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CABAC:
-			return HAL_H264_ENTROPY_CABAC;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDC_VIDEO_H264_CABAC_MODEL:
-		switch (value) {
-		case V4L2_CID_MPEG_VIDC_VIDEO_H264_CABAC_MODEL_0:
-			return HAL_H264_CABAC_MODEL_0;
-		case V4L2_CID_MPEG_VIDC_VIDEO_H264_CABAC_MODEL_1:
-			return HAL_H264_CABAC_MODEL_1;
-		case V4L2_CID_MPEG_VIDC_VIDEO_H264_CABAC_MODEL_2:
-			return HAL_H264_CABAC_MODEL_2;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDC_VIDEO_H263_LEVEL:
-		switch (value) {
-		case V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_1_0:
-			return HAL_H263_LEVEL_10;
-		case V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_2_0:
-			return HAL_H263_LEVEL_20;
-		case V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_3_0:
-			return HAL_H263_LEVEL_30;
-		case V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_4_0:
-			return HAL_H263_LEVEL_40;
-		case V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_4_5:
-			return HAL_H263_LEVEL_45;
-		case V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_5_0:
-			return HAL_H263_LEVEL_50;
-		case V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_6_0:
-			return HAL_H263_LEVEL_60;
-		case V4L2_MPEG_VIDC_VIDEO_H263_LEVEL_7_0:
-			return HAL_H263_LEVEL_70;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDC_VIDEO_VP8_PROFILE_LEVEL:
-		switch (value) {
-		case V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_0:
-			return HAL_VPX_PROFILE_VERSION_0;
-		case V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_1:
-			return HAL_VPX_PROFILE_VERSION_1;
-		case V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_2:
-			return HAL_VPX_PROFILE_VERSION_2;
-		case V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_3:
-			return HAL_VPX_PROFILE_VERSION_3;
-		case V4L2_MPEG_VIDC_VIDEO_VP8_UNUSED:
-			return HAL_VPX_PROFILE_UNUSED;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDC_VIDEO_HEVC_PROFILE:
-		switch (value) {
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN:
-			return HAL_HEVC_PROFILE_MAIN;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10:
-			return HAL_HEVC_PROFILE_MAIN10;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN_STILL_PIC:
-			return HAL_HEVC_PROFILE_MAIN_STILL_PIC;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDC_VIDEO_HEVC_TIER_LEVEL:
-		switch (value) {
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_1:
-			return HAL_HEVC_MAIN_TIER_LEVEL_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_2:
-			return HAL_HEVC_MAIN_TIER_LEVEL_2;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_2_1:
-			return HAL_HEVC_MAIN_TIER_LEVEL_2_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_3:
-			return HAL_HEVC_MAIN_TIER_LEVEL_3;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_3_1:
-			return HAL_HEVC_MAIN_TIER_LEVEL_3_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_4:
-			return HAL_HEVC_MAIN_TIER_LEVEL_4;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_4_1:
-			return HAL_HEVC_MAIN_TIER_LEVEL_4_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_5:
-			return HAL_HEVC_MAIN_TIER_LEVEL_5;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_5_1:
-			return HAL_HEVC_MAIN_TIER_LEVEL_5_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_5_2:
-			return HAL_HEVC_MAIN_TIER_LEVEL_5_2;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_6:
-			return HAL_HEVC_MAIN_TIER_LEVEL_6;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_6_1:
-			return HAL_HEVC_MAIN_TIER_LEVEL_6_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_6_2:
-			return HAL_HEVC_MAIN_TIER_LEVEL_6_2;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_1:
-			return HAL_HEVC_HIGH_TIER_LEVEL_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_2:
-			return HAL_HEVC_HIGH_TIER_LEVEL_2;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_2_1:
-			return HAL_HEVC_HIGH_TIER_LEVEL_2_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_3:
-			return HAL_HEVC_HIGH_TIER_LEVEL_3;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_3_1:
-			return HAL_HEVC_HIGH_TIER_LEVEL_3_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_4:
-			return HAL_HEVC_HIGH_TIER_LEVEL_4;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_4_1:
-			return HAL_HEVC_HIGH_TIER_LEVEL_4_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_5:
-			return HAL_HEVC_HIGH_TIER_LEVEL_5;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_5_1:
-			return HAL_HEVC_HIGH_TIER_LEVEL_5_1;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_5_2:
-			return HAL_HEVC_HIGH_TIER_LEVEL_5_2;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_6:
-			return HAL_HEVC_HIGH_TIER_LEVEL_6;
-		case V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_HIGH_TIER_LEVEL_6_1:
-			return HAL_HEVC_HIGH_TIER_LEVEL_6_1;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDC_VIDEO_ROTATION:
-		switch (value) {
-		case V4L2_CID_MPEG_VIDC_VIDEO_ROTATION_NONE:
-			return HAL_ROTATE_NONE;
-		case V4L2_CID_MPEG_VIDC_VIDEO_ROTATION_90:
-			return HAL_ROTATE_90;
-		case V4L2_CID_MPEG_VIDC_VIDEO_ROTATION_180:
-			return HAL_ROTATE_180;
-		case V4L2_CID_MPEG_VIDC_VIDEO_ROTATION_270:
-			return HAL_ROTATE_270;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDEO_H264_LOOP_FILTER_MODE:
-		switch (value) {
-		case V4L2_MPEG_VIDEO_H264_LOOP_FILTER_MODE_DISABLED:
-			return HAL_H264_DB_MODE_DISABLE;
-		case V4L2_MPEG_VIDEO_H264_LOOP_FILTER_MODE_ENABLED:
-			return HAL_H264_DB_MODE_ALL_BOUNDARY;
-		case L_MODE:
-			return HAL_H264_DB_MODE_SKIP_SLICE_BOUNDARY;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDC_VIDEO_MBI_STATISTICS_MODE:
-		switch (value) {
-		case V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_DEFAULT:
-			return HAL_STATISTICS_MODE_DEFAULT;
-		case V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_1:
-			return HAL_STATISTICS_MODE_1;
-		case V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_2:
-			return HAL_STATISTICS_MODE_2;
-		case V4L2_CID_MPEG_VIDC_VIDEO_MBI_MODE_3:
-			return HAL_STATISTICS_MODE_3;
-		default:
-			goto unknown_value;
-		}
-	case V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_SIZE_TYPE:
-		switch (value) {
-		case V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_SIZE_DEFAULT:
-			return HAL_IFRAMESIZE_TYPE_DEFAULT;
-		case V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_SIZE_MEDIUM:
-			return HAL_IFRAMESIZE_TYPE_MEDIUM;
-		case V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_SIZE_HUGE:
-			return HAL_IFRAMESIZE_TYPE_HUGE;
-		case V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_SIZE_UNLIMITED:
-			return HAL_IFRAMESIZE_TYPE_UNLIMITED;
-		default:
-			goto unknown_value;
-		}
+	int rc = 0;
+	struct hal_request_iframe request_iframe;
+	struct hal_bitrate bitrate;
+	struct hal_profile_level profile_level;
+	struct hal_h264_entropy_control h264_entropy_control;
+	struct hal_intra_period intra_period;
+	struct hal_idr_period idr_period;
+	struct hal_intra_refresh intra_refresh;
+	struct hal_multi_slice_control multi_slice_control;
+	struct hal_h264_db_control h264_db_control;
+	struct hal_enable enable;
+	struct hal_quantization quant;
+	struct hal_preserve_text_quality preserve_text_quality;
+	u32 property_id = 0, property_val = 0;
+	void *pdata = NULL;
+	struct v4l2_ctrl *temp_ctrl = NULL;
+	struct hfi_device *hdev;
+	struct hal_extradata_enable extra;
+	struct hal_ltr_use use_ltr;
+	struct hal_ltr_mark mark_ltr;
+	struct hal_hybrid_hierp hyb_hierp;
+	u32 hier_p_layers = 0;
+	int max_hierp_layers;
+	int baselayerid = 0;
+	struct hal_video_signal_info signal_info = {0};
+	struct hal_vui_timing_info vui_timing_info = {0};
+	enum hal_iframesize_type iframesize_type = HAL_IFRAMESIZE_TYPE_DEFAULT;
+	u32 color_primaries, custom_matrix;
+	struct hal_nal_stream_format_select stream_format;
+	struct hal_heic_frame_quality frame_quality;
+	struct hal_heic_grid_enable grid_enable;
+
+	if (!inst || !inst->core || !inst->core->device) {
+		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
+		return -EINVAL;
 	}
+	hdev = inst->core->device;
 
-unknown_value:
-	dprintk(VIDC_WARN, "Unknown control (%x, %d)\n", id, value);
-	return -EINVAL;
-}
-
-/* Small helper macro for quickly getting a control and err checking */
+	/* Small helper macro for quickly getting a control and err checking */
 #define TRY_GET_CTRL(__ctrl_id) ({ \
 		struct v4l2_ctrl *__temp; \
 		__temp = get_ctrl_from_cluster( \
@@ -2296,111 +1452,16 @@ unknown_value:
 				#__ctrl_id, __ctrl_id); \
 			/* Clusters are hardcoded, if we can't find */ \
 			/* something then things are massively screwed up */ \
-			BUG_ON(1); \
+			MSM_VIDC_ERROR(1); \
 		} \
 		__temp; \
 	})
 
-static int msm_venc_validate_qp_value(struct msm_vidc_inst *inst,
-					struct v4l2_ctrl *ctrl)
-{
-	int rc = 0, min, max;
-	struct v4l2_ctrl *temp_ctrl = NULL;
-	int qp_value = ctrl->val;
-
-#define VALIDATE_BOUNDARIES(__min, __max, __val) ({\
-	int __rc = __val >= __min && \
-			__val <= __max; \
-	if (!__rc) \
-		dprintk(VIDC_ERR, "QP beyond range: min(%d) max(%d) val(%d)", \
-				__min, __max, __val); \
-	__rc; \
-})
-
-	switch (inst->fmts[CAPTURE_PORT].fourcc) {
-	case V4L2_PIX_FMT_VP8:
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_VPX_MAX_QP);
-		max = temp_ctrl->maximum;
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_VPX_MIN_QP);
-		min = temp_ctrl->minimum;
-		if (!VALIDATE_BOUNDARIES(min, max, qp_value))
-			rc = -EINVAL;
-		break;
-	case V4L2_PIX_FMT_H263:
-	case V4L2_PIX_FMT_MPEG4:
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MPEG4_MAX_QP);
-		max = temp_ctrl->maximum;
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MPEG4_MIN_QP);
-		min = temp_ctrl->minimum;
-		if (!VALIDATE_BOUNDARIES(min, max, qp_value))
-			rc = -EINVAL;
-		break;
-	case V4L2_PIX_FMT_H264:
-	case V4L2_PIX_FMT_HEVC:
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_MAX_QP);
-		max = temp_ctrl->maximum;
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_MIN_QP);
-		min = temp_ctrl->minimum;
-		if (!VALIDATE_BOUNDARIES(min, max, qp_value))
-			rc = -EINVAL;
-		break;
-	default:
-		dprintk(VIDC_ERR, "%s Invalid Codec\n", __func__);
-		return -EINVAL;
-	}
-	return rc;
-#undef VALIDATE_BOUNDARIES
-}
-
-
-static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
-{
-	int rc = 0;
-	struct hal_request_iframe request_iframe;
-	struct hal_bitrate bitrate;
-	struct hal_profile_level profile_level;
-	struct hal_h264_entropy_control h264_entropy_control;
-	struct hal_quantization quantization;
-	struct hal_intra_period intra_period;
-	struct hal_idr_period idr_period;
-	struct hal_operations operations;
-	struct hal_intra_refresh intra_refresh;
-	struct hal_multi_slice_control multi_slice_control;
-	struct hal_h264_db_control h264_db_control;
-	struct hal_enable enable;
-	struct hal_h264_vui_timing_info vui_timing_info;
-	struct hal_quantization_range qp_range;
-	struct hal_h264_vui_bitstream_restrc vui_bitstream_restrict;
-	struct hal_preserve_text_quality preserve_text_quality;
-	u32 property_id = 0, property_val = 0;
-	void *pdata = NULL;
-	struct v4l2_ctrl *temp_ctrl = NULL;
-	struct hfi_device *hdev;
-	struct hal_extradata_enable extra;
-	struct hal_mpeg4_time_resolution time_res;
-	struct hal_ltr_use use_ltr;
-	struct hal_ltr_mark mark_ltr;
-	struct hal_hybrid_hierp hyb_hierp;
-	u32 hier_p_layers = 0, hier_b_layers = 0, mbi_statistics_mode = 0;
-	enum hal_perf_mode venc_mode;
-	int max_hierp_layers;
-	int baselayerid = 0;
-	int frameqp = 0;
-	int pic_order_cnt = 0;
-	struct hal_video_signal_info signal_info = {0};
-	enum hal_iframesize_type iframesize_type = HAL_IFRAMESIZE_TYPE_DEFAULT;
-
-	if (!inst || !inst->core || !inst->core->device) {
-		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
-		return -EINVAL;
-	}
-	hdev = inst->core->device;
-
 	/*
-	* Unlock the control prior to setting to the hardware. Otherwise
-	* lower level code that attempts to do a get_ctrl() will end up
-	* deadlocking.
-	*/
+	 * Unlock the control prior to setting to the hardware. Otherwise
+	 * lower level code that attempts to do a get_ctrl() will end up
+	 * deadlocking.
+	 */
 	v4l2_ctrl_unlock(ctrl);
 
 	switch (ctrl->id) {
@@ -2425,7 +1486,6 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	case V4L2_CID_MPEG_VIDC_VIDEO_NUM_P_FRAMES:
 	{
 		int num_p, num_b;
-		u32 max_num_b_frames;
 
 		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_NUM_B_FRAMES);
 		num_b = temp_ctrl->val;
@@ -2438,15 +1498,13 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		else if (ctrl->id == V4L2_CID_MPEG_VIDC_VIDEO_NUM_B_FRAMES)
 			num_b = ctrl->val;
 
-		max_num_b_frames = num_b ? MAX_NUM_B_FRAMES : 0;
-		property_id = HAL_PARAM_VENC_MAX_NUM_B_FRAMES;
-		pdata = &max_num_b_frames;
-		rc = call_hfi_op(hdev, session_set_property,
-			(void *)inst->session, property_id, pdata);
-		if (rc) {
+		if ((num_b < inst->capability.bframe.min) ||
+			(num_b > inst->capability.bframe.max)) {
 			dprintk(VIDC_ERR,
-				"Failed : Setprop MAX_NUM_B_FRAMES %d\n",
-				rc);
+				"Error setting num b frames %d min, max supported is %d, %d\n",
+				num_b, inst->capability.bframe.min,
+				inst->capability.bframe.max);
+			rc = -ENOTSUPP;
 			break;
 		}
 
@@ -2454,18 +1512,6 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		intra_period.pframes = num_p;
 		intra_period.bframes = num_b;
 
-		/*
-		 *Incase firmware does not have B-Frame support,
-		 *offload the b-frame count to p-frame to make up
-		 *for the requested Intraperiod
-		 */
-		if (!inst->capability.bframe.max) {
-			intra_period.pframes = num_p + num_b;
-			intra_period.bframes = 0;
-			dprintk(VIDC_DBG,
-				"No bframe support, changing pframe from %d to %d\n",
-				num_p, intra_period.pframes);
-		}
 		pdata = &intra_period;
 		break;
 	}
@@ -2475,66 +1521,63 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		pdata = &request_iframe;
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL:
-	case V4L2_CID_MPEG_VIDEO_BITRATE_MODE:
 	{
-		int final_mode = 0;
-		struct v4l2_ctrl update_ctrl = {.id = 0};
-
-		/* V4L2_CID_MPEG_VIDEO_BITRATE_MODE and _RATE_CONTROL
-		 * manipulate the same thing.  If one control's state
-		 * changes, try to mirror the state in the other control's
-		 * value */
-		if (ctrl->id == V4L2_CID_MPEG_VIDEO_BITRATE_MODE) {
-			if (ctrl->val == V4L2_MPEG_VIDEO_BITRATE_MODE_VBR) {
-				final_mode = HAL_RATE_CONTROL_VBR_CFR;
-				update_ctrl.val =
-				V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_VBR_CFR;
-			} else {/* ...if (ctrl->val == _BITRATE_MODE_CBR) */
-				final_mode = HAL_RATE_CONTROL_CBR_CFR;
-				update_ctrl.val =
-				V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_CFR;
-			}
-
-			update_ctrl.id = V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL;
-
-		} else if (ctrl->id == V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL) {
-			switch (ctrl->val) {
-			case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_OFF:
-			case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_VBR_VFR:
-			case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_VBR_CFR:
-				update_ctrl.val =
-					V4L2_MPEG_VIDEO_BITRATE_MODE_VBR;
-				break;
-			case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_VFR:
-			case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_CFR:
-			case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_MBR_CFR:
-			case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_MBR_VFR:
-				update_ctrl.val =
-					V4L2_MPEG_VIDEO_BITRATE_MODE_CBR;
-				break;
-			}
-
-			final_mode = ctrl->val;
-			update_ctrl.id = V4L2_CID_MPEG_VIDEO_BITRATE_MODE;
+		struct v4l2_ctrl *hybrid_hp = TRY_GET_CTRL(
+			V4L2_CID_MPEG_VIDC_VIDEO_HYBRID_HIERP_MODE);
+		if ((ctrl->val ==
+				V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_VFR
+			|| ctrl->val ==
+			 V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_VBR_VFR)
+			&& hybrid_hp->val) {
+			dprintk(VIDC_ERR,
+				"CBR_VFR/VBR_VFR not allowed with Hybrid HP\n");
+			rc = -ENOTSUPP;
+			break;
 		}
-
-		if (update_ctrl.id) {
-			temp_ctrl = TRY_GET_CTRL(update_ctrl.id);
-			temp_ctrl->val = update_ctrl.val;
+		if ((ctrl->val ==
+				V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CQ) &&
+			inst->fmts[CAPTURE_PORT].fourcc != V4L2_PIX_FMT_HEVC) {
+			dprintk(VIDC_ERR, "CQ supported only for HEVC\n");
+			rc = -ENOTSUPP;
+			break;
 		}
-
 		property_id = HAL_PARAM_VENC_RATE_CONTROL;
-		property_val = final_mode;
+		property_val = ctrl->val;
 		pdata = &property_val;
-
 		break;
 	}
 	case V4L2_CID_MPEG_VIDEO_BITRATE:
 	{
 		property_id = HAL_CONFIG_VENC_TARGET_BITRATE;
 		bitrate.bit_rate = ctrl->val;
-		bitrate.layer_id = 0;
+		bitrate.layer_id = MSM_VIDC_ALL_LAYER_ID;
 		pdata = &bitrate;
+		inst->clk_data.bitrate = ctrl->val;
+		break;
+	}
+	case V4L2_CID_MPEG_VIDC_VIDEO_FRAME_QUALITY:
+	{
+		property_id = HAL_CONFIG_HEIC_FRAME_QUALITY;
+		frame_quality.frame_quality = ctrl->val;
+		pdata = &frame_quality;
+		break;
+	}
+	case V4L2_CID_MPEG_VIDC_IMG_GRID_DIMENSION:
+	{
+		property_id = HAL_CONFIG_HEIC_GRID_ENABLE;
+		if (inst->fmts[CAPTURE_PORT].fourcc != V4L2_PIX_FMT_HEVC) {
+			dprintk(VIDC_ERR, "Grid is supported only for HEVC\n");
+			rc = -ENOTSUPP;
+			break;
+		}
+		if (ctrl->val == 0) {
+			dprintk(VIDC_ERR, "Dimension 0 is not supported\n");
+			rc = -ENOTSUPP;
+			break;
+		}
+		grid_enable.grid_enable = ctrl->val;
+		inst->img_grid_dimension = ctrl->val;
+		pdata = &grid_enable;
 		break;
 	}
 	case V4L2_CID_MPEG_VIDEO_BITRATE_PEAK:
@@ -2556,7 +1599,7 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 
 		property_id = HAL_CONFIG_VENC_MAX_BITRATE;
 		bitrate.bit_rate = ctrl->val;
-		bitrate.layer_id = 0;
+		bitrate.layer_id = MSM_VIDC_ALL_LAYER_ID;
 		pdata = &bitrate;
 		break;
 	}
@@ -2565,9 +1608,9 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 			V4L2_CID_MPEG_VIDC_VIDEO_H264_CABAC_MODEL);
 
 		property_id = HAL_PARAM_VENC_H264_ENTROPY_CONTROL;
-		h264_entropy_control.entropy_mode = venc_v4l2_to_hal(
+		h264_entropy_control.entropy_mode = msm_comm_v4l2_to_hal(
 			V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE, ctrl->val);
-		h264_entropy_control.cabac_model = venc_v4l2_to_hal(
+		h264_entropy_control.cabac_model = msm_comm_v4l2_to_hal(
 			V4L2_CID_MPEG_VIDC_VIDEO_H264_CABAC_MODEL,
 			temp_ctrl->val);
 		pdata = &h264_entropy_control;
@@ -2576,42 +1619,20 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE);
 
 		property_id = HAL_PARAM_VENC_H264_ENTROPY_CONTROL;
-		h264_entropy_control.cabac_model = venc_v4l2_to_hal(
+		h264_entropy_control.cabac_model = msm_comm_v4l2_to_hal(
 			V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE, ctrl->val);
-		h264_entropy_control.entropy_mode = venc_v4l2_to_hal(
+		h264_entropy_control.entropy_mode = msm_comm_v4l2_to_hal(
 			V4L2_CID_MPEG_VIDC_VIDEO_H264_CABAC_MODEL,
 			temp_ctrl->val);
 		pdata = &h264_entropy_control;
-		break;
-	case V4L2_CID_MPEG_VIDEO_MPEG4_PROFILE:
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MPEG4_LEVEL);
-
-		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
-		profile_level.profile = venc_v4l2_to_hal(ctrl->id,
-						ctrl->val);
-		profile_level.level = venc_v4l2_to_hal(
-				V4L2_CID_MPEG_VIDEO_MPEG4_LEVEL,
-				temp_ctrl->val);
-		pdata = &profile_level;
-		break;
-	case V4L2_CID_MPEG_VIDEO_MPEG4_LEVEL:
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MPEG4_PROFILE);
-
-		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
-		profile_level.level = venc_v4l2_to_hal(ctrl->id,
-							ctrl->val);
-		profile_level.profile = venc_v4l2_to_hal(
-				V4L2_CID_MPEG_VIDEO_MPEG4_PROFILE,
-				temp_ctrl->val);
-		pdata = &profile_level;
 		break;
 	case V4L2_CID_MPEG_VIDEO_H264_PROFILE:
 		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_LEVEL);
 
 		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
-		profile_level.profile = venc_v4l2_to_hal(ctrl->id,
+		profile_level.profile = msm_comm_v4l2_to_hal(ctrl->id,
 							ctrl->val);
-		profile_level.level = venc_v4l2_to_hal(
+		profile_level.level = msm_comm_v4l2_to_hal(
 				V4L2_CID_MPEG_VIDEO_H264_LEVEL,
 				temp_ctrl->val);
 		pdata = &profile_level;
@@ -2622,43 +1643,21 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_PROFILE);
 
 		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
-		profile_level.level = venc_v4l2_to_hal(ctrl->id,
+		profile_level.level = msm_comm_v4l2_to_hal(ctrl->id,
 							ctrl->val);
-		profile_level.profile = venc_v4l2_to_hal(
+		profile_level.profile = msm_comm_v4l2_to_hal(
 				V4L2_CID_MPEG_VIDEO_H264_PROFILE,
 				temp_ctrl->val);
 		pdata = &profile_level;
 		dprintk(VIDC_DBG, "\nLevel: %d\n",
 			   profile_level.level);
 		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_H263_PROFILE:
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_H263_LEVEL);
-
-		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
-		profile_level.profile = venc_v4l2_to_hal(ctrl->id,
-							ctrl->val);
-		profile_level.level = venc_v4l2_to_hal(
-				V4L2_CID_MPEG_VIDC_VIDEO_H263_LEVEL,
-				temp_ctrl->val);
-		pdata = &profile_level;
-		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_H263_LEVEL:
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_H263_PROFILE);
-
-		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
-		profile_level.level = venc_v4l2_to_hal(ctrl->id,
-							ctrl->val);
-		profile_level.profile = venc_v4l2_to_hal(
-				V4L2_CID_MPEG_VIDC_VIDEO_H263_PROFILE,
-				ctrl->val);
-		pdata = &profile_level;
-		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_VP8_PROFILE_LEVEL:
 		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
-		profile_level.profile = venc_v4l2_to_hal(
+		profile_level.profile = HAL_VP8_PROFILE_MAIN;
+		profile_level.level = msm_comm_v4l2_to_hal(
 				V4L2_CID_MPEG_VIDC_VIDEO_VP8_PROFILE_LEVEL,
 				ctrl->val);
-		profile_level.level = HAL_VPX_PROFILE_UNUSED;
 		pdata = &profile_level;
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_HEVC_PROFILE:
@@ -2666,9 +1665,9 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 			TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_HEVC_TIER_LEVEL);
 
 		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
-		profile_level.profile = venc_v4l2_to_hal(ctrl->id,
+		profile_level.profile = msm_comm_v4l2_to_hal(ctrl->id,
 							ctrl->val);
-		profile_level.level = venc_v4l2_to_hal(
+		profile_level.level = msm_comm_v4l2_to_hal(
 				V4L2_CID_MPEG_VIDC_VIDEO_HEVC_TIER_LEVEL,
 				temp_ctrl->val);
 		pdata = &profile_level;
@@ -2677,345 +1676,44 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_HEVC_PROFILE);
 
 		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
-		profile_level.level = venc_v4l2_to_hal(ctrl->id,
+		profile_level.level = msm_comm_v4l2_to_hal(ctrl->id,
 							ctrl->val);
-		profile_level.profile = venc_v4l2_to_hal(
+		profile_level.profile = msm_comm_v4l2_to_hal(
 				V4L2_CID_MPEG_VIDC_VIDEO_HEVC_PROFILE,
+				temp_ctrl->val);
+		pdata = &profile_level;
+		break;
+	case V4L2_CID_MPEG_VIDC_VIDEO_TME_PROFILE:
+		temp_ctrl =
+			TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_TME_LEVEL);
+
+		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
+		profile_level.profile = msm_comm_v4l2_to_hal(ctrl->id,
+							ctrl->val);
+		profile_level.level = msm_comm_v4l2_to_hal(
+				V4L2_CID_MPEG_VIDC_VIDEO_TME_LEVEL,
+				temp_ctrl->val);
+		pdata = &profile_level;
+		break;
+	case V4L2_CID_MPEG_VIDC_VIDEO_TME_LEVEL:
+		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_TME_PROFILE);
+
+		property_id = HAL_PARAM_PROFILE_LEVEL_CURRENT;
+		profile_level.level = msm_comm_v4l2_to_hal(ctrl->id,
+							ctrl->val);
+		profile_level.profile = msm_comm_v4l2_to_hal(
+				V4L2_CID_MPEG_VIDC_VIDEO_TME_PROFILE,
 				temp_ctrl->val);
 		pdata = &profile_level;
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_ROTATION:
 	{
-		struct v4l2_ctrl *deinterlace = NULL;
-		if (!(inst->capability.pixelprocess_capabilities &
-			HAL_VIDEO_ENCODER_ROTATION_CAPABILITY)) {
-			dprintk(VIDC_ERR, "Rotation not supported: %#x\n",
-				ctrl->id);
-			rc = -ENOTSUPP;
-			break;
-		}
-		deinterlace =
-			TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE);
-		if (ctrl->val && deinterlace && deinterlace->val !=
-				V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE_DISABLED) {
-			dprintk(VIDC_ERR,
-				"Rotation not supported with deinterlacing\n");
-			rc = -EINVAL;
-			break;
-		}
-		property_id = HAL_CONFIG_VPE_OPERATIONS;
-		operations.rotate = venc_v4l2_to_hal(
-				V4L2_CID_MPEG_VIDC_VIDEO_ROTATION,
-				ctrl->val);
-		operations.flip = HAL_FLIP_NONE;
-		pdata = &operations;
+		dprintk(VIDC_DBG, "Rotation %d\n", ctrl->val);
 		break;
 	}
-	case V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP: {
-		struct v4l2_ctrl *qpp, *qpb;
-
-		rc = msm_venc_validate_qp_value(inst, ctrl);
-		if (rc)
-			break;
-		qpp = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_P_FRAME_QP);
-		qpb = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_B_FRAME_QP);
-
-		property_id = HAL_PARAM_VENC_SESSION_QP;
-		quantization.qpi = ctrl->val;
-		quantization.qpp = qpp->val;
-		quantization.qpb = qpb->val;
-		quantization.layer_id = 0;
-
-		pdata = &quantization;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_H264_P_FRAME_QP: {
-		struct v4l2_ctrl *qpi, *qpb;
-
-		rc = msm_venc_validate_qp_value(inst, ctrl);
-		if (rc)
-			break;
-		qpi = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP);
-		qpb = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_B_FRAME_QP);
-
-		property_id = HAL_PARAM_VENC_SESSION_QP;
-		quantization.qpp = ctrl->val;
-		quantization.qpi = qpi->val;
-		quantization.qpb = qpb->val;
-		quantization.layer_id = 0;
-
-		pdata = &quantization;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_H264_B_FRAME_QP: {
-		struct v4l2_ctrl *qpi, *qpp;
-
-		rc = msm_venc_validate_qp_value(inst, ctrl);
-		if (rc)
-			break;
-		qpi = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP);
-		qpp = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_P_FRAME_QP);
-
-		property_id = HAL_PARAM_VENC_SESSION_QP;
-		quantization.qpb = ctrl->val;
-		quantization.qpi = qpi->val;
-		quantization.qpp = qpp->val;
-		quantization.layer_id = 0;
-
-		pdata = &quantization;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_H263_I_FRAME_QP: {
-		struct v4l2_ctrl *qpp, *qpb;
-
-		qpp = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H263_P_FRAME_QP);
-		qpb = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H263_B_FRAME_QP);
-
-		property_id = HAL_PARAM_VENC_SESSION_QP;
-		quantization.qpi = ctrl->val;
-		quantization.qpp = qpp->val;
-		quantization.qpb = qpb->val;
-		quantization.layer_id = 0;
-
-		pdata = &quantization;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_H263_P_FRAME_QP: {
-		struct v4l2_ctrl *qpi, *qpb;
-
-		qpi = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H263_I_FRAME_QP);
-		qpb = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H263_B_FRAME_QP);
-
-		property_id = HAL_PARAM_VENC_SESSION_QP;
-		quantization.qpp = ctrl->val;
-		quantization.qpi = qpi->val;
-		quantization.qpb = qpb->val;
-		quantization.layer_id = 0;
-
-		pdata = &quantization;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_H263_B_FRAME_QP: {
-		struct v4l2_ctrl *qpi, *qpp;
-
-		qpi = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H263_I_FRAME_QP);
-		qpp = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H263_P_FRAME_QP);
-
-		property_id = HAL_PARAM_VENC_SESSION_QP;
-		quantization.qpb = ctrl->val;
-		quantization.qpi = qpi->val;
-		quantization.qpp = qpp->val;
-		quantization.layer_id = 0;
-
-		pdata = &quantization;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_VPX_I_FRAME_QP: {
-		struct v4l2_ctrl *qpp;
-
-		qpp = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_VPX_P_FRAME_QP);
-
-		property_id = HAL_PARAM_VENC_SESSION_QP;
-		quantization.qpi = ctrl->val;
-		quantization.qpp = qpp->val;
-		/* Bframes are not supported for VPX */
-		quantization.qpb = 0;
-		quantization.layer_id = 0;
-
-		pdata = &quantization;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_VPX_P_FRAME_QP: {
-		struct v4l2_ctrl *qpi;
-
-		qpi = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_VPX_I_FRAME_QP);
-
-		property_id = HAL_PARAM_VENC_SESSION_QP;
-		quantization.qpp = ctrl->val;
-		quantization.qpi = qpi->val;
-		/* Bframes are not supported for VPX */
-		quantization.qpb = 0;
-		quantization.layer_id = 0;
-
-		pdata = &quantization;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_H264_MIN_QP: {
-		struct v4l2_ctrl *qp_max;
-
-		qp_max = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_MAX_QP);
-		if (ctrl->val >= qp_max->val) {
-			dprintk(VIDC_ERR,
-					"Bad range: Min QP (%d) > Max QP(%d)\n",
-					ctrl->val, qp_max->val);
-			rc = -ERANGE;
-			break;
-		}
-
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = qp_max->val;
-		qp_range.min_qp = ctrl->val;
-
-		pdata = &qp_range;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_H264_MAX_QP: {
-		struct v4l2_ctrl *qp_min;
-
-		qp_min = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_H264_MIN_QP);
-		if (ctrl->val <= qp_min->val) {
-			dprintk(VIDC_ERR,
-					"Bad range: Max QP (%d) < Min QP(%d)\n",
-					ctrl->val, qp_min->val);
-			rc = -ERANGE;
-			break;
-		}
-
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = ctrl->val;
-		qp_range.min_qp = qp_min->val;
-
-		pdata = &qp_range;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_MPEG4_MIN_QP: {
-		struct v4l2_ctrl *qp_max;
-
-		qp_max = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MPEG4_MAX_QP);
-		if (ctrl->val >= qp_max->val) {
-			dprintk(VIDC_ERR,
-					"Bad range: Min QP (%d) > Max QP(%d)\n",
-					ctrl->val, qp_max->val);
-			rc = -ERANGE;
-			break;
-		}
-
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = qp_max->val;
-		qp_range.min_qp = ctrl->val;
-
-		pdata = &qp_range;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_MPEG4_MAX_QP: {
-		struct v4l2_ctrl *qp_min;
-
-		qp_min = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MPEG4_MIN_QP);
-		if (ctrl->val <= qp_min->val) {
-			dprintk(VIDC_ERR,
-					"Bad range: Max QP (%d) < Min QP(%d)\n",
-					ctrl->val, qp_min->val);
-			rc = -ERANGE;
-			break;
-		}
-
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = ctrl->val;
-		qp_range.min_qp = qp_min->val;
-
-		pdata = &qp_range;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_VPX_MIN_QP: {
-		struct v4l2_ctrl *qp_max;
-
-		qp_max = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_VPX_MAX_QP);
-		if (ctrl->val >= qp_max->val) {
-			dprintk(VIDC_ERR,
-					"Bad range: Min QP (%d) > Max QP(%d)\n",
-					ctrl->val, qp_max->val);
-			rc = -ERANGE;
-			break;
-		}
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = qp_max->val;
-		qp_range.min_qp = ctrl->val;
-		pdata = &qp_range;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_VPX_MAX_QP: {
-		struct v4l2_ctrl *qp_min;
-
-		qp_min = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_VPX_MIN_QP);
-		if (ctrl->val <= qp_min->val) {
-			dprintk(VIDC_ERR,
-					"Bad range: Max QP (%d) < Min QP(%d)\n",
-					ctrl->val, qp_min->val);
-			rc = -ERANGE;
-			break;
-		}
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = ctrl->val;
-		qp_range.min_qp = qp_min->val;
-		pdata = &qp_range;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_VP8_MIN_QP: {
-		struct v4l2_ctrl *qp_max;
-
-		qp_max = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_VP8_MAX_QP);
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = qp_max->val;
-		qp_range.min_qp = ctrl->val;
-		pdata = &qp_range;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_VP8_MAX_QP: {
-		struct v4l2_ctrl *qp_min;
-
-		qp_min = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_VP8_MIN_QP);
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = ctrl->val;
-		qp_range.min_qp = qp_min->val;
-		pdata = &qp_range;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_MIN_QP_PACKED: {
-		struct v4l2_ctrl *qp_max;
-
-		qp_max = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MAX_QP_PACKED);
-		if (ctrl->val >= qp_max->val) {
-			dprintk(VIDC_ERR,
-					"Bad range: Min QP PACKED (0x%x) > Max QP PACKED (0x%x)\n",
-					ctrl->val, qp_max->val);
-			rc = -ERANGE;
-			break;
-		}
-
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE_PACKED;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = qp_max->val;
-		qp_range.min_qp = ctrl->val;
-
-		pdata = &qp_range;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_MAX_QP_PACKED: {
-		struct v4l2_ctrl *qp_min;
-
-		qp_min = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MIN_QP_PACKED);
-		if (ctrl->val <= qp_min->val) {
-			dprintk(VIDC_ERR,
-					"Bad range: Max QP PACKED (%d) < Min QP PACKED (%d)\n",
-					ctrl->val, qp_min->val);
-			rc = -ERANGE;
-			break;
-		}
-
-		property_id = HAL_PARAM_VENC_SESSION_QP_RANGE_PACKED;
-		qp_range.layer_id = 0;
-		qp_range.max_qp = ctrl->val;
-		qp_range.min_qp = qp_min->val;
-
-		pdata = &qp_range;
+	case V4L2_CID_MPEG_VIDC_VIDEO_FLIP:
+	{
+		dprintk(VIDC_DBG, "Flip %d\n", ctrl->val);
 		break;
 	}
 	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE: {
@@ -3027,9 +1725,6 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 			break;
 		case V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_BYTES:
 			temp = V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_BYTES;
-			break;
-		case V4L2_MPEG_VIDEO_MULTI_SLICE_GOB:
-			temp = V4L2_CID_MPEG_VIDEO_MULTI_SLICE_GOB;
 			break;
 		case V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE:
 		default:
@@ -3049,7 +1744,6 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	}
 	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_BYTES:
 	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_MB:
-	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_GOB:
 		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE);
 
 		property_id = HAL_PARAM_VENC_MULTI_SLICE_CONTROL;
@@ -3058,128 +1752,50 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		pdata = &multi_slice_control;
 		break;
 	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_DELIVERY_MODE: {
-		bool codec_avc =
+		bool codecs_supported =
+			inst->fmts[CAPTURE_PORT].fourcc == V4L2_PIX_FMT_HEVC ||
 			inst->fmts[CAPTURE_PORT].fourcc == V4L2_PIX_FMT_H264 ||
 			inst->fmts[CAPTURE_PORT].fourcc ==
 							V4L2_PIX_FMT_H264_NO_SC;
 
 		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE);
-		if (codec_avc && temp_ctrl->val ==
+		if (codecs_supported && temp_ctrl->val ==
 				V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB) {
 			property_id = HAL_PARAM_VENC_SLICE_DELIVERY_MODE;
 			enable.enable = true;
 		} else {
 			dprintk(VIDC_WARN,
-				"Failed : slice delivery mode is valid "\
-				"only for H264 encoder and MB based slicing\n");
+				"Failed : slice delivery mode is not valid\n");
 			enable.enable = false;
 		}
 		pdata = &enable;
 		break;
 	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_MODE: {
-		struct v4l2_ctrl *air_mbs, *air_ref, *cir_mbs;
-		bool is_cont_intra_supported = false;
+	case V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_MODE:
+	{
+		struct v4l2_ctrl *ir_mbs;
 
-		air_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS);
-		air_ref = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF);
-		cir_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_CIR_MBS);
-
-		is_cont_intra_supported =
-		(inst->fmts[CAPTURE_PORT].fourcc == V4L2_PIX_FMT_H264) ||
-		(inst->fmts[CAPTURE_PORT].fourcc == V4L2_PIX_FMT_HEVC);
-
-		if (is_cont_intra_supported) {
-			if (ctrl->val != HAL_INTRA_REFRESH_NONE)
-				enable.enable = true;
-			else
-				enable.enable = false;
-
-			rc = call_hfi_op(hdev, session_set_property,
-				(void *)inst->session,
-				HAL_PARAM_VENC_CONSTRAINED_INTRA_PRED, &enable);
-			if (rc) {
-				dprintk(VIDC_ERR,
-					"Failed to set constrained intra\n");
-				rc = -EINVAL;
-				break;
-			}
-		}
+		ir_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_IR_MBS);
 
 		property_id = HAL_PARAM_VENC_INTRA_REFRESH;
 
-		intra_refresh.mode = ctrl->val;
-		intra_refresh.air_mbs = air_mbs->val;
-		intra_refresh.air_ref = air_ref->val;
-		intra_refresh.cir_mbs = cir_mbs->val;
+		intra_refresh.mode   = ctrl->val;
+		intra_refresh.ir_mbs = ir_mbs->val;
 
 		pdata = &intra_refresh;
 		break;
 	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS: {
-		struct v4l2_ctrl *ir_mode, *air_ref, *cir_mbs;
-		ir_mode = TRY_GET_CTRL(
-				V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_MODE);
-		air_ref = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF);
-		cir_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_CIR_MBS);
-
-		property_id = HAL_PARAM_VENC_INTRA_REFRESH;
-
-		intra_refresh.air_mbs = ctrl->val;
-		intra_refresh.mode = ir_mode->val;
-		intra_refresh.air_ref = air_ref->val;
-		intra_refresh.cir_mbs = cir_mbs->val;
-
-		pdata = &intra_refresh;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF: {
-		struct v4l2_ctrl *ir_mode, *air_mbs, *cir_mbs;
-		ir_mode = TRY_GET_CTRL(
-				V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_MODE);
-		air_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS);
-		cir_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_CIR_MBS);
-
-		property_id = HAL_PARAM_VENC_INTRA_REFRESH;
-
-		intra_refresh.air_ref = ctrl->val;
-		intra_refresh.air_mbs = air_mbs->val;
-		intra_refresh.mode = ir_mode->val;
-		intra_refresh.cir_mbs = cir_mbs->val;
-
-		pdata = &intra_refresh;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_CIR_MBS: {
-		struct v4l2_ctrl *ir_mode, *air_mbs, *air_ref;
+	case V4L2_CID_MPEG_VIDC_VIDEO_IR_MBS:
+	{
+		struct v4l2_ctrl *ir_mode;
 
 		ir_mode = TRY_GET_CTRL(
 				V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_MODE);
-		air_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS);
-		air_ref = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF);
 
 		property_id = HAL_PARAM_VENC_INTRA_REFRESH;
 
-		intra_refresh.cir_mbs = ctrl->val;
-		intra_refresh.air_mbs = air_mbs->val;
-		intra_refresh.air_ref = air_ref->val;
-		intra_refresh.mode = ir_mode->val;
-
-		pdata = &intra_refresh;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDEO_CYCLIC_INTRA_REFRESH_MB: {
-		struct v4l2_ctrl *air_mbs, *air_ref;
-
-		air_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS);
-		air_ref = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF);
-
-		property_id = HAL_PARAM_VENC_INTRA_REFRESH;
-
-		intra_refresh.cir_mbs = ctrl->val;
-		intra_refresh.air_mbs = air_mbs->val;
-		intra_refresh.air_ref = air_ref->val;
-		intra_refresh.mode = HAL_INTRA_REFRESH_CYCLIC;
+		intra_refresh.mode   = ir_mode->val;
+		intra_refresh.ir_mbs = ctrl->val;
 
 		pdata = &intra_refresh;
 		break;
@@ -3196,7 +1812,7 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		property_id = HAL_PARAM_VENC_H264_DEBLOCK_CONTROL;
 		h264_db_control.slice_alpha_offset = alpha->val;
 		h264_db_control.slice_beta_offset = beta->val;
-		h264_db_control.mode = venc_v4l2_to_hal(
+		h264_db_control.mode = msm_comm_v4l2_to_hal(
 				V4L2_CID_MPEG_VIDEO_H264_LOOP_FILTER_MODE,
 				ctrl->val);
 		pdata = &h264_db_control;
@@ -3214,7 +1830,7 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		property_id = HAL_PARAM_VENC_H264_DEBLOCK_CONTROL;
 		h264_db_control.slice_alpha_offset = ctrl->val;
 		h264_db_control.slice_beta_offset = beta->val;
-		h264_db_control.mode = venc_v4l2_to_hal(
+		h264_db_control.mode = msm_comm_v4l2_to_hal(
 				V4L2_CID_MPEG_VIDEO_H264_LOOP_FILTER_MODE,
 				mode->val);
 		pdata = &h264_db_control;
@@ -3231,7 +1847,7 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		property_id = HAL_PARAM_VENC_H264_DEBLOCK_CONTROL;
 		h264_db_control.slice_alpha_offset = alpha->val;
 		h264_db_control.slice_beta_offset = ctrl->val;
-		h264_db_control.mode = venc_v4l2_to_hal(
+		h264_db_control.mode = msm_comm_v4l2_to_hal(
 				V4L2_CID_MPEG_VIDEO_H264_LOOP_FILTER_MODE,
 				mode->val);
 		pdata = &h264_db_control;
@@ -3244,10 +1860,9 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		case V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE:
 			enable.enable = 0;
 			break;
-		case V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_I_FRAME:
+		case V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME:
 			enable.enable = 1;
 			break;
-		case V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME:
 		default:
 			rc = -ENOTSUPP;
 			break;
@@ -3256,46 +1871,73 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_SECURE:
 		inst->flags |= VIDC_SECURE;
+		property_id = HAL_PARAM_SECURE;
+		property_val = !!(inst->flags & VIDC_SECURE);
+		pdata = &property_val;
 		dprintk(VIDC_INFO, "Setting secure mode to: %d\n",
 				!!(inst->flags & VIDC_SECURE));
 		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA:
+	case V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA: {
+		struct hal_buffer_requirements *buff_req_buffer = NULL;
+		int extra_idx = 0;
+
 		property_id = HAL_PARAM_INDEX_EXTRADATA;
 		extra.index = msm_comm_get_hal_extradata_index(ctrl->val);
 		extra.enable = 1;
-		pdata = &extra;
-		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO:
-	{
-		struct v4l2_ctrl *rc_mode;
-		bool cfr = false;
-
-		property_id = HAL_PARAM_VENC_H264_VUI_TIMING_INFO;
-		rc_mode = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL);
-
-		switch (rc_mode->val) {
-		case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_VBR_CFR:
-		case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_CFR:
-			cfr = true;
-			break;
-		default:
-			cfr = false;
-			break;
-		}
 
 		switch (ctrl->val) {
-		case V4L2_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO_DISABLED:
-			vui_timing_info.enable = 0;
+		case V4L2_MPEG_VIDC_EXTRADATA_INPUT_CROP:
+		case V4L2_MPEG_VIDC_EXTRADATA_DIGITAL_ZOOM:
+		case V4L2_MPEG_VIDC_EXTRADATA_ASPECT_RATIO:
+		case V4L2_MPEG_VIDC_EXTRADATA_YUV_STATS:
+		case V4L2_MPEG_VIDC_EXTRADATA_ROI_QP:
+		case V4L2_MPEG_VIDC_EXTRADATA_PQ_INFO:
+			inst->bufq[OUTPUT_PORT].num_planes = 2;
 			break;
-		case V4L2_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO_ENABLED:
-			vui_timing_info.enable = 1;
-			vui_timing_info.fixed_frame_rate = cfr;
-			vui_timing_info.time_scale = NSEC_PER_SEC;
+		case V4L2_MPEG_VIDC_EXTRADATA_MULTISLICE_INFO:
+		case V4L2_MPEG_VIDC_EXTRADATA_LTR:
+		case V4L2_MPEG_VIDC_EXTRADATA_ENC_FRAME_QP:
+		case V4L2_MPEG_VIDC_EXTRADATA_METADATA_MBI:
+			inst->bufq[CAPTURE_PORT].num_planes = 2;
+			break;
+		default:
+			rc = -ENOTSUPP;
+			break;
 		}
 
-		pdata = &vui_timing_info;
+		pdata = &extra;
+		rc = call_hfi_op(hdev, session_set_property,
+				(void *)inst->session, property_id, pdata);
+
+		rc = msm_comm_try_get_bufreqs(inst);
+		if (rc) {
+			dprintk(VIDC_ERR,
+				"Failed to get buffer requirements: %d\n", rc);
+			break;
+		}
+
+		extra_idx = EXTRADATA_IDX(inst->bufq[OUTPUT_PORT].num_planes);
+		if (extra_idx && (extra_idx < VIDEO_MAX_PLANES)) {
+			buff_req_buffer = get_buff_req_buffer(inst,
+						HAL_BUFFER_EXTRADATA_INPUT);
+
+			inst->bufq[OUTPUT_PORT].plane_sizes[extra_idx] =
+					buff_req_buffer ?
+					buff_req_buffer->buffer_size : 0;
+		}
+
+		extra_idx = EXTRADATA_IDX(inst->bufq[CAPTURE_PORT].num_planes);
+		if (extra_idx && (extra_idx < VIDEO_MAX_PLANES)) {
+			buff_req_buffer = get_buff_req_buffer(inst,
+						HAL_BUFFER_EXTRADATA_OUTPUT);
+
+			inst->bufq[CAPTURE_PORT].plane_sizes[extra_idx] =
+				buff_req_buffer ?
+				buff_req_buffer->buffer_size : 0;
+		}
+		property_id = 0;
+		}
 		break;
-	}
 	case V4L2_CID_MPEG_VIDC_VIDEO_AU_DELIMITER:
 		property_id = HAL_PARAM_VENC_GENERATE_AUDNAL;
 
@@ -3313,92 +1955,19 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 
 		pdata = &enable;
 		break;
-	case V4L2_CID_MPEG_VIDC_SET_PERF_LEVEL:
-		switch (ctrl->val) {
-		case V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL:
-			if (inst->flags & VIDC_TURBO) {
-				inst->flags &= ~VIDC_TURBO;
-				msm_dcvs_init_load(inst);
-			}
-			break;
-		case V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO:
-			inst->flags |= VIDC_TURBO;
-			break;
-		default:
-			dprintk(VIDC_ERR, "Perf mode %x not supported\n",
-					ctrl->val);
-			rc = -ENOTSUPP;
-			break;
-		}
-		msm_comm_scale_clocks_and_bus(inst);
-		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_H264_VUI_BITSTREAM_RESTRICT:
-		property_id = HAL_PARAM_VENC_H264_VUI_BITSTREAM_RESTRC;
-		vui_bitstream_restrict.enable = ctrl->val;
-		pdata = &vui_bitstream_restrict;
-		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_PRESERVE_TEXT_QUALITY:
 		property_id = HAL_PARAM_VENC_PRESERVE_TEXT_QUALITY;
 		preserve_text_quality.enable = ctrl->val;
 		pdata = &preserve_text_quality;
 		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_MPEG4_TIME_RESOLUTION:
-		property_id = HAL_PARAM_VENC_MPEG4_TIME_RESOLUTION;
-		time_res.time_increment_resolution = ctrl->val;
-		pdata = &time_res;
-		break;
-
-	case V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE:
-	{
-		struct v4l2_ctrl *rotation = NULL;
-		if (!(inst->capability.pixelprocess_capabilities &
-			HAL_VIDEO_ENCODER_DEINTERLACE_CAPABILITY)) {
-			dprintk(VIDC_ERR, "Deinterlace not supported: %#x\n",
-					ctrl->id);
-			rc = -ENOTSUPP;
-			break;
-		}
-		rotation = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_ROTATION);
-		if (ctrl->val && rotation && rotation->val !=
-			V4L2_CID_MPEG_VIDC_VIDEO_ROTATION_NONE) {
-			dprintk(VIDC_ERR,
-				"Deinterlacing not supported with rotation");
-			rc = -EINVAL;
-			break;
-		}
-		property_id = HAL_CONFIG_VPE_DEINTERLACE;
-		switch (ctrl->val) {
-		case V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE_ENABLED:
-			enable.enable = 1;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE_DISABLED:
-		default:
-			enable.enable = 0;
-			break;
-		}
-		pdata = &enable;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_REQUEST_SEQ_HEADER:
-		atomic_inc(&inst->seq_hdr_reqs);
-		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_USELTRFRAME:
 		property_id = HAL_CONFIG_VENC_USELTRFRAME;
 		use_ltr.ref_ltr = ctrl->val;
-		use_ltr.use_constraint = false;
+		use_ltr.use_constraint = true;
 		use_ltr.frames = 0;
 		pdata = &use_ltr;
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_MARKLTRFRAME:
-		if (ctrl->val < inst->capability.ltr_count.min ||
-			ctrl->val >= inst->capability.ltr_count.max) {
-			dprintk(VIDC_ERR,
-				"Error setting markltr %d range: [%d,%d)\n",
-				ctrl->val, inst->capability.ltr_count.min,
-				inst->capability.ltr_count.max);
-			rc = -ENOTSUPP;
-			break;
-		}
 		property_id = HAL_CONFIG_VENC_MARKLTRFRAME;
 		mark_ltr.mark_frame = ctrl->val;
 		pdata = &mark_ltr;
@@ -3415,68 +1984,32 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		}
 		pdata = &hier_p_layers;
 		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_TIMESTAMP_MODE:
-		property_id = HAL_PARAM_VENC_DISABLE_RC_TIMESTAMP;
-		enable.enable = (ctrl->val ==
-		V4L2_MPEG_VIDC_VIDEO_RATE_CONTROL_TIMESTAMP_MODE_IGNORE);
-		pdata = &enable;
-		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_VPX_ERROR_RESILIENCE:
 		property_id = HAL_PARAM_VENC_VPX_ERROR_RESILIENCE_MODE;
 		enable.enable = ctrl->val;
 		pdata = &enable;
 		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_H264_NAL_SVC:
-		property_id = HAL_PARAM_VENC_H264_NAL_SVC_EXT;
-		enable.enable = ctrl->val;
-		pdata = &enable;
-		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_PERF_MODE:
-		property_id = HAL_CONFIG_VENC_PERF_MODE;
-
-		switch (ctrl->val) {
-		case V4L2_MPEG_VIDC_VIDEO_PERF_POWER_SAVE:
-			inst->flags |= VIDC_LOW_POWER;
-			venc_mode = HAL_PERF_MODE_POWER_SAVE;
-			break;
-		case V4L2_MPEG_VIDC_VIDEO_PERF_MAX_QUALITY:
-			inst->flags &= ~VIDC_LOW_POWER;
-			venc_mode = HAL_PERF_MODE_POWER_MAX_QUALITY;
-			break;
-		default:
-			dprintk(VIDC_ERR, "Power save mode %x not supported\n",
-					ctrl->val);
-			rc = -ENOTSUPP;
-			property_id = 0;
-			break;
-		}
-		pdata = &venc_mode;
-
-		msm_dcvs_enc_set_power_save_mode(inst,
-			ctrl->val == V4L2_MPEG_VIDC_VIDEO_PERF_POWER_SAVE);
-		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_HIER_B_NUM_LAYERS:
-		if (inst->fmts[CAPTURE_PORT].fourcc != V4L2_PIX_FMT_HEVC) {
-			dprintk(VIDC_ERR, "Hier B supported for HEVC only\n");
-			rc = -ENOTSUPP;
-			break;
-		}
-		property_id = HAL_PARAM_VENC_HIER_B_MAX_ENH_LAYERS;
-		hier_b_layers = ctrl->val;
-		pdata = &hier_b_layers;
-		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_HYBRID_HIERP_MODE:
+	{
+		struct v4l2_ctrl *rate_control;
+
+		rate_control =
+			TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL);
+		if ((rate_control->val ==
+				V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_VFR ||
+			rate_control->val ==
+				V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_VBR_VFR)
+			&& ctrl->val) {
+			dprintk(VIDC_ERR,
+				"Hybrid HP not allowed with CBR_VFR/VBR_VFR\n");
+			rc = -ENOTSUPP;
+			break;
+		}
 		property_id = HAL_PARAM_VENC_HIER_P_HYBRID_MODE;
 		hyb_hierp.layers = ctrl->val;
 		pdata = &hyb_hierp;
 		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_MBI_STATISTICS_MODE:
-		property_id = HAL_PARAM_VENC_MBI_STATISTICS_MODE;
-		mbi_statistics_mode = venc_v4l2_to_hal(
-			V4L2_CID_MPEG_VIDC_VIDEO_MBI_STATISTICS_MODE,
-			ctrl->val);
-		pdata = &mbi_statistics_mode;
-		break;
+	}
 	case V4L2_CID_VIDC_QBUF_MODE:
 		property_id = HAL_PARAM_SYNC_BASED_INTERRUPT;
 		enable.enable = ctrl->val == V4L2_VIDC_QBUF_BATCHED;
@@ -3499,59 +2032,68 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		baselayerid = ctrl->val;
 		pdata = &baselayerid;
 		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_CONFIG_QP:
-		/* Sanity check for the QP boundaries as we are using
-		 * same control to set dynamic QP for all the codecs
-		 */
-		rc = msm_venc_validate_qp_value(inst, ctrl);
-		if (rc) {
-			dprintk(VIDC_ERR, "Invalid QP Config QP Range\n");
-			break;
-		}
+	case V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP: {
+		struct v4l2_ctrl *qpp, *qpb, *mask;
+
 		property_id = HAL_CONFIG_VENC_FRAME_QP;
-		frameqp = ctrl->val;
-		pdata = &frameqp;
-		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_I_FRAME_QP:
-	{
-		rc = msm_venc_validate_qp_value(inst, ctrl);
-		if (rc) {
-			dprintk(VIDC_ERR, "Invalid Initial I QP\n");
-			break;
-		}
-		/*
-		 * Defer sending property from here, set_ext_ctrl
-		 * will send it based on the rc value.
-		 */
-		property_id = 0;
+		qpp = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP);
+		qpb = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP);
+		mask = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_QP_MASK);
+
+		quant.qpi = ctrl->val;
+		quant.qpp = qpp->val;
+		quant.qpb = qpb->val;
+		quant.enable = mask->val;
+		quant.layer_id = MSM_VIDC_ALL_LAYER_ID;
+		pdata = &quant;
 		break;
 	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_B_FRAME_QP:
-	{
-		rc = msm_venc_validate_qp_value(inst, ctrl);
-		if (rc) {
-			dprintk(VIDC_ERR, "Invalid Initial B QP\n");
-			break;
-		}
-		/*
-		 * Defer sending property from here, set_ext_ctrl
-		 * will send it based on the rc value.
-		 */
-		property_id = 0;
+	case V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP: {
+		struct v4l2_ctrl *qpi, *qpb, *mask;
+
+		property_id = HAL_CONFIG_VENC_FRAME_QP;
+		qpi = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP);
+		qpb = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP);
+		mask = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_QP_MASK);
+
+		quant.qpp = ctrl->val;
+		quant.qpi = qpi->val;
+		quant.qpb = qpb->val;
+		quant.enable = mask->val;
+		quant.layer_id = MSM_VIDC_ALL_LAYER_ID;
+		pdata = &quant;
 		break;
 	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_P_FRAME_QP:
-	{
-		rc = msm_venc_validate_qp_value(inst, ctrl);
-		if (rc) {
-			dprintk(VIDC_ERR, "Invalid Initial P QP\n");
-			break;
-		}
-		/*
-		 * Defer sending property from here, set_ext_ctrl
-		 * will send it based on the rc value.
-		 */
-		property_id = 0;
+	case V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP: {
+		struct v4l2_ctrl *qpp, *qpi, *mask;
+
+		property_id = HAL_CONFIG_VENC_FRAME_QP;
+		qpp = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP);
+		qpi = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP);
+		mask = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_QP_MASK);
+
+		quant.qpb = ctrl->val;
+		quant.qpp = qpp->val;
+		quant.qpi = qpi->val;
+		quant.enable = mask->val;
+		quant.layer_id = MSM_VIDC_ALL_LAYER_ID;
+		pdata = &quant;
+		break;
+	}
+	case V4L2_CID_MPEG_VIDC_VIDEO_QP_MASK: {
+		struct v4l2_ctrl *qpi, *qpp, *qpb;
+
+		property_id = HAL_CONFIG_VENC_FRAME_QP;
+		qpi = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP);
+		qpp = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP);
+		qpb = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP);
+
+		quant.qpi = qpi->val;
+		quant.qpp = qpp->val;
+		quant.qpb = qpb->val;
+		quant.enable = ctrl->val;
+		quant.layer_id = MSM_VIDC_ALL_LAYER_ID;
+		pdata = &quant;
 		break;
 	}
 	case V4L2_CID_MPEG_VIDC_VIDEO_VQZIP_SEI:
@@ -3566,21 +2108,48 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		 */
 		enable.enable = !(ctrl->val);
 		pdata = &enable;
+		switch (ctrl->val) {
+		case V4L2_MPEG_VIDC_VIDEO_PRIORITY_REALTIME_DISABLE:
+			inst->flags &= ~VIDC_REALTIME;
+			break;
+		case V4L2_MPEG_VIDC_VIDEO_PRIORITY_REALTIME_ENABLE:
+			inst->flags |= VIDC_REALTIME;
+			break;
+		default:
+			dprintk(VIDC_WARN,
+				"inst(%pK) invalid priority ctrl value %#x\n",
+				inst, ctrl->val);
+			break;
+		}
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_OPERATING_RATE:
+		if (((ctrl->val >> 16) < inst->capability.frame_rate.min ||
+			 (ctrl->val >> 16) > inst->capability.frame_rate.max) &&
+			  ctrl->val != INT_MAX) {
+			dprintk(VIDC_ERR, "Invalid operating rate %u\n",
+				(ctrl->val >> 16));
+			rc = -ENOTSUPP;
+		} else if (ctrl->val == INT_MAX) {
+			dprintk(VIDC_DBG, "inst(%pK) Request for turbo mode\n",
+				inst);
+			inst->clk_data.turbo_mode = true;
+		} else if (msm_vidc_validate_operating_rate(inst, ctrl->val)) {
+			dprintk(VIDC_ERR, "Failed to set operating rate\n");
+			rc = -ENOTSUPP;
+		} else {
+			dprintk(VIDC_DBG,
+				"inst(%pK) operating rate changed from %d to %d\n",
+				inst, inst->clk_data.operating_rate >> 16,
+				ctrl->val >> 16);
+			inst->clk_data.operating_rate = ctrl->val;
+			inst->clk_data.turbo_mode = false;
+		}
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_VENC_BITRATE_TYPE:
 	{
 		property_id = HAL_PARAM_VENC_BITRATE_TYPE;
 		enable.enable = ctrl->val;
 		pdata = &enable;
-		break;
-	}
-	case V4L2_CID_MPEG_VIDC_VIDEO_H264_PIC_ORDER_CNT:
-	{
-		property_id = HAL_PARAM_VENC_H264_PIC_ORDER_CNT;
-		pic_order_cnt = ctrl->val;
-		pdata = &pic_order_cnt;
 		break;
 	}
 	case V4L2_CID_MPEG_VIDC_VIDEO_COLOR_SPACE:
@@ -3642,11 +2211,23 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		break;
 	}
 	case V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC:
-		if (ctrl->val == V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_ENABLE) {
-			rc = msm_venc_set_csc(inst);
-			if (rc)
-				dprintk(VIDC_ERR, "fail to set csc: %d\n", rc);
-		}
+		if (ctrl->val != V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_ENABLE)
+			break;
+		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_COLOR_SPACE);
+		color_primaries = temp_ctrl->val;
+		temp_ctrl =
+		   TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_CUSTOM_MATRIX);
+		custom_matrix = temp_ctrl->val;
+		rc = msm_venc_set_csc(inst, color_primaries, custom_matrix);
+		if (rc)
+			dprintk(VIDC_ERR, "fail to set csc: %d\n", rc);
+		break;
+	case V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_CUSTOM_MATRIX:
+		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_COLOR_SPACE);
+		color_primaries = temp_ctrl->val;
+		rc = msm_venc_set_csc(inst, color_primaries, ctrl->val);
+		if (rc)
+			dprintk(VIDC_ERR, "fail to set csc: %d\n", rc);
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_LOWLATENCY_MODE:
 	{
@@ -3657,6 +2238,8 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		else
 			enable.enable = 0;
 		pdata = &enable;
+		inst->clk_data.low_latency_mode = (bool) enable.enable;
+		msm_dcvs_try_enable(inst);
 		break;
 	}
 	case V4L2_CID_MPEG_VIDC_VIDEO_H264_TRANSFORM_8x8:
@@ -3679,10 +2262,85 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_SIZE_TYPE:
 		property_id = HAL_PARAM_VENC_IFRAMESIZE_TYPE;
-		iframesize_type = venc_v4l2_to_hal(
+		iframesize_type = msm_comm_v4l2_to_hal(
 				V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_SIZE_TYPE,
 				ctrl->val);
 		pdata = &iframesize_type;
+		break;
+	case V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE:
+	{
+		property_id = HAL_PARAM_VENC_DISABLE_RC_TIMESTAMP;
+		enable.enable = ctrl->val;
+		pdata = &enable;
+		break;
+	}
+	case V4L2_CID_MPEG_VIDC_VIDEO_VUI_TIMING_INFO:
+	{
+		struct v4l2_ctrl *rc_mode;
+		bool cfr = false;
+
+		property_id = HAL_PARAM_VENC_VUI_TIMING_INFO;
+		pdata = &vui_timing_info;
+
+		if (ctrl->val != V4L2_MPEG_VIDC_VIDEO_VUI_TIMING_INFO_ENABLED) {
+			vui_timing_info.enable = 0;
+			break;
+		}
+
+		rc_mode = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL);
+
+		switch (rc_mode->val) {
+		case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_VBR_CFR:
+		case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_CFR:
+		case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_MBR_CFR:
+			cfr = true;
+			break;
+		default:
+			cfr = false;
+		}
+
+		vui_timing_info.enable = 1;
+		vui_timing_info.fixed_frame_rate = cfr;
+		vui_timing_info.time_scale = NSEC_PER_SEC;
+		break;
+	}
+	case V4L2_CID_MPEG_VIDC_VIDEO_STREAM_FORMAT:
+	{
+		property_id = HAL_PARAM_NAL_STREAM_FORMAT_SELECT;
+		stream_format.nal_stream_format_select = BIT(ctrl->val);
+		pdata = &stream_format;
+		break;
+	}
+	case V4L2_CID_MPEG_VIDC_VIDEO_LTRMODE:
+	case V4L2_CID_MPEG_VIDC_VIDEO_LTRCOUNT:
+	case V4L2_CID_MPEG_VIDC_VENC_PARAM_SAR_WIDTH:
+	case V4L2_CID_MPEG_VIDC_VENC_PARAM_SAR_HEIGHT:
+	case V4L2_CID_MPEG_VIDC_VIDEO_BLUR_WIDTH:
+	case V4L2_CID_MPEG_VIDC_VIDEO_BLUR_HEIGHT:
+	case V4L2_CID_MPEG_VIDC_VIDEO_LAYER_ID:
+	case V4L2_CID_MPEG_VIDC_VIDEO_FRAME_QP:
+	case V4L2_CID_MPEG_VIDC_VENC_PARAM_LAYER_BITRATE:
+	case V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP_MIN:
+	case V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP_MIN:
+	case V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP_MIN:
+	case V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP_MAX:
+	case V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP_MAX:
+	case V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP_MAX:
+	case V4L2_CID_MPEG_VIDC_VENC_HDR_INFO:
+	case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_00:
+	case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_01:
+	case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_10:
+	case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_11:
+	case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_20:
+	case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_21:
+	case V4L2_CID_MPEG_VIDC_VENC_WHITEPOINT_X:
+	case V4L2_CID_MPEG_VIDC_VENC_WHITEPOINT_Y:
+	case V4L2_CID_MPEG_VIDC_VENC_MAX_DISP_LUM:
+	case V4L2_CID_MPEG_VIDC_VENC_MIN_DISP_LUM:
+	case V4L2_CID_MPEG_VIDC_VENC_MAX_CLL:
+	case V4L2_CID_MPEG_VIDC_VENC_MAX_FLL:
+		dprintk(VIDC_DBG, "Set the control : %#x using ext ctrl\n",
+			ctrl->id);
 		break;
 	default:
 		dprintk(VIDC_ERR, "Unsupported index: %x\n", ctrl->id);
@@ -3691,45 +2349,53 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	}
 
 	v4l2_ctrl_lock(ctrl);
+#undef TRY_GET_CTRL
 
 	if (!rc && property_id) {
-		dprintk(VIDC_DBG, "Control: HAL property=%x,ctrl_value=%d\n",
-				property_id,
-				ctrl->val);
+		dprintk(VIDC_DBG,
+			"Control: Name = %s, ID = 0x%x Value = %d\n",
+				ctrl->name, ctrl->id, ctrl->val);
 		rc = call_hfi_op(hdev, session_set_property,
 				(void *)inst->session, property_id, pdata);
 	}
 
 	return rc;
 }
-#undef TRY_GET_CTRL
 
-static int try_set_ext_ctrl(struct msm_vidc_inst *inst,
+int msm_venc_s_ext_ctrl(struct msm_vidc_inst *inst,
 	struct v4l2_ext_controls *ctrl)
 {
 	int rc = 0, i;
 	struct v4l2_ext_control *control;
 	struct hfi_device *hdev;
 	struct hal_ltr_mode ltr_mode;
-	struct hal_vc1e_perf_cfg_type search_range = { {0} };
 	u32 property_id = 0;
 	void *pdata = NULL;
 	struct msm_vidc_capability *cap = NULL;
-	struct hal_initial_quantization quant;
 	struct hal_aspect_ratio sar;
 	struct hal_bitrate bitrate;
 	struct hal_frame_size blur_res;
-	struct v4l2_control temp_ctrl;
+	struct hal_quantization_range qp_range;
+	struct hal_quantization qp;
+	struct msm_vidc_mastering_display_colour_sei_payload *mdisp_sei = NULL;
+	struct msm_vidc_content_light_level_sei_payload *cll_sei = NULL;
 
 	if (!inst || !inst->core || !inst->core->device || !ctrl) {
 		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
 		return -EINVAL;
 	}
 
+	/* This will check the range for contols and clip if necessary */
+	v4l2_try_ext_ctrls(&inst->ctrl_handler, ctrl);
+
 	hdev = inst->core->device;
 	cap = &inst->capability;
 
 	control = ctrl->controls;
+
+	mdisp_sei = &(inst->hdr10_sei_params.disp_color_sei);
+	cll_sei = &(inst->hdr10_sei_params.cll_sei);
+
 	for (i = 0; i < ctrl->count; i++) {
 		switch (control[i].id) {
 		case V4L2_CID_MPEG_VIDC_VIDEO_LTRMODE:
@@ -3762,105 +2428,6 @@ static int try_set_ext_ctrl(struct msm_vidc_inst *inst,
 			property_id = HAL_PARAM_VENC_LTRMODE;
 			pdata = &ltr_mode;
 			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_ENABLE_INITIAL_QP:
-			property_id = HAL_PARAM_VENC_ENABLE_INITIAL_QP;
-			quant.init_qp_enable = control[i].value;
-			pdata = &quant;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP:
-			quant.qpi = control[i].value;
-			property_id = HAL_PARAM_VENC_ENABLE_INITIAL_QP;
-			pdata = &quant;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP:
-			quant.qpp = control[i].value;
-			property_id = HAL_PARAM_VENC_ENABLE_INITIAL_QP;
-			pdata = &quant;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP:
-			quant.qpb = control[i].value;
-			property_id = HAL_PARAM_VENC_ENABLE_INITIAL_QP;
-			pdata = &quant;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_I_FRAME_QP:
-			/* Sanity check for the QP boundaries as we are using
-			 * same control to set Initial QP for all the codecs
-			 */
-			temp_ctrl.id =
-				V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_I_FRAME_QP;
-			temp_ctrl.value = control[i].value;
-
-			rc = msm_comm_s_ctrl(inst, &temp_ctrl);
-			if (rc) {
-				dprintk(VIDC_ERR,
-					"%s Failed setting Initial I Frame QP : %d\n",
-					__func__, rc);
-				break;
-			}
-			quant.qpi = control[i].value;
-			property_id = HAL_PARAM_VENC_ENABLE_INITIAL_QP;
-			pdata = &quant;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_P_FRAME_QP:
-			temp_ctrl.id =
-				V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_P_FRAME_QP;
-			temp_ctrl.value = control[i].value;
-			rc = msm_comm_s_ctrl(inst, &temp_ctrl);
-			if (rc) {
-				dprintk(VIDC_ERR,
-					"%s Failed setting Initial P Frame QP : %d\n",
-					__func__, rc);
-				break;
-			}
-			quant.qpp = control[i].value;
-			property_id = HAL_PARAM_VENC_ENABLE_INITIAL_QP;
-			pdata = &quant;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_B_FRAME_QP:
-			temp_ctrl.id =
-				V4L2_CID_MPEG_VIDC_VIDEO_INITIAL_B_FRAME_QP;
-			temp_ctrl.value = control[i].value;
-			rc = msm_comm_s_ctrl(inst, &temp_ctrl);
-			if (rc) {
-				dprintk(VIDC_ERR,
-					"%s Failed setting Initial B Frame QP : %d\n",
-					__func__, rc);
-				break;
-			}
-			quant.qpb = control[i].value;
-			property_id = HAL_PARAM_VENC_ENABLE_INITIAL_QP;
-			pdata = &quant;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_X_RANGE:
-			search_range.i_frame.x_subsampled = control[i].value;
-			property_id = HAL_PARAM_VENC_SEARCH_RANGE;
-			pdata = &search_range;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_IFRAME_Y_RANGE:
-			search_range.i_frame.y_subsampled = control[i].value;
-			property_id = HAL_PARAM_VENC_SEARCH_RANGE;
-			pdata = &search_range;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_PFRAME_X_RANGE:
-			search_range.p_frame.x_subsampled = control[i].value;
-			property_id = HAL_PARAM_VENC_SEARCH_RANGE;
-			pdata = &search_range;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_PFRAME_Y_RANGE:
-			search_range.p_frame.y_subsampled = control[i].value;
-			property_id = HAL_PARAM_VENC_SEARCH_RANGE;
-			pdata = &search_range;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_BFRAME_X_RANGE:
-			search_range.b_frame.x_subsampled = control[i].value;
-			property_id = HAL_PARAM_VENC_SEARCH_RANGE;
-			pdata = &search_range;
-			break;
-		case V4L2_CID_MPEG_VIDC_VIDEO_BFRAME_Y_RANGE:
-			search_range.b_frame.y_subsampled = control[i].value;
-			property_id = HAL_PARAM_VENC_SEARCH_RANGE;
-			pdata = &search_range;
-			break;
 		case V4L2_CID_MPEG_VIDC_VENC_PARAM_SAR_WIDTH:
 			sar.aspect_width = control[i].value;
 			property_id = HAL_PROPERTY_PARAM_VENC_ASPECT_RATIO;
@@ -3871,32 +2438,6 @@ static int try_set_ext_ctrl(struct msm_vidc_inst *inst,
 			property_id = HAL_PROPERTY_PARAM_VENC_ASPECT_RATIO;
 			pdata = &sar;
 			break;
-		case V4L2_CID_MPEG_VIDC_VENC_PARAM_LAYER_BITRATE:
-		{
-			if (control[i].value) {
-				bitrate.layer_id = i;
-				bitrate.bit_rate = control[i].value;
-				property_id = HAL_CONFIG_VENC_TARGET_BITRATE;
-				pdata = &bitrate;
-				dprintk(VIDC_DBG, "bitrate for layer(%d)=%d\n",
-					i, bitrate.bit_rate);
-				rc = call_hfi_op(hdev, session_set_property,
-					(void *)inst->session, property_id,
-					 pdata);
-				if (rc) {
-					dprintk(VIDC_DBG, "prop %x failed\n",
-						property_id);
-					return rc;
-				}
-				if (i == MAX_HYBRID_HIER_P_LAYERS - 1) {
-					dprintk(VIDC_DBG, "HAL property=%x\n",
-						property_id);
-					property_id = 0;
-					rc = 0;
-				}
-			}
-			break;
-		}
 		case V4L2_CID_MPEG_VIDC_VIDEO_BLUR_WIDTH:
 			property_id = HAL_CONFIG_VENC_BLUR_RESOLUTION;
 			blur_res.width = control[i].value;
@@ -3909,6 +2450,202 @@ static int try_set_ext_ctrl(struct msm_vidc_inst *inst,
 			blur_res.buffer_type = HAL_BUFFER_INPUT;
 			property_id = HAL_CONFIG_VENC_BLUR_RESOLUTION;
 			pdata = &blur_res;
+			break;
+		case V4L2_CID_MPEG_VIDC_VIDEO_LAYER_ID:
+			qp.layer_id = control[i].value;
+			/* Enable QP for all frame types by default */
+			qp.enable = 7;
+			qp_range.layer_id = control[i].value;
+			bitrate.layer_id = control[i].value;
+			i++;
+			while (i < ctrl->count) {
+			switch (control[i].id) {
+			case V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP:
+				qp.qpi = control[i].value;
+				property_id =
+					HAL_CONFIG_VENC_FRAME_QP;
+				pdata = &qp;
+				break;
+			case V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP:
+				qp.qpp = control[i].value;
+				property_id =
+					HAL_CONFIG_VENC_FRAME_QP;
+				pdata = &qp;
+				break;
+			case V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP:
+				qp.qpb = control[i].value;
+				property_id =
+					HAL_CONFIG_VENC_FRAME_QP;
+				pdata = &qp;
+				break;
+			case V4L2_CID_MPEG_VIDC_VIDEO_QP_MASK:
+				qp.enable = control[i].value;
+				property_id =
+					HAL_CONFIG_VENC_FRAME_QP;
+				pdata = &qp;
+				break;
+			case V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP_MIN:
+				qp_range.qpi_min = control[i].value;
+				property_id =
+					HAL_PARAM_VENC_SESSION_QP_RANGE;
+				pdata = &qp_range;
+				break;
+			case V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP_MIN:
+				qp_range.qpp_min = control[i].value;
+				property_id =
+					HAL_PARAM_VENC_SESSION_QP_RANGE;
+				pdata = &qp_range;
+				break;
+			case V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP_MIN:
+				qp_range.qpb_min = control[i].value;
+				property_id =
+					HAL_PARAM_VENC_SESSION_QP_RANGE;
+				pdata = &qp_range;
+				break;
+			case V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP_MAX:
+				qp_range.qpi_max = control[i].value;
+				property_id =
+					HAL_PARAM_VENC_SESSION_QP_RANGE;
+				pdata = &qp_range;
+				break;
+			case V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP_MAX:
+				qp_range.qpp_max = control[i].value;
+				property_id =
+					HAL_PARAM_VENC_SESSION_QP_RANGE;
+				pdata = &qp_range;
+				break;
+			case V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP_MAX:
+				qp_range.qpb_max = control[i].value;
+				property_id =
+					HAL_PARAM_VENC_SESSION_QP_RANGE;
+				pdata = &qp_range;
+				break;
+			case V4L2_CID_MPEG_VIDC_VENC_PARAM_LAYER_BITRATE:
+				bitrate.bit_rate = control[i].value;
+				property_id =
+					HAL_CONFIG_VENC_TARGET_BITRATE;
+				pdata = &bitrate;
+				break;
+			}
+			i++;
+			}
+			break;
+		case V4L2_CID_MPEG_VIDC_VIDEO_FRAME_QP:
+			qp.layer_id = control[i].value;
+			/* Enable QP for all frame types by default */
+			qp.enable = 7;
+			qp_range.layer_id = control[i].value;
+			i++;
+			while (i < ctrl->count) {
+				switch (control[i].id) {
+				case V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP_MIN:
+					qp_range.qpi_min = control[i].value;
+					property_id =
+						HAL_CONFIG_VENC_FRAME_QP_RANGE;
+					pdata = &qp_range;
+					break;
+				case V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP_MIN:
+					qp_range.qpp_min = control[i].value;
+					property_id =
+						HAL_CONFIG_VENC_FRAME_QP_RANGE;
+					pdata = &qp_range;
+					break;
+				case V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP_MIN:
+					qp_range.qpb_min = control[i].value;
+					property_id =
+						HAL_CONFIG_VENC_FRAME_QP_RANGE;
+					pdata = &qp_range;
+					break;
+				case V4L2_CID_MPEG_VIDC_VIDEO_I_FRAME_QP_MAX:
+					qp_range.qpi_max = control[i].value;
+					property_id =
+						HAL_CONFIG_VENC_FRAME_QP_RANGE;
+					pdata = &qp_range;
+					break;
+				case V4L2_CID_MPEG_VIDC_VIDEO_P_FRAME_QP_MAX:
+					qp_range.qpp_max = control[i].value;
+					property_id =
+						HAL_CONFIG_VENC_FRAME_QP_RANGE;
+					pdata = &qp_range;
+					break;
+				case V4L2_CID_MPEG_VIDC_VIDEO_B_FRAME_QP_MAX:
+					qp_range.qpb_max = control[i].value;
+					property_id =
+						HAL_CONFIG_VENC_FRAME_QP_RANGE;
+					pdata = &qp_range;
+					break;
+				}
+				i++;
+			}
+			break;
+		case V4L2_CID_MPEG_VIDC_VENC_HDR_INFO:
+			if (control[i].value ==
+				V4L2_MPEG_VIDC_VENC_HDR_INFO_DISABLED ||
+					!mdisp_sei || !cll_sei)
+				break;
+			i++;
+			while (i < ctrl->count) {
+				switch (control[i].id) {
+				case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_00:
+					mdisp_sei->nDisplayPrimariesX[0] =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_01:
+					mdisp_sei->nDisplayPrimariesY[0] =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_10:
+					mdisp_sei->nDisplayPrimariesX[1] =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_11:
+					mdisp_sei->nDisplayPrimariesY[1] =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_20:
+					mdisp_sei->nDisplayPrimariesX[2] =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_RGB_PRIMARY_21:
+					mdisp_sei->nDisplayPrimariesY[2] =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_WHITEPOINT_X:
+					mdisp_sei->nWhitePointX =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_WHITEPOINT_Y:
+					mdisp_sei->nWhitePointY =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_MAX_DISP_LUM:
+					mdisp_sei->
+						nMaxDisplayMasteringLuminance =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_MIN_DISP_LUM:
+					mdisp_sei->
+						nMinDisplayMasteringLuminance =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_MAX_CLL:
+					cll_sei->nMaxContentLight =
+						control[i].value;
+					break;
+				case V4L2_CID_MPEG_VIDC_VENC_MAX_FLL:
+					cll_sei->nMaxPicAverageLight =
+						control[i].value;
+					break;
+				default:
+					dprintk(VIDC_ERR,
+							"Unknown Ctrl:%d, not part of HDR Info",
+							control[i].id);
+				}
+				i++;
+			}
+			property_id =
+				HAL_PARAM_VENC_HDR10_PQ_SEI;
+			pdata = &inst->hdr10_sei_params;
 			break;
 		default:
 			dprintk(VIDC_ERR, "Invalid id set: %d\n",
@@ -3928,66 +2665,11 @@ static int try_set_ext_ctrl(struct msm_vidc_inst *inst,
 	return rc;
 }
 
-static int msm_venc_op_s_ctrl(struct v4l2_ctrl *ctrl)
-{
-
-	int rc = 0, c = 0;
-
-	struct msm_vidc_inst *inst = container_of(ctrl->handler,
-					struct msm_vidc_inst, ctrl_handler);
-
-	if (!inst) {
-		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
-		return -EINVAL;
-	}
-
-	rc = msm_comm_try_state(inst, MSM_VIDC_OPEN_DONE);
-
-	if (rc) {
-		dprintk(VIDC_ERR,
-			"Failed to move inst: %pK to start done state\n", inst);
-		goto failed_open_done;
-	}
-
-	for (c = 0; c < ctrl->ncontrols; ++c) {
-		if (ctrl->cluster[c]->is_new) {
-			struct v4l2_ctrl *temp = ctrl->cluster[c];
-
-			rc = try_set_ctrl(inst, temp);
-			if (rc) {
-				dprintk(VIDC_ERR, "Failed setting %s (%x)\n",
-						v4l2_ctrl_get_name(temp->id),
-						temp->id);
-				break;
-			}
-		}
-	}
-failed_open_done:
-	if (rc)
-		dprintk(VIDC_ERR, "Failed setting control: %x (%s)",
-				ctrl->id, v4l2_ctrl_get_name(ctrl->id));
-	return rc;
-}
-
-static int msm_venc_op_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
-{
-	return 0;
-}
-
-static const struct v4l2_ctrl_ops msm_venc_ctrl_ops = {
-
-	.s_ctrl = msm_venc_op_s_ctrl,
-	.g_volatile_ctrl = msm_venc_op_g_volatile_ctrl,
-};
-
-const struct v4l2_ctrl_ops *msm_venc_get_ctrl_ops(void)
-{
-	return &msm_venc_ctrl_ops;
-}
-
 int msm_venc_inst_init(struct msm_vidc_inst *inst)
 {
 	int rc = 0;
+	struct msm_vidc_format *fmt = NULL;
+
 	if (!inst) {
 		dprintk(VIDC_ERR, "Invalid input = %pK\n", inst);
 		return -EINVAL;
@@ -4000,59 +2682,58 @@ int msm_venc_inst_init(struct msm_vidc_inst *inst)
 	inst->capability.height.max = DEFAULT_HEIGHT;
 	inst->capability.width.min = MIN_SUPPORTED_WIDTH;
 	inst->capability.width.max = DEFAULT_WIDTH;
-	inst->capability.alloc_mode_in = HAL_BUFFER_MODE_STATIC;
-	inst->capability.alloc_mode_out = HAL_BUFFER_MODE_STATIC;
 	inst->capability.secure_output2_threshold.min = 0;
 	inst->capability.secure_output2_threshold.max = 0;
-	inst->buffer_mode_set[OUTPUT_PORT] = HAL_BUFFER_MODE_STATIC;
+	inst->buffer_mode_set[OUTPUT_PORT] = HAL_BUFFER_MODE_DYNAMIC;
 	inst->buffer_mode_set[CAPTURE_PORT] = HAL_BUFFER_MODE_STATIC;
 	inst->prop.fps = DEFAULT_FPS;
 	inst->capability.pixelprocess_capabilities = 0;
-	memcpy(&inst->fmts[CAPTURE_PORT], &venc_formats[4],
-						sizeof(struct msm_vidc_format));
-	memcpy(&inst->fmts[OUTPUT_PORT], &venc_formats[0],
-						sizeof(struct msm_vidc_format));
-	return rc;
-}
+	/* To start with, both ports are 1 plane each */
+	inst->bufq[OUTPUT_PORT].num_planes = 1;
+	inst->bufq[CAPTURE_PORT].num_planes = 1;
+	inst->clk_data.operating_rate = 0;
 
-int msm_venc_s_ext_ctrl(struct msm_vidc_inst *inst,
-	struct v4l2_ext_controls *ctrl)
-{
-	int rc = 0;
-	if (ctrl->ctrl_class != V4L2_CTRL_CLASS_MPEG) {
-		dprintk(VIDC_ERR, "Invalid Class set for extended control\n");
-		return -EINVAL;
-	}
-	rc = try_set_ext_ctrl(inst, ctrl);
-	if (rc) {
-		dprintk(VIDC_ERR, "Error setting extended control\n");
-		return rc;
-	}
-	return rc;
-}
+	inst->buff_req.buffer[1].buffer_type = HAL_BUFFER_INPUT;
+	inst->buff_req.buffer[1].buffer_count_min_host =
+	inst->buff_req.buffer[1].buffer_count_actual =
+		MIN_NUM_ENC_OUTPUT_BUFFERS;
+	inst->buff_req.buffer[2].buffer_type = HAL_BUFFER_OUTPUT;
+	inst->buff_req.buffer[2].buffer_count_min_host =
+	inst->buff_req.buffer[2].buffer_count_actual =
+		MIN_NUM_ENC_CAPTURE_BUFFERS;
 
-int msm_venc_querycap(struct msm_vidc_inst *inst, struct v4l2_capability *cap)
-{
-	if (!inst || !cap) {
+	/* By default, initialize OUTPUT port to UBWC YUV format */
+	fmt = msm_comm_get_pixel_fmt_fourcc(venc_formats,
+		ARRAY_SIZE(venc_formats), V4L2_PIX_FMT_NV12_UBWC,
+			OUTPUT_PORT);
+	if (!fmt || fmt->type != OUTPUT_PORT) {
 		dprintk(VIDC_ERR,
-			"Invalid input, inst = %pK, cap = %pK\n", inst, cap);
+			"venc_formats corrupted\n");
 		return -EINVAL;
 	}
-	strlcpy(cap->driver, MSM_VIDC_DRV_NAME, sizeof(cap->driver));
-	strlcpy(cap->card, MSM_VENC_DVC_NAME, sizeof(cap->card));
-	cap->bus_info[0] = 0;
-	cap->version = MSM_VIDC_VERSION;
-	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE_MPLANE |
-						V4L2_CAP_VIDEO_OUTPUT_MPLANE |
-						V4L2_CAP_STREAMING;
-	memset(cap->reserved, 0, sizeof(cap->reserved));
-	return 0;
+	memcpy(&inst->fmts[fmt->type], fmt,
+			sizeof(struct msm_vidc_format));
+
+	/* By default, initialize CAPTURE port to H264 encoder */
+	fmt = msm_comm_get_pixel_fmt_fourcc(venc_formats,
+		ARRAY_SIZE(venc_formats), V4L2_PIX_FMT_H264,
+			CAPTURE_PORT);
+	if (!fmt || fmt->type != CAPTURE_PORT) {
+		dprintk(VIDC_ERR,
+			"venc_formats corrupted\n");
+		return -EINVAL;
+	}
+	memcpy(&inst->fmts[fmt->type], fmt,
+			sizeof(struct msm_vidc_format));
+
+	return rc;
 }
 
 int msm_venc_enum_fmt(struct msm_vidc_inst *inst, struct v4l2_fmtdesc *f)
 {
 	const struct msm_vidc_format *fmt = NULL;
 	int rc = 0;
+
 	if (!inst || !f) {
 		dprintk(VIDC_ERR,
 			"Invalid input, inst = %pK, f = %pK\n", inst, f);
@@ -4067,7 +2748,7 @@ int msm_venc_enum_fmt(struct msm_vidc_inst *inst, struct v4l2_fmtdesc *f)
 		f->flags = V4L2_FMT_FLAG_COMPRESSED;
 	}
 
-	memset(f->reserved, 0 , sizeof(f->reserved));
+	memset(f->reserved, 0, sizeof(f->reserved));
 	if (fmt) {
 		strlcpy(f->description, fmt->description,
 				sizeof(f->description));
@@ -4079,22 +2760,42 @@ int msm_venc_enum_fmt(struct msm_vidc_inst *inst, struct v4l2_fmtdesc *f)
 	return rc;
 }
 
-static int msm_venc_set_csc(struct msm_vidc_inst *inst)
+static int msm_venc_set_csc(struct msm_vidc_inst *inst,
+					u32 color_primaries, u32 custom_matrix)
 {
 	int rc = 0;
 	int count = 0;
 	struct hal_vpe_color_space_conversion vpe_csc;
+	struct msm_vidc_platform_resources *resources;
+	u32 *bias_coeff = NULL;
+	u32 *csc_limit = NULL;
+	u32 *csc_matrix = NULL;
 
-	while (count < HAL_MAX_MATRIX_COEFFS) {
-		if (count < HAL_MAX_BIAS_COEFFS)
-			vpe_csc.csc_bias[count] =
-				vpe_csc_601_to_709_bias_coeff[count];
-		if (count < HAL_MAX_LIMIT_COEFFS)
-			vpe_csc.csc_limit[count] =
-				vpe_csc_601_to_709_limit_coeff[count];
-		vpe_csc.csc_matrix[count] =
-			vpe_csc_601_to_709_matrix_coeff[count];
-		count = count + 1;
+	resources = &(inst->core->resources);
+	bias_coeff =
+		resources->csc_coeff_data->vpe_csc_custom_bias_coeff;
+	csc_limit =
+		resources->csc_coeff_data->vpe_csc_custom_limit_coeff;
+	csc_matrix =
+		resources->csc_coeff_data->vpe_csc_custom_matrix_coeff;
+
+	vpe_csc.input_color_primaries = color_primaries;
+	/* Custom bias, matrix & limit */
+	vpe_csc.custom_matrix_enabled = custom_matrix;
+
+	if (vpe_csc.custom_matrix_enabled && bias_coeff != NULL
+			&& csc_limit != NULL && csc_matrix != NULL) {
+		while (count < HAL_MAX_MATRIX_COEFFS) {
+			if (count < HAL_MAX_BIAS_COEFFS)
+				vpe_csc.csc_bias[count] =
+					bias_coeff[count];
+			if (count < HAL_MAX_LIMIT_COEFFS)
+				vpe_csc.csc_limit[count] =
+					csc_limit[count];
+			vpe_csc.csc_matrix[count] =
+				csc_matrix[count];
+			count = count + 1;
+		}
 	}
 	rc = msm_comm_try_set_prop(inst,
 			HAL_PARAM_VPE_COLOR_SPACE_CONVERSION, &vpe_csc);
@@ -4108,8 +2809,11 @@ int msm_venc_s_fmt(struct msm_vidc_inst *inst, struct v4l2_format *f)
 {
 	struct msm_vidc_format *fmt = NULL;
 	int rc = 0;
-	int i;
 	struct hfi_device *hdev;
+	int extra_idx = 0, i = 0;
+	struct hal_buffer_requirements *buff_req_buffer;
+	struct hal_frame_size frame_sz;
+
 	if (!inst || !f) {
 		dprintk(VIDC_ERR,
 			"Invalid input, inst = %pK, format = %pK\n", inst, f);
@@ -4123,6 +2827,7 @@ int msm_venc_s_fmt(struct msm_vidc_inst *inst, struct v4l2_format *f)
 	hdev = inst->core->device;
 
 	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+
 		fmt = msm_comm_get_pixel_fmt_fourcc(venc_formats,
 			ARRAY_SIZE(venc_formats), f->fmt.pix_mp.pixelformat,
 			CAPTURE_PORT);
@@ -4133,11 +2838,14 @@ int msm_venc_s_fmt(struct msm_vidc_inst *inst, struct v4l2_format *f)
 			rc = -EINVAL;
 			goto exit;
 		}
-		memcpy(&inst->fmts[fmt->type], fmt,
-						sizeof(struct msm_vidc_format));
 
-		msm_venc_update_plane_count(inst, CAPTURE_PORT);
-		fmt->num_planes = inst->fmts[CAPTURE_PORT].num_planes;
+		memcpy(&inst->fmts[fmt->type], fmt,
+				sizeof(struct msm_vidc_format));
+
+		if (get_hal_codec(inst->fmts[CAPTURE_PORT].fourcc) ==
+			HAL_VIDEO_CODEC_TME) {
+			msm_smem_set_tme_encode_mode(inst->mem_client, true);
+		}
 
 		rc = msm_comm_try_state(inst, MSM_VIDC_OPEN_DONE);
 		if (rc) {
@@ -4153,12 +2861,77 @@ int msm_venc_s_fmt(struct msm_vidc_inst *inst, struct v4l2_format *f)
 				"%s: session not supported\n", __func__);
 			goto exit;
 		}
+
+		frame_sz.buffer_type = HAL_BUFFER_OUTPUT;
+		frame_sz.width = inst->prop.width[CAPTURE_PORT];
+		frame_sz.height = inst->prop.height[CAPTURE_PORT];
+		dprintk(VIDC_DBG, "CAPTURE port width = %d, height = %d\n",
+			frame_sz.width, frame_sz.height);
+		rc = call_hfi_op(hdev, session_set_property, (void *)
+			inst->session, HAL_PARAM_FRAME_SIZE, &frame_sz);
+		if (rc) {
+			dprintk(VIDC_ERR,
+				"Failed to set framesize for CAPTURE port\n");
+			goto exit;
+		}
+
+		rc = msm_comm_try_get_bufreqs(inst);
+		if (rc) {
+			dprintk(VIDC_ERR,
+				"Failed to get buffer requirements: %d\n", rc);
+			return rc;
+		}
+
+		/*
+		 * Get CAPTURE plane size from HW. This may change based on
+		 * settings like Slice delivery mode. HW should decide howmuch
+		 * it needs.
+		 */
+
+		buff_req_buffer = get_buff_req_buffer(inst,
+			HAL_BUFFER_OUTPUT);
+
+		f->fmt.pix_mp.plane_fmt[0].sizeimage = buff_req_buffer ?
+				buff_req_buffer->buffer_size : 0;
+
+		/*
+		 * Get CAPTURE plane Extradata size from HW. This may change
+		 * with no of Extradata's enabled. HW should decide howmuch
+		 * it needs.
+		 */
+
+		extra_idx = EXTRADATA_IDX(inst->bufq[fmt->type].num_planes);
+		if (extra_idx && extra_idx < VIDEO_MAX_PLANES) {
+			buff_req_buffer = get_buff_req_buffer(inst,
+					HAL_BUFFER_EXTRADATA_OUTPUT);
+			f->fmt.pix_mp.plane_fmt[extra_idx].sizeimage =
+				buff_req_buffer ?
+				buff_req_buffer->buffer_size : 0;
+		}
+
+		f->fmt.pix_mp.num_planes = inst->bufq[fmt->type].num_planes;
+		for (i = 0; i < inst->bufq[fmt->type].num_planes; i++) {
+			inst->bufq[fmt->type].plane_sizes[i] =
+				f->fmt.pix_mp.plane_fmt[i].sizeimage;
+		}
+		/*
+		 * Input extradata buffer size may change upon updating
+		 * CAPTURE plane buffer size.
+		 */
+
+		extra_idx = EXTRADATA_IDX(inst->bufq[OUTPUT_PORT].num_planes);
+		if (extra_idx && extra_idx < VIDEO_MAX_PLANES) {
+			buff_req_buffer = get_buff_req_buffer(inst,
+					HAL_BUFFER_EXTRADATA_INPUT);
+			inst->bufq[OUTPUT_PORT].plane_sizes[extra_idx] =
+				buff_req_buffer ?
+				buff_req_buffer->buffer_size : 0;
+		}
 	} else if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		struct hal_frame_size frame_sz;
 
 		inst->prop.width[OUTPUT_PORT] = f->fmt.pix_mp.width;
 		inst->prop.height[OUTPUT_PORT] = f->fmt.pix_mp.height;
-
 		rc = msm_vidc_check_session_supported(inst);
 		if (rc) {
 			dprintk(VIDC_ERR,
@@ -4169,7 +2942,7 @@ int msm_venc_s_fmt(struct msm_vidc_inst *inst, struct v4l2_format *f)
 		frame_sz.buffer_type = HAL_BUFFER_INPUT;
 		frame_sz.width = inst->prop.width[OUTPUT_PORT];
 		frame_sz.height = inst->prop.height[OUTPUT_PORT];
-		dprintk(VIDC_DBG, "width = %d, height = %d\n",
+		dprintk(VIDC_DBG, "OUTPUT port width = %d, height = %d\n",
 				frame_sz.width, frame_sz.height);
 		rc = call_hfi_op(hdev, session_set_property, (void *)
 			inst->session, HAL_PARAM_FRAME_SIZE, &frame_sz);
@@ -4189,11 +2962,42 @@ int msm_venc_s_fmt(struct msm_vidc_inst *inst, struct v4l2_format *f)
 			rc = -EINVAL;
 			goto exit;
 		}
+		inst->clk_data.opb_fourcc = f->fmt.pix_mp.pixelformat;
 		memcpy(&inst->fmts[fmt->type], fmt,
-						sizeof(struct msm_vidc_format));
+				sizeof(struct msm_vidc_format));
 
-		msm_venc_update_plane_count(inst, OUTPUT_PORT);
-		fmt->num_planes = inst->fmts[OUTPUT_PORT].num_planes;
+		f->fmt.pix_mp.plane_fmt[0].sizeimage =
+			inst->fmts[fmt->type].get_frame_size(0,
+			f->fmt.pix_mp.height, f->fmt.pix_mp.width);
+
+		rc = msm_comm_try_get_bufreqs(inst);
+		if (rc) {
+			dprintk(VIDC_ERR,
+				"Failed to get buffer requirements: %d\n", rc);
+			return rc;
+		}
+
+		/*
+		 * Get OUTPUT plane Extradata size from HW. This may change
+		 * with no of Extradata's enabled. HW should decide howmuch
+		 * it needs.
+		 */
+
+		extra_idx = EXTRADATA_IDX(inst->bufq[fmt->type].num_planes);
+		if (extra_idx && extra_idx < VIDEO_MAX_PLANES) {
+			buff_req_buffer = get_buff_req_buffer(inst,
+					HAL_BUFFER_EXTRADATA_INPUT);
+			f->fmt.pix_mp.plane_fmt[extra_idx].sizeimage =
+				buff_req_buffer ?
+				buff_req_buffer->buffer_size : 0;
+		}
+
+		f->fmt.pix_mp.num_planes = inst->bufq[fmt->type].num_planes;
+
+		for (i = 0; i < inst->bufq[fmt->type].num_planes; i++) {
+			inst->bufq[fmt->type].plane_sizes[i] =
+				f->fmt.pix_mp.plane_fmt[i].sizeimage;
+		}
 
 		msm_comm_set_color_format(inst, HAL_BUFFER_INPUT, fmt->fourcc);
 	} else {
@@ -4202,374 +3006,13 @@ int msm_venc_s_fmt(struct msm_vidc_inst *inst, struct v4l2_format *f)
 		rc = -EINVAL;
 		goto exit;
 	}
-
-	f->fmt.pix_mp.num_planes = fmt->num_planes;
-
-	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		struct hal_frame_size frame_sz = {0};
-		struct hal_buffer_requirements *bufreq = NULL;
-
-		frame_sz.width = inst->prop.width[CAPTURE_PORT];
-		frame_sz.height = inst->prop.height[CAPTURE_PORT];
-		frame_sz.buffer_type = HAL_BUFFER_OUTPUT;
-		rc = call_hfi_op(hdev, session_set_property, (void *)
-				inst->session, HAL_PARAM_FRAME_SIZE,
-				&frame_sz);
-		if (rc) {
-			dprintk(VIDC_ERR,
-					"Failed to set OUTPUT framesize\n");
-			goto exit;
-		}
-		rc = msm_comm_try_get_bufreqs(inst);
-		if (rc) {
-			dprintk(VIDC_WARN,
-				"%s : Getting buffer reqs failed: %d\n",
-					__func__, rc);
-			goto exit;
-		}
-		bufreq = get_buff_req_buffer(inst, HAL_BUFFER_OUTPUT);
-		f->fmt.pix_mp.plane_fmt[0].sizeimage =
-			bufreq ? bufreq->buffer_size : 0;
-	} else if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		struct hal_buffer_requirements *bufreq = NULL;
-		int extra_idx = 0;
-
-		for (i = 0; i < inst->fmts[fmt->type].num_planes; ++i) {
-			f->fmt.pix_mp.plane_fmt[i].sizeimage =
-				inst->fmts[fmt->type].get_frame_size(i,
-				f->fmt.pix_mp.height, f->fmt.pix_mp.width);
-		}
-		extra_idx = EXTRADATA_IDX(inst->fmts[fmt->type].num_planes);
-		if (extra_idx && (extra_idx < VIDEO_MAX_PLANES)) {
-			bufreq = get_buff_req_buffer(inst,
-					HAL_BUFFER_EXTRADATA_INPUT);
-			f->fmt.pix_mp.plane_fmt[extra_idx].sizeimage =
-				bufreq ? bufreq->buffer_size : 0;
-		}
-	}
 exit:
 	return rc;
 }
 
-int msm_venc_g_fmt(struct msm_vidc_inst *inst, struct v4l2_format *f)
-{
-	const struct msm_vidc_format *fmt = NULL;
-	int rc = 0;
-	int i;
-	u32 height, width, num_planes;
-	unsigned int extra_idx = 0;
-	struct hal_buffer_requirements *bufreq = NULL;
-
-	if (!inst || !f) {
-		dprintk(VIDC_ERR,
-			"Invalid input, inst = %pK, format = %pK\n", inst, f);
-		return -EINVAL;
-	}
-
-	rc = msm_comm_try_get_bufreqs(inst);
-	if (rc) {
-		dprintk(VIDC_WARN, "Getting buffer requirements failed: %d\n",
-				rc);
-		return rc;
-	}
-
-	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		fmt = &inst->fmts[CAPTURE_PORT];
-		height = inst->prop.height[CAPTURE_PORT];
-		width = inst->prop.width[CAPTURE_PORT];
-		msm_venc_update_plane_count(inst, CAPTURE_PORT);
-		num_planes = inst->fmts[CAPTURE_PORT].num_planes;
-	} else if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		fmt = &inst->fmts[OUTPUT_PORT];
-		height = inst->prop.height[OUTPUT_PORT];
-		width = inst->prop.width[OUTPUT_PORT];
-		msm_venc_update_plane_count(inst, OUTPUT_PORT);
-		num_planes = inst->fmts[OUTPUT_PORT].num_planes;
-	} else {
-		dprintk(VIDC_ERR, "Invalid type: %x\n", f->type);
-		return -ENOTSUPP;
-	}
-
-	f->fmt.pix_mp.pixelformat = fmt->fourcc;
-	f->fmt.pix_mp.height = height;
-	f->fmt.pix_mp.width = width;
-	f->fmt.pix_mp.num_planes = num_planes;
-
-	if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-		for (i = 0; i < num_planes; ++i) {
-			f->fmt.pix_mp.plane_fmt[i].sizeimage =
-				fmt->get_frame_size(i, height, width);
-		}
-	} else if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		bufreq = get_buff_req_buffer(inst,
-				HAL_BUFFER_OUTPUT);
-
-		f->fmt.pix_mp.plane_fmt[0].sizeimage =
-			bufreq ? bufreq->buffer_size : 0;
-	}
-	extra_idx = EXTRADATA_IDX(num_planes);
-	if (extra_idx && (extra_idx < VIDEO_MAX_PLANES)) {
-		if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
-			bufreq = get_buff_req_buffer(inst,
-						HAL_BUFFER_EXTRADATA_OUTPUT);
-		else if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)
-			bufreq = get_buff_req_buffer(inst,
-						HAL_BUFFER_EXTRADATA_INPUT);
-
-		f->fmt.pix_mp.plane_fmt[extra_idx].sizeimage =
-			bufreq ? bufreq->buffer_size : 0;
-	}
-
-	for (i = 0; i < num_planes; ++i) {
-		if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-			inst->bufq[OUTPUT_PORT].vb2_bufq.plane_sizes[i] =
-				f->fmt.pix_mp.plane_fmt[i].sizeimage;
-		} else if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-			inst->bufq[CAPTURE_PORT].vb2_bufq.plane_sizes[i] =
-				f->fmt.pix_mp.plane_fmt[i].sizeimage;
-		}
-	}
-	return rc;
-}
-
-int msm_venc_reqbufs(struct msm_vidc_inst *inst, struct v4l2_requestbuffers *b)
-{
-	struct buf_queue *q = NULL;
-	int rc = 0;
-	if (!inst || !b) {
-		dprintk(VIDC_ERR,
-			"Invalid input, inst = %pK, buffer = %pK\n", inst, b);
-		return -EINVAL;
-	}
-	q = msm_comm_get_vb2q(inst, b->type);
-	if (!q) {
-		dprintk(VIDC_ERR,
-		"Failed to find buffer queue for type = %d\n", b->type);
-		return -EINVAL;
-	}
-
-	mutex_lock(&q->lock);
-	rc = vb2_reqbufs(&q->vb2_bufq, b);
-	mutex_unlock(&q->lock);
-	if (rc)
-		dprintk(VIDC_DBG, "Failed to get reqbufs, %d\n", rc);
-	return rc;
-}
-
-int msm_venc_prepare_buf(struct msm_vidc_inst *inst,
-					struct v4l2_buffer *b)
-{
-	int rc = 0;
-	int i;
-	struct vidc_buffer_addr_info buffer_info = {0};
-	struct hfi_device *hdev;
-	int extra_idx = 0;
-
-	if (!inst || !inst->core || !inst->core->device) {
-		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
-		return -EINVAL;
-	}
-
-	hdev = inst->core->device;
-
-	if (inst->state == MSM_VIDC_CORE_INVALID ||
-			inst->core->state == VIDC_CORE_INVALID) {
-		dprintk(VIDC_ERR,
-			"Core %pK in bad state, ignoring prepare buf\n",
-				inst->core);
-		goto exit;
-	}
-
-	switch (b->type) {
-	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
-		break;
-	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
-		if (b->length != inst->fmts[CAPTURE_PORT].num_planes) {
-			dprintk(VIDC_ERR,
-				"Planes mismatch: needed: %d, allocated: %d\n",
-				inst->fmts[CAPTURE_PORT].num_planes,
-				b->length);
-			rc = -EINVAL;
-			break;
-		}
-
-		for (i = 0; i < min_t(int, b->length, VIDEO_MAX_PLANES); i++) {
-			dprintk(VIDC_DBG, "device_addr = %#lx, size = %d\n",
-				b->m.planes[i].m.userptr,
-				b->m.planes[i].length);
-		}
-		buffer_info.buffer_size = b->m.planes[0].length;
-		buffer_info.buffer_type = HAL_BUFFER_OUTPUT;
-		buffer_info.num_buffers = 1;
-		buffer_info.align_device_addr =
-			b->m.planes[0].m.userptr;
-
-		extra_idx = EXTRADATA_IDX(b->length);
-		if (extra_idx && (extra_idx < VIDEO_MAX_PLANES)) {
-			buffer_info.extradata_addr =
-				b->m.planes[extra_idx].m.userptr;
-			dprintk(VIDC_DBG, "extradata: %#lx\n",
-					b->m.planes[extra_idx].m.userptr);
-			buffer_info.extradata_size =
-				b->m.planes[extra_idx].length;
-		}
-
-		rc = call_hfi_op(hdev, session_set_buffers,
-				(void *)inst->session, &buffer_info);
-		if (rc)
-			dprintk(VIDC_ERR,
-					"vidc_hal_session_set_buffers failed\n");
-		break;
-	default:
-		dprintk(VIDC_ERR,
-			"Buffer type not recognized: %d\n", b->type);
-		break;
-	}
-exit:
-	return rc;
-}
-
-int msm_venc_release_buf(struct msm_vidc_inst *inst,
-					struct v4l2_buffer *b)
-{
-	int i, rc = 0, extra_idx = 0;
-	struct vidc_buffer_addr_info buffer_info = {0};
-	struct hfi_device *hdev;
-
-	if (!inst || !inst->core || !inst->core->device) {
-		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
-		return -EINVAL;
-	}
-
-	hdev = inst->core->device;
-
-	rc = msm_comm_try_state(inst, MSM_VIDC_RELEASE_RESOURCES_DONE);
-	if (rc) {
-		dprintk(VIDC_ERR,
-			"Failed to move inst: %pK to release res done state\n",
-			inst);
-		goto exit;
-	}
-	switch (b->type) {
-	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
-		break;
-	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE: {
-		if (b->length !=
-			inst->fmts[CAPTURE_PORT].num_planes) {
-			dprintk(VIDC_ERR,
-					"Planes mismatch: needed: %d, to release: %d\n",
-					inst->fmts[CAPTURE_PORT].num_planes,
-					b->length);
-			rc = -EINVAL;
-			break;
-		}
-		for (i = 0; i < b->length; i++) {
-			dprintk(VIDC_DBG,
-				"Release device_addr = %#lx, size = %d, %d\n",
-				b->m.planes[i].m.userptr,
-				b->m.planes[i].length, inst->state);
-		}
-		buffer_info.buffer_size = b->m.planes[0].length;
-		buffer_info.buffer_type = HAL_BUFFER_OUTPUT;
-		buffer_info.num_buffers = 1;
-		buffer_info.align_device_addr =
-			b->m.planes[0].m.userptr;
-		extra_idx = EXTRADATA_IDX(b->length);
-		if (extra_idx && (extra_idx < VIDEO_MAX_PLANES))
-			buffer_info.extradata_addr =
-			b->m.planes[extra_idx].m.userptr;
-		buffer_info.response_required = false;
-		rc = call_hfi_op(hdev, session_release_buffers,
-				(void *)inst->session, &buffer_info);
-		if (rc)
-			dprintk(VIDC_ERR,
-					"vidc_hal_session_release_buffers failed\n");
-		}
-		break;
-	default:
-		dprintk(VIDC_ERR, "Buffer type not recognized: %d\n", b->type);
-		break;
-	}
-exit:
-	return rc;
-}
-
-int msm_venc_qbuf(struct msm_vidc_inst *inst, struct v4l2_buffer *b)
-{
-	struct buf_queue *q = NULL;
-	int rc = 0;
-	q = msm_comm_get_vb2q(inst, b->type);
-	if (!q) {
-		dprintk(VIDC_ERR,
-			"Failed to find buffer queue for type = %d\n", b->type);
-		return -EINVAL;
-	}
-	mutex_lock(&q->lock);
-	rc = vb2_qbuf(&q->vb2_bufq, b);
-	mutex_unlock(&q->lock);
-	if (rc)
-		dprintk(VIDC_ERR, "Failed to qbuf, %d\n", rc);
-	return rc;
-}
-
-int msm_venc_dqbuf(struct msm_vidc_inst *inst, struct v4l2_buffer *b)
-{
-	struct buf_queue *q = NULL;
-	int rc = 0;
-	q = msm_comm_get_vb2q(inst, b->type);
-	if (!q) {
-		dprintk(VIDC_ERR,
-			"Failed to find buffer queue for type = %d\n", b->type);
-		return -EINVAL;
-	}
-	mutex_lock(&q->lock);
-	rc = vb2_dqbuf(&q->vb2_bufq, b, true);
-	mutex_unlock(&q->lock);
-	if (rc)
-		dprintk(VIDC_DBG, "Failed to dqbuf, %d\n", rc);
-	return rc;
-}
-
-int msm_venc_streamon(struct msm_vidc_inst *inst, enum v4l2_buf_type i)
-{
-	int rc = 0;
-	struct buf_queue *q;
-	q = msm_comm_get_vb2q(inst, i);
-	if (!q) {
-		dprintk(VIDC_ERR,
-			"Failed to find buffer queue for type = %d\n", i);
-		return -EINVAL;
-	}
-	dprintk(VIDC_DBG, "Calling streamon\n");
-	mutex_lock(&q->lock);
-	rc = vb2_streamon(&q->vb2_bufq, i);
-	mutex_unlock(&q->lock);
-	if (rc)
-		dprintk(VIDC_ERR, "streamon failed on port: %d\n", i);
-	return rc;
-}
-
-int msm_venc_streamoff(struct msm_vidc_inst *inst, enum v4l2_buf_type i)
-{
-	int rc = 0;
-	struct buf_queue *q;
-	q = msm_comm_get_vb2q(inst, i);
-	if (!q) {
-		dprintk(VIDC_ERR,
-			"Failed to find buffer queue for type = %d\n", i);
-		return -EINVAL;
-	}
-	dprintk(VIDC_DBG, "Calling streamoff on port: %d\n", i);
-	mutex_lock(&q->lock);
-	rc = vb2_streamoff(&q->vb2_bufq, i);
-	mutex_unlock(&q->lock);
-	if (rc)
-		dprintk(VIDC_ERR, "streamoff failed on port: %d\n", i);
-	return rc;
-}
-
-int msm_venc_ctrl_init(struct msm_vidc_inst *inst)
+int msm_venc_ctrl_init(struct msm_vidc_inst *inst,
+	const struct v4l2_ctrl_ops *ctrl_ops)
 {
 	return msm_comm_ctrl_init(inst, msm_venc_ctrls,
-			ARRAY_SIZE(msm_venc_ctrls), &msm_venc_ctrl_ops);
+			ARRAY_SIZE(msm_venc_ctrls), ctrl_ops);
 }

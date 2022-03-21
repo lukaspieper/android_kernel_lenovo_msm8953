@@ -568,7 +568,7 @@ static ssize_t tower_read (struct file *file, char __user *buffer, size_t count,
 	}
 
 	if (read_timeout) {
-		timeout = jiffies + read_timeout * HZ / 1000;
+		timeout = jiffies + msecs_to_jiffies(read_timeout);
 	}
 
 	/* wait for data */
@@ -586,7 +586,7 @@ static ssize_t tower_read (struct file *file, char __user *buffer, size_t count,
 		/* reset read timeout during read or write activity */
 		if (read_timeout
 		    && (dev->read_buffer_length || dev->interrupt_out_busy)) {
-			timeout = jiffies + read_timeout * HZ / 1000;
+			timeout = jiffies + msecs_to_jiffies(read_timeout);
 		}
 		/* check for read timeout */
 		if (read_timeout && time_after (jiffies, timeout)) {
@@ -811,10 +811,8 @@ static int tower_probe (struct usb_interface *interface, const struct usb_device
 
 	dev = kmalloc (sizeof(struct lego_usb_tower), GFP_KERNEL);
 
-	if (dev == NULL) {
-		dev_err(idev, "Out of memory\n");
+	if (!dev)
 		goto exit;
-	}
 
 	mutex_init(&dev->lock);
 
@@ -826,7 +824,7 @@ static int tower_probe (struct usb_interface *interface, const struct usb_device
 	dev->read_buffer_length = 0;
 	dev->read_packet_length = 0;
 	spin_lock_init (&dev->read_buffer_lock);
-	dev->packet_timeout_jiffies = packet_timeout * HZ / 1000;
+	dev->packet_timeout_jiffies = msecs_to_jiffies(packet_timeout);
 	dev->read_last_arrival = jiffies;
 
 	init_waitqueue_head (&dev->read_wait);
@@ -866,30 +864,20 @@ static int tower_probe (struct usb_interface *interface, const struct usb_device
 	}
 
 	dev->read_buffer = kmalloc (read_buffer_size, GFP_KERNEL);
-	if (!dev->read_buffer) {
-		dev_err(idev, "Couldn't allocate read_buffer\n");
+	if (!dev->read_buffer)
 		goto error;
-	}
 	dev->interrupt_in_buffer = kmalloc (usb_endpoint_maxp(dev->interrupt_in_endpoint), GFP_KERNEL);
-	if (!dev->interrupt_in_buffer) {
-		dev_err(idev, "Couldn't allocate interrupt_in_buffer\n");
+	if (!dev->interrupt_in_buffer)
 		goto error;
-	}
 	dev->interrupt_in_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!dev->interrupt_in_urb) {
-		dev_err(idev, "Couldn't allocate interrupt_in_urb\n");
+	if (!dev->interrupt_in_urb)
 		goto error;
-	}
 	dev->interrupt_out_buffer = kmalloc (write_buffer_size, GFP_KERNEL);
-	if (!dev->interrupt_out_buffer) {
-		dev_err(idev, "Couldn't allocate interrupt_out_buffer\n");
+	if (!dev->interrupt_out_buffer)
 		goto error;
-	}
 	dev->interrupt_out_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!dev->interrupt_out_urb) {
-		dev_err(idev, "Couldn't allocate interrupt_out_urb\n");
+	if (!dev->interrupt_out_urb)
 		goto error;
-	}
 	dev->interrupt_in_interval = interrupt_in_interval ? interrupt_in_interval : dev->interrupt_in_endpoint->bInterval;
 	dev->interrupt_out_interval = interrupt_out_interval ? interrupt_out_interval : dev->interrupt_out_endpoint->bInterval;
 

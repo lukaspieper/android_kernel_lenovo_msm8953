@@ -9,6 +9,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+
 #define pr_fmt(fmt) "CAM-BUFMGR %s:%d " fmt, __func__, __LINE__
 
 #include "msm_generic_buf_mgr.h"
@@ -50,7 +51,7 @@ static int32_t msm_buf_mngr_hdl_cont_get_buf(struct msm_buf_mngr_device *dev,
 }
 
 static int32_t msm_buf_mngr_get_buf(struct msm_buf_mngr_device *dev,
-	void __user *argp)
+	void *argp)
 {
 	unsigned long flags;
 	int32_t rc = 0;
@@ -64,20 +65,20 @@ static int32_t msm_buf_mngr_get_buf(struct msm_buf_mngr_device *dev,
 		return -ENOMEM;
 	}
 	INIT_LIST_HEAD(&new_entry->entry);
-	new_entry->vb2_buf = dev->vb2_ops.get_buf(buf_info->session_id,
+	new_entry->vb2_v4l2_buf = dev->vb2_ops.get_buf(buf_info->session_id,
 		buf_info->stream_id);
-	if (!new_entry->vb2_buf) {
+	if (!new_entry->vb2_v4l2_buf) {
 		pr_debug("%s:Get buf is null\n", __func__);
 		kfree(new_entry);
 		return -EINVAL;
 	}
 	new_entry->session_id = buf_info->session_id;
 	new_entry->stream_id = buf_info->stream_id;
-	new_entry->index = new_entry->vb2_buf->v4l2_buf.index;
+	new_entry->index = new_entry->vb2_v4l2_buf->vb2_buf.index;
 	spin_lock_irqsave(&dev->buf_q_spinlock, flags);
 	list_add_tail(&new_entry->entry, &dev->buf_qhead);
 	spin_unlock_irqrestore(&dev->buf_q_spinlock, flags);
-	buf_info->index = new_entry->vb2_buf->v4l2_buf.index;
+	buf_info->index = new_entry->vb2_v4l2_buf->vb2_buf.index;
 	if (buf_info->type == MSM_CAMERA_BUF_MNGR_BUF_USER) {
 		mutex_lock(&dev->cont_mutex);
 		if (!list_empty(&dev->cont_qhead)) {
@@ -102,26 +103,25 @@ static int32_t msm_buf_mngr_get_buf_by_idx(struct msm_buf_mngr_device *dev,
 	struct msm_get_bufs *new_entry =
 		kzalloc(sizeof(struct msm_get_bufs), GFP_KERNEL);
 
-	if (!new_entry) {
-		pr_err("%s:No mem\n", __func__);
+	if (!new_entry)
 		return -ENOMEM;
-	}
+
 	if (!buf_info) {
 		kfree(new_entry);
 		return -EIO;
 	}
 
 	INIT_LIST_HEAD(&new_entry->entry);
-	new_entry->vb2_buf = dev->vb2_ops.get_buf_by_idx(buf_info->session_id,
-		buf_info->stream_id, buf_info->index);
-	if (!new_entry->vb2_buf) {
+	new_entry->vb2_v4l2_buf = dev->vb2_ops.get_buf_by_idx(
+		buf_info->session_id, buf_info->stream_id, buf_info->index);
+	if (!new_entry->vb2_v4l2_buf) {
 		pr_debug("%s:Get buf is null\n", __func__);
 		kfree(new_entry);
 		return -EINVAL;
 	}
 	new_entry->session_id = buf_info->session_id;
 	new_entry->stream_id = buf_info->stream_id;
-	new_entry->index = new_entry->vb2_buf->v4l2_buf.index;
+	new_entry->index = new_entry->vb2_v4l2_buf->vb2_buf.index;
 	spin_lock_irqsave(&dev->buf_q_spinlock, flags);
 	list_add_tail(&new_entry->entry, &dev->buf_qhead);
 	spin_unlock_irqrestore(&dev->buf_q_spinlock, flags);
@@ -152,7 +152,7 @@ static int32_t msm_buf_mngr_buf_done(struct msm_buf_mngr_device *buf_mngr_dev,
 			(bufs->stream_id == buf_info->stream_id) &&
 			(bufs->index == buf_info->index)) {
 			ret = buf_mngr_dev->vb2_ops.buf_done
-					(bufs->vb2_buf,
+					(bufs->vb2_v4l2_buf,
 						buf_info->session_id,
 						buf_info->stream_id,
 						buf_info->frame_id,
@@ -167,6 +167,33 @@ static int32_t msm_buf_mngr_buf_done(struct msm_buf_mngr_device *buf_mngr_dev,
 	return ret;
 }
 
+static int32_t msm_buf_mngr_buf_error(struct msm_buf_mngr_device *buf_mngr_dev,
+	struct msm_buf_mngr_info *buf_info)
+{
+	unsigned long flags;
+	struct msm_get_bufs *bufs, *save;
+	int32_t ret = -EINVAL;
+
+	spin_lock_irqsave(&buf_mngr_dev->buf_q_spinlock, flags);
+	list_for_each_entry_safe(bufs, save, &buf_mngr_dev->buf_qhead, entry) {
+		if ((bufs->session_id == buf_info->session_id) &&
+			(bufs->stream_id == buf_info->stream_id) &&
+			(bufs->index == buf_info->index)) {
+			ret = buf_mngr_dev->vb2_ops.buf_error
+					(bufs->vb2_v4l2_buf,
+						buf_info->session_id,
+						buf_info->stream_id,
+						buf_info->frame_id,
+						&buf_info->timestamp,
+						buf_info->reserved);
+			list_del_init(&bufs->entry);
+			kfree(bufs);
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&buf_mngr_dev->buf_q_spinlock, flags);
+	return ret;
+}
 
 static int32_t msm_buf_mngr_put_buf(struct msm_buf_mngr_device *buf_mngr_dev,
 	struct msm_buf_mngr_info *buf_info)
@@ -180,7 +207,7 @@ static int32_t msm_buf_mngr_put_buf(struct msm_buf_mngr_device *buf_mngr_dev,
 		if ((bufs->session_id == buf_info->session_id) &&
 			(bufs->stream_id == buf_info->stream_id) &&
 			(bufs->index == buf_info->index)) {
-			ret = buf_mngr_dev->vb2_ops.put_buf(bufs->vb2_buf,
+			ret = buf_mngr_dev->vb2_ops.put_buf(bufs->vb2_v4l2_buf,
 				buf_info->session_id, buf_info->stream_id);
 			list_del_init(&bufs->entry);
 			kfree(bufs);
@@ -208,11 +235,11 @@ static int32_t msm_generic_buf_mngr_flush(
 	list_for_each_entry_safe(bufs, save, &buf_mngr_dev->buf_qhead, entry) {
 		if ((bufs->session_id == buf_info->session_id) &&
 			(bufs->stream_id == buf_info->stream_id)) {
-			ret = buf_mngr_dev->vb2_ops.buf_done(bufs->vb2_buf,
+			ret = buf_mngr_dev->vb2_ops.buf_done(bufs->vb2_v4l2_buf,
 						buf_info->session_id,
 						buf_info->stream_id, 0, &ts, 0);
 			pr_err("Bufs not flushed: str_id = %d buf_index = %d ret = %d\n",
-			buf_info->stream_id, bufs->vb2_buf->v4l2_buf.index,
+			buf_info->stream_id, bufs->index,
 			ret);
 			list_del_init(&bufs->entry);
 			kfree(bufs);
@@ -290,19 +317,20 @@ static void msm_buf_mngr_sd_shutdown(struct msm_buf_mngr_device *dev,
 	unsigned long flags;
 	struct msm_get_bufs *bufs, *save;
 
-	BUG_ON(!dev);
-	BUG_ON(!session);
+	if (WARN_ON(!dev))
+		return;
+	if (WARN_ON(!session))
+		return;
 
 	spin_lock_irqsave(&dev->buf_q_spinlock, flags);
 	if (!list_empty(&dev->buf_qhead)) {
 		list_for_each_entry_safe(bufs,
 			save, &dev->buf_qhead, entry) {
+			pr_info("%s: Delete invalid bufs =%pK, session_id=%u, bufs->ses_id=%d, str_id=%d, idx=%d\n",
+				__func__, (void *)bufs, session->session,
+				bufs->session_id, bufs->stream_id,
+				bufs->index);
 			if (session->session == bufs->session_id) {
-				pr_info("%s: Delete invalid bufs =%pK, session_id=%u, bufs->ses_id=%d, str_id=%d, idx=%d\n",
-					__func__, (void *)bufs,
-					session->session,
-					bufs->session_id, bufs->stream_id,
-					bufs->index);
 				list_del_init(&bufs->entry);
 				kfree(bufs);
 			}
@@ -351,7 +379,7 @@ static int msm_buf_mngr_handle_cont_cmd(struct msm_buf_mngr_device *dev,
 				}
 			}
 		}
-		ion_handle = ion_import_dma_buf(dev->ion_client,
+		ion_handle = ion_import_dma_buf_fd(dev->ion_client,
 				cont_cmd->cont_fd);
 		if (IS_ERR_OR_NULL(ion_handle)) {
 			pr_err("Failed to create ion handle for fd %d\n",
@@ -438,6 +466,7 @@ static int msm_generic_buf_mngr_open(struct v4l2_subdev *sd,
 {
 	int rc = 0;
 	struct msm_buf_mngr_device *buf_mngr_dev = v4l2_get_subdevdata(sd);
+
 	if (!buf_mngr_dev) {
 		pr_err("%s buf manager device NULL\n", __func__);
 		rc = -ENODEV;
@@ -451,6 +480,7 @@ static int msm_generic_buf_mngr_close(struct v4l2_subdev *sd,
 {
 	int rc = 0;
 	struct msm_buf_mngr_device *buf_mngr_dev = v4l2_get_subdevdata(sd);
+
 	if (!buf_mngr_dev) {
 		pr_err("%s buf manager device NULL\n", __func__);
 		rc = -ENODEV;
@@ -459,7 +489,7 @@ static int msm_generic_buf_mngr_close(struct v4l2_subdev *sd,
 	return rc;
 }
 
-int msm_cam_buf_mgr_ops(unsigned int cmd, void *argp)
+static int msm_cam_buf_mgr_ops(unsigned int cmd, void *argp)
 {
 	int rc = 0;
 
@@ -474,6 +504,9 @@ int msm_cam_buf_mgr_ops(unsigned int cmd, void *argp)
 		break;
 	case VIDIOC_MSM_BUF_MNGR_BUF_DONE:
 		rc = msm_buf_mngr_buf_done(msm_buf_mngr_dev, argp);
+		break;
+	case VIDIOC_MSM_BUF_MNGR_BUF_ERROR:
+		rc = msm_buf_mngr_buf_error(msm_buf_mngr_dev, argp);
 		break;
 	case VIDIOC_MSM_BUF_MNGR_PUT_BUF:
 		rc = msm_buf_mngr_put_buf(msm_buf_mngr_dev, argp);
@@ -525,7 +558,7 @@ static long msm_buf_mngr_subdev_ioctl(struct v4l2_subdev *sd,
 {
 	int32_t rc = 0;
 	struct msm_buf_mngr_device *buf_mngr_dev = v4l2_get_subdevdata(sd);
-	void __user *argp = (void __user *)arg;
+	void *argp = arg;
 
 	if (!buf_mngr_dev) {
 		pr_err("%s buf manager device NULL\n", __func__);
@@ -551,8 +584,7 @@ static long msm_buf_mngr_subdev_ioctl(struct v4l2_subdev *sd,
 			if (!is_compat_task()) {
 				MSM_CAM_GET_IOCTL_ARG_PTR(&tmp,
 					&k_ioctl.ioctl_ptr, sizeof(tmp));
-				if (copy_from_user(&buf_info,
-					(void __user *)tmp,
+				if (copy_from_user(&buf_info, tmp,
 					sizeof(struct msm_buf_mngr_info))) {
 					return -EFAULT;
 				}
@@ -567,11 +599,12 @@ static long msm_buf_mngr_subdev_ioctl(struct v4l2_subdev *sd,
 			pr_debug("unimplemented id %d", k_ioctl.id);
 			return -EINVAL;
 		}
-		}
 		break;
+	}
 	case VIDIOC_MSM_BUF_MNGR_GET_BUF:
 	case VIDIOC_MSM_BUF_MNGR_BUF_DONE:
 	case VIDIOC_MSM_BUF_MNGR_PUT_BUF:
+	case VIDIOC_MSM_BUF_MNGR_BUF_ERROR:
 		rc = msm_cam_buf_mgr_ops(cmd, argp);
 		break;
 	case VIDIOC_MSM_BUF_MNGR_INIT:
@@ -679,6 +712,7 @@ static long msm_camera_buf_mgr_internal_compat_ioctl(struct file *file,
 			return -EINVAL;
 		}
 		k_ioctl.ioctl_ptr = (__u64)&buf_info;
+		k_ioctl.size = sizeof(struct msm_buf_mngr_info);
 		rc = msm_camera_buf_mgr_fetch_buf_info(&buf_info32, &buf_info,
 			(unsigned long)tmp_compat_ioctl_ptr);
 		if (rc < 0) {
@@ -719,6 +753,9 @@ static long msm_bmgr_subdev_fops_compat_ioctl(struct file *file,
 	case VIDIOC_MSM_BUF_MNGR_BUF_DONE32:
 		cmd = VIDIOC_MSM_BUF_MNGR_BUF_DONE;
 		break;
+	case VIDIOC_MSM_BUF_MNGR_BUF_ERROR32:
+		cmd = VIDIOC_MSM_BUF_MNGR_BUF_ERROR;
+		break;
 	case VIDIOC_MSM_BUF_MNGR_PUT_BUF32:
 		cmd = VIDIOC_MSM_BUF_MNGR_PUT_BUF;
 		break;
@@ -737,6 +774,7 @@ static long msm_bmgr_subdev_fops_compat_ioctl(struct file *file,
 	switch (cmd) {
 	case VIDIOC_MSM_BUF_MNGR_GET_BUF:
 	case VIDIOC_MSM_BUF_MNGR_BUF_DONE:
+	case VIDIOC_MSM_BUF_MNGR_BUF_ERROR:
 	case VIDIOC_MSM_BUF_MNGR_FLUSH:
 	case VIDIOC_MSM_BUF_MNGR_PUT_BUF: {
 		struct msm_buf_mngr_info32_t buf_info32;
@@ -759,8 +797,8 @@ static long msm_bmgr_subdev_fops_compat_ioctl(struct file *file,
 			pr_err("Update buf info failed for cmd=%d\n", cmd);
 			return rc;
 		}
-		}
 		break;
+	}
 	case VIDIOC_MSM_BUF_MNGR_IOCTL_CMD: {
 		rc = msm_camera_buf_mgr_internal_compat_ioctl(file, cmd, arg);
 		if (rc < 0) {
@@ -785,7 +823,6 @@ static long msm_bmgr_subdev_fops_compat_ioctl(struct file *file,
 	default:
 		pr_debug("unsupported compat type\n");
 		return -ENOIOCTLCMD;
-		break;
 	}
 	return 0;
 }
@@ -806,7 +843,6 @@ static const struct v4l2_subdev_ops msm_buf_mngr_subdev_ops = {
 };
 
 static const struct of_device_id msm_buf_mngr_dt_match[] = {
-	{.compatible = "qcom,msm_buf_mngr"},
 	{}
 };
 
@@ -822,7 +858,8 @@ static long msm_bmgr_subdev_do_ioctl(
 }
 
 
-static long msm_buf_subdev_fops_ioctl(struct file *file, unsigned int cmd,
+static long msm_buf_subdev_fops_ioctl(struct file *file,
+		unsigned int cmd,
 		unsigned long arg)
 {
 	return video_usercopy(file, cmd, arg, msm_bmgr_subdev_do_ioctl);
@@ -831,6 +868,7 @@ static long msm_buf_subdev_fops_ioctl(struct file *file, unsigned int cmd,
 static int32_t __init msm_buf_mngr_init(void)
 {
 	int32_t rc = 0;
+
 	msm_buf_mngr_dev = kzalloc(sizeof(*msm_buf_mngr_dev),
 		GFP_KERNEL);
 	if (WARN_ON(!msm_buf_mngr_dev)) {
@@ -851,9 +889,8 @@ static int32_t __init msm_buf_mngr_init(void)
 	msm_buf_mngr_dev->subdev.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	v4l2_set_subdevdata(&msm_buf_mngr_dev->subdev.sd, msm_buf_mngr_dev);
 
-	media_entity_init(&msm_buf_mngr_dev->subdev.sd.entity, 0, NULL, 0);
-	msm_buf_mngr_dev->subdev.sd.entity.type = MEDIA_ENT_T_V4L2_SUBDEV;
-	msm_buf_mngr_dev->subdev.sd.entity.group_id =
+	media_entity_pads_init(&msm_buf_mngr_dev->subdev.sd.entity, 0, NULL);
+	msm_buf_mngr_dev->subdev.sd.entity.function =
 		MSM_CAMERA_SUBDEV_BUF_MNGR;
 	msm_buf_mngr_dev->subdev.sd.internal_ops =
 		&msm_generic_buf_mngr_subdev_internal_ops;

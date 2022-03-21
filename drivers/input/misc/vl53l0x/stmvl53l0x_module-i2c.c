@@ -1,6 +1,6 @@
 /*
  *  stmvl53l0x_module-i2c.c - Linux kernel modules for
- *	STM VL53L0 FlightSense TOF sensor
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,7 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
 
 #include <linux/uaccess.h>
 #include <linux/module.h>
@@ -180,7 +179,7 @@ int stmvl53l0x_power_up_i2c(void *i2c_object, unsigned int *preset_flag)
 	ret = regulator_set_voltage(data->vana,
 		VL_VDD_MIN, VL_VDD_MAX);
 	if (ret < 0) {
-		err("set_vol(%p) fail %d\n", data->vana , ret);
+		err("set_vol(%p) fail %d\n", data->vana, ret);
 		return ret;
 	}
 	ret = regulator_enable(data->vana);

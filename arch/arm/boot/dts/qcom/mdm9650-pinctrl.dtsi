@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -192,6 +192,7 @@
 				};
 			};
 		};
+
 		bmi160_int1_default: bmi160_int1_default {
 			     mux {
 				     pins = "gpio0";
@@ -203,6 +204,7 @@
 				     bias-pull-down;
 			     };
 		};
+
 		bmi160_int2_default: bmi160_int2_default {
 			     mux {
 				     pins = "gpio1";
@@ -492,7 +494,6 @@
 		};
 
 		/* UART HS CONFIGURATION */
-
 		blsp1_uart1_active: blsp1_uart1_active {
 			mux {
 				pins = "gpio0", "gpio1", "gpio2", "gpio3";
@@ -518,6 +519,7 @@
 				bias-disable;
 			};
 		};
+
 		blsp1_uart2_active: blsp1_uart2_active {
 			mux {
 				pins = "gpio4", "gpio5", "gpio6", "gpio7";
@@ -543,6 +545,7 @@
 				bias-disable;
 			};
 		};
+
 		blsp1_uart3_active: blsp1_uart3_active {
 			mux {
 				pins = "gpio8", "gpio9", "gpio10", "gpio11";

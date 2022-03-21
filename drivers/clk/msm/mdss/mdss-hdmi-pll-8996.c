@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2016, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,14 +31,14 @@
 #define HDMI_CLKS_PLL_DIVSEL                     0
 #define HDMI_CORECLK_DIV                         5
 #define HDMI_REF_CLOCK                           19200000
-#define HDMI_64B_ERR_VAL                         0xFFFFFFFFFFFFFFFF
+#define HDMI_64B_ERR_VAL                         0xFFFFFFFFFFFFFFFFULL
 #define HDMI_VERSION_8996_V1                     1
 #define HDMI_VERSION_8996_V2                     2
 #define HDMI_VERSION_8996_V3                     3
 #define HDMI_VERSION_8996_V3_1_8                 4
 
-#define HDMI_VCO_MAX_FREQ                        12000000000
-#define HDMI_VCO_MIN_FREQ                        8000000000
+#define HDMI_VCO_MAX_FREQ                        12000000000UL
+#define HDMI_VCO_MIN_FREQ                        8000000000UL
 #define HDMI_2400MHZ_BIT_CLK_HZ                  2400000000UL
 #define HDMI_2250MHZ_BIT_CLK_HZ                  2250000000UL
 #define HDMI_2000MHZ_BIT_CLK_HZ                  2000000000UL
@@ -534,6 +534,7 @@ static inline u64 hdmi_8996_v1_get_hsclk(u64 fdata)
 static inline u64 hdmi_8996_v2_get_hsclk(u64 fdata, u64 vco_range)
 {
 	u64 tmp_calc = vco_range;
+
 	tmp_calc <<= 2;
 	do_div(tmp_calc, 3U);
 	if (fdata >= (vco_range << 2))
@@ -556,6 +557,7 @@ static inline u64 hdmi_8996_v2_get_vco_freq(u64 bclk, u64 vco_range)
 
 	if (bclk >= vco_range) {
 		u64 hsclk = hdmi_8996_v2_get_hsclk(bclk, vco_range);
+
 		pll_post_div_ratio = hdmi_8996_v2_get_post_div_gt_2g(hsclk);
 	} else {
 		pll_post_div_ratio = hdmi_8996_v2_get_post_div_lt_2g(bclk,
@@ -567,9 +569,10 @@ static inline u64 hdmi_8996_v2_get_vco_freq(u64 bclk, u64 vco_range)
 
 static inline u64 hdmi_8996_v2_get_fdata(u64 bclk, u64 vco_range)
 {
-	if (bclk >= vco_range) {
+	if (bclk >= vco_range)
 		return bclk;
-	} else {
+
+	{
 		u64 tmp_calc = hdmi_8996_v2_get_vco_freq(bclk, vco_range);
 		u64 pll_post_div_ratio_lt_2g = hdmi_8996_v2_get_post_div_lt_2g(
 							bclk, vco_range);
@@ -645,6 +648,7 @@ static inline u64 hdmi_8996_get_pll_cmp(u64 pll_cmp_cnt, u64 core_clk)
 {
 	u64 pll_cmp;
 	u64 rem;
+
 	pll_cmp = pll_cmp_cnt * core_clk;
 	rem = do_div(pll_cmp, HDMI_REF_CLOCK);
 	if (rem > (HDMI_REF_CLOCK >> 1))
@@ -2562,7 +2566,7 @@ static enum handoff hdmi_8996_vco_handoff(struct clk *c)
 	return ret;
 }
 
-static struct clk_ops hdmi_8996_v1_vco_clk_ops = {
+static const struct clk_ops hdmi_8996_v1_vco_clk_ops = {
 	.enable = hdmi_8996_v1_vco_enable,
 	.set_rate = hdmi_8996_v1_vco_set_rate,
 	.get_rate = hdmi_8996_vco_get_rate,
@@ -2572,7 +2576,7 @@ static struct clk_ops hdmi_8996_v1_vco_clk_ops = {
 	.handoff = hdmi_8996_vco_handoff,
 };
 
-static struct clk_ops hdmi_8996_v2_vco_clk_ops = {
+static const struct clk_ops hdmi_8996_v2_vco_clk_ops = {
 	.enable = hdmi_8996_v2_vco_enable,
 	.set_rate = hdmi_8996_v2_vco_set_rate,
 	.get_rate = hdmi_8996_vco_get_rate,
@@ -2582,7 +2586,7 @@ static struct clk_ops hdmi_8996_v2_vco_clk_ops = {
 	.handoff = hdmi_8996_vco_handoff,
 };
 
-static struct clk_ops hdmi_8996_v3_vco_clk_ops = {
+static const struct clk_ops hdmi_8996_v3_vco_clk_ops = {
 	.enable = hdmi_8996_v3_vco_enable,
 	.set_rate = hdmi_8996_v3_vco_set_rate,
 	.get_rate = hdmi_8996_vco_get_rate,
@@ -2592,7 +2596,7 @@ static struct clk_ops hdmi_8996_v3_vco_clk_ops = {
 	.handoff = hdmi_8996_vco_handoff,
 };
 
-static struct clk_ops hdmi_8996_v3_1p8_vco_clk_ops = {
+static const struct clk_ops hdmi_8996_v3_1p8_vco_clk_ops = {
 	.enable = hdmi_8996_v3_1p8_vco_enable,
 	.set_rate = hdmi_8996_v3_1p8_vco_set_rate,
 	.get_rate = hdmi_8996_vco_get_rate,
@@ -2620,6 +2624,7 @@ int hdmi_8996_pll_clock_register(struct platform_device *pdev,
 				 struct mdss_pll_resources *pll_res, u32 ver)
 {
 	int rc = -ENOTSUPP;
+
 	if (!pll_res || !pll_res->phy_base || !pll_res->pll_base) {
 		DEV_ERR("%s: Invalid input parameters\n", __func__);
 		return -EPROBE_DEFER;

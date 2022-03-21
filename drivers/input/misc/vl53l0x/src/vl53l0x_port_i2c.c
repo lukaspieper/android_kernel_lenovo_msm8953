@@ -1,6 +1,6 @@
 /*
  *  vl53l0x_port_i2c.c - Linux kernel modules for
- *	STM VL53L0 FlightSense TOF sensor
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,8 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
-
 
 #include <linux/i2c.h>
 #include <linux/module.h>

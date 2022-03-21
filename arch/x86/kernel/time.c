@@ -11,6 +11,7 @@
 
 #include <linux/clockchips.h>
 #include <linux/interrupt.h>
+#include <linux/irq.h>
 #include <linux/i8253.h>
 #include <linux/time.h>
 #include <linux/export.h>
@@ -22,11 +23,15 @@
 #include <asm/hpet.h>
 #include <asm/time.h>
 
+#ifdef CONFIG_X86_64
+__visible volatile unsigned long jiffies __cacheline_aligned_in_smp = INITIAL_JIFFIES;
+#endif
+
 unsigned long profile_pc(struct pt_regs *regs)
 {
 	unsigned long pc = instruction_pointer(regs);
 
-	if (!user_mode_vm(regs) && in_lock_functions(pc)) {
+	if (!user_mode(regs) && in_lock_functions(pc)) {
 #ifdef CONFIG_FRAME_POINTER
 		return *(unsigned long *)(regs->bp + sizeof(long));
 #else

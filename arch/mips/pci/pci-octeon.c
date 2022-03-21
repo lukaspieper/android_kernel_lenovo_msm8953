@@ -204,6 +204,8 @@ const char *octeon_get_pci_interrupts(void)
 	 * Interrupt Number (INTA# = 0, INTB# = 1, INTC# = 2, and
 	 * INTD# = 3)
 	 */
+	if (of_machine_is_compatible("dlink,dsr-500n"))
+		return "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
 	switch (octeon_bootinfo->board_type) {
 	case CVMX_BOARD_TYPE_NAO38:
 		/* This is really the NAC38 */
@@ -323,8 +325,8 @@ static int octeon_write_config(struct pci_bus *bus, unsigned int devfn,
 
 
 static struct pci_ops octeon_pci_ops = {
-	octeon_read_config,
-	octeon_write_config,
+	.read	= octeon_read_config,
+	.write	= octeon_write_config,
 };
 
 static struct resource octeon_pci_mem_resource = {
@@ -704,7 +706,7 @@ static int __init octeon_pci_setup(void)
 
 	if (IS_ERR(platform_device_register_simple("octeon_pci_edac",
 						   -1, NULL, 0)))
-		pr_err("Registation of co_pci_edac failed!\n");
+		pr_err("Registration of co_pci_edac failed!\n");
 
 	octeon_pci_dma_init();
 

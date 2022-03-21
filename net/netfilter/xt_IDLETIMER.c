@@ -49,6 +49,7 @@
 #include <linux/notifier.h>
 #include <net/net_namespace.h>
 #include <net/sock.h>
+#include <net/inet_sock.h>
 
 struct idletimer_tg_attr {
 	struct attribute attr;
@@ -282,6 +283,22 @@ static int idletimer_resume(struct notifier_block *notifier,
 	return NOTIFY_DONE;
 }
 
+static int idletimer_check_sysfs_name(const char *name, unsigned int size)
+{
+	int ret;
+
+	ret = xt_check_proc_name(name, size);
+	if (ret < 0)
+		return ret;
+
+	if (!strcmp(name, "power") ||
+	    !strcmp(name, "subsystem") ||
+	    !strcmp(name, "uevent"))
+		return -EINVAL;
+
+	return 0;
+}
+
 static int idletimer_tg_create(struct idletimer_tg_info *info)
 {
 	int ret;
@@ -291,6 +308,10 @@ static int idletimer_tg_create(struct idletimer_tg_info *info)
 		ret = -ENOMEM;
 		goto out;
 	}
+
+	ret = idletimer_check_sysfs_name(info->label, sizeof(info->label));
+	if (ret < 0)
+		goto out_free_timer;
 
 	sysfs_attr_init(&info->timer->attr.attr);
 	info->timer->attr.attr.name = kstrdup(info->label, GFP_KERNEL);
@@ -363,7 +384,7 @@ static void reset_timer(const struct idletimer_tg_info *info,
 		/* Stores the uid resposible for waking up the radio */
 		if (skb && (skb->sk)) {
 			timer->uid = from_kuid_munged(current_user_ns(),
-						sock_i_uid(skb->sk));
+					sock_i_uid(skb_to_full_sk(skb)));
 		}
 
 		/* checks if there is a pending inactive notification*/

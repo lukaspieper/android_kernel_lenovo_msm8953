@@ -45,10 +45,12 @@
 #include <linux/uaccess.h>
 #include <linux/memory.h>
 
+#include <asm/text-patching.h>
 #include <asm/debugreg.h>
 #include <asm/apicdef.h>
 #include <asm/apic.h>
 #include <asm/nmi.h>
+#include <asm/switch_to.h>
 
 struct dbg_reg_def_t dbg_reg_def[DBG_MAX_REG_NUM] =
 {
@@ -72,7 +74,7 @@ struct dbg_reg_def_t dbg_reg_def[DBG_MAX_REG_NUM] =
 	{ "bx", 8, offsetof(struct pt_regs, bx) },
 	{ "cx", 8, offsetof(struct pt_regs, cx) },
 	{ "dx", 8, offsetof(struct pt_regs, dx) },
-	{ "si", 8, offsetof(struct pt_regs, dx) },
+	{ "si", 8, offsetof(struct pt_regs, si) },
 	{ "di", 8, offsetof(struct pt_regs, di) },
 	{ "bp", 8, offsetof(struct pt_regs, bp) },
 	{ "sp", 8, offsetof(struct pt_regs, sp) },
@@ -126,11 +128,11 @@ char *dbg_get_reg(int regno, void *mem, struct pt_regs *regs)
 #ifdef CONFIG_X86_32
 	switch (regno) {
 	case GDB_SS:
-		if (!user_mode_vm(regs))
+		if (!user_mode(regs))
 			*(unsigned long *)mem = __KERNEL_DS;
 		break;
 	case GDB_SP:
-		if (!user_mode_vm(regs))
+		if (!user_mode(regs))
 			*(unsigned long *)mem = kernel_stack_pointer(regs);
 		break;
 	case GDB_GS:
@@ -165,21 +167,19 @@ void sleeping_thread_to_gdb_regs(unsigned long *gdb_regs, struct task_struct *p)
 	gdb_regs[GDB_DX]	= 0;
 	gdb_regs[GDB_SI]	= 0;
 	gdb_regs[GDB_DI]	= 0;
-	gdb_regs[GDB_BP]	= *(unsigned long *)p->thread.sp;
+	gdb_regs[GDB_BP]	= ((struct inactive_task_frame *)p->thread.sp)->bp;
 #ifdef CONFIG_X86_32
 	gdb_regs[GDB_DS]	= __KERNEL_DS;
 	gdb_regs[GDB_ES]	= __KERNEL_DS;
 	gdb_regs[GDB_PS]	= 0;
 	gdb_regs[GDB_CS]	= __KERNEL_CS;
-	gdb_regs[GDB_PC]	= p->thread.ip;
 	gdb_regs[GDB_SS]	= __KERNEL_DS;
 	gdb_regs[GDB_FS]	= 0xFFFF;
 	gdb_regs[GDB_GS]	= 0xFFFF;
 #else
-	gdb_regs32[GDB_PS]	= *(unsigned long *)(p->thread.sp + 8);
+	gdb_regs32[GDB_PS]	= 0;
 	gdb_regs32[GDB_CS]	= __KERNEL_CS;
 	gdb_regs32[GDB_SS]	= __KERNEL_DS;
-	gdb_regs[GDB_PC]	= 0;
 	gdb_regs[GDB_R8]	= 0;
 	gdb_regs[GDB_R9]	= 0;
 	gdb_regs[GDB_R10]	= 0;
@@ -189,6 +189,7 @@ void sleeping_thread_to_gdb_regs(unsigned long *gdb_regs, struct task_struct *p)
 	gdb_regs[GDB_R14]	= 0;
 	gdb_regs[GDB_R15]	= 0;
 #endif
+	gdb_regs[GDB_PC]	= 0;
 	gdb_regs[GDB_SP]	= p->thread.sp;
 }
 
@@ -511,26 +512,31 @@ single_step_cont(struct pt_regs *regs, struct die_args *args)
 	return NOTIFY_STOP;
 }
 
-static int was_in_debug_nmi[NR_CPUS];
+static DECLARE_BITMAP(was_in_debug_nmi, NR_CPUS);
 
 static int kgdb_nmi_handler(unsigned int cmd, struct pt_regs *regs)
 {
+	int cpu;
+
 	switch (cmd) {
 	case NMI_LOCAL:
 		if (atomic_read(&kgdb_active) != -1) {
 			/* KGDB CPU roundup */
-			kgdb_nmicallback(raw_smp_processor_id(), regs);
-			was_in_debug_nmi[raw_smp_processor_id()] = 1;
+			cpu = raw_smp_processor_id();
+			kgdb_nmicallback(cpu, regs);
+			set_bit(cpu, was_in_debug_nmi);
 			touch_nmi_watchdog();
+
 			return NMI_HANDLED;
 		}
 		break;
 
 	case NMI_UNKNOWN:
-		if (was_in_debug_nmi[raw_smp_processor_id()]) {
-			was_in_debug_nmi[raw_smp_processor_id()] = 0;
+		cpu = raw_smp_processor_id();
+
+		if (__test_and_clear_bit(cpu, was_in_debug_nmi))
 			return NMI_HANDLED;
-		}
+
 		break;
 	default:
 		/* do nothing */
@@ -604,9 +610,9 @@ static struct notifier_block kgdb_notifier = {
 };
 
 /**
- *	kgdb_arch_init - Perform any architecture specific initalization.
+ *	kgdb_arch_init - Perform any architecture specific initialization.
  *
- *	This function will handle the initalization of any architecture
+ *	This function will handle the initialization of any architecture
  *	specific callbacks.
  */
 int kgdb_arch_init(void)

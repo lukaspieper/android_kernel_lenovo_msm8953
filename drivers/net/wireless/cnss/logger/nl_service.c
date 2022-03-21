@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -156,7 +156,7 @@ static void logger_flush_event_handle(struct logger_device *dev)
 
 	list_for_each_safe(pos, temp, &dev->event_list) {
 		cur = container_of(pos, struct logger_event_handler, list);
-		pr_info("radio: %d, event: %d unregistered!\n",
+		pr_info("radio: %d, event: %d unregistered\n",
 			dev->radio_idx, cur->event);
 		list_del(&cur->list);
 		kfree(cur);
@@ -331,7 +331,7 @@ int cnss_logger_device_register(struct wiphy *wiphy, const char *name)
 
 	radio = logger_get_radio_idx(ctx);
 	if (radio < 0) {
-		pr_err("driver registration is full!\n");
+		pr_err("driver registration is full\n");
 		return -ENOMEM;
 	}
 
@@ -446,7 +446,7 @@ int logger_netlink_init(struct logger_context *ctx)
 	};
 
 	ctx->nl_sock = netlink_kernel_create(&init_net, NETLINK_USERSOCK, &cfg);
-	if (ctx->nl_sock == NULL) {
+	if (!ctx->nl_sock) {
 		pr_err("cnss_logger: Cannot create netlink socket");
 		return -ENOMEM;
 	}

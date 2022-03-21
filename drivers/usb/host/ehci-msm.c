@@ -1,6 +1,6 @@
 /* ehci-msm.c - HSUSB Host Controller Driver Implementation
  *
- * Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2008-2018, The Linux Foundation. All rights reserved.
  *
  * Partly derived from ehci-fsl.c and ehci-hcd.c
  * Copyright (c) 2000-2004 by David Brownell
@@ -73,8 +73,8 @@ static int ehci_msm_reset(struct usb_hcd *hcd)
 	}
 
 	/* Disable ULPI_TX_PKT_EN_CLR_FIX which is valid only for HSIC */
-	writel_relaxed(readl_relaxed(USB_GENCONFIG2) & ~(1<<19),
-					USB_GENCONFIG2);
+	writel_relaxed(readl_relaxed(USB_GENCONFIG_2) & ~(1<<19),
+					USB_GENCONFIG_2);
 	return 0;
 }
 
@@ -110,20 +110,14 @@ static int ehci_msm_probe(struct platform_device *pdev)
 	hcd->irq = ret;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		dev_err(&pdev->dev, "Unable to get memory resource\n");
-		ret = -ENODEV;
-		goto put_hcd;
-	}
-
-	hcd->rsrc_start = res->start;
-	hcd->rsrc_len = resource_size(res);
 	hcd->regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(hcd->regs)) {
 		dev_err(&pdev->dev, "ioremap failed\n");
 		ret = PTR_ERR(hcd->regs);
 		goto put_hcd;
 	}
+	hcd->rsrc_start = res->start;
+	hcd->rsrc_len = resource_size(res);
 
 	/*
 	 * OTG driver takes care of PHY initialization, clock management,
@@ -173,14 +167,12 @@ static int ehci_msm_remove(struct platform_device *pdev)
 	otg_set_host(hcd->usb_phy->otg, NULL);
 	hcd->usb_phy = NULL;
 
-	/* FIXME: need to call usb_remove_hcd() here? */
-
 	usb_put_hcd(hcd);
 
 	return 0;
 }
 
-#ifdef CONFIG_PM_RUNTIME
+#ifdef CONFIG_PM
 static int ehci_msm_runtime_suspend(struct device *dev)
 {
 	dev_dbg(dev, "ehci runtime suspend\n");
@@ -218,6 +210,7 @@ MODULE_DEVICE_TABLE(of, msm_ehci_dt_match);
 static struct platform_driver ehci_msm_driver = {
 	.probe	= ehci_msm_probe,
 	.remove	= ehci_msm_remove,
+	.shutdown = usb_hcd_platform_shutdown,
 	.driver = {
 		   .name = "msm_hsusb_host",
 		   .pm = &ehci_msm_dev_pm_ops,

@@ -1,6 +1,6 @@
-Qualcomm MDSS EDP
+Qualcomm Technologies, Inc. MDSS EDP
 
-MDSS EDP is a edp driver which supports panels that are compatable with
+MDSS EDP is a edp driver which supports panels that are compatible with
 VESA EDP display interface specification.
 
 When configuring the optional properties for external backlight, one should also

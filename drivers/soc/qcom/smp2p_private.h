@@ -1,6 +1,6 @@
 /* drivers/soc/qcom/smp2p_private.h
  *
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2014,2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -154,12 +154,12 @@ enum {
 
 #define SMP2P_DBG(x...) do {                              \
 	if (smp2p_get_debug_mask() & MSM_SMP2P_DEBUG) \
-			SMP2P_IPC_LOG_STR(x);  \
+		SMP2P_IPC_LOG_STR(x);  \
 } while (0)
 
 #define SMP2P_INFO(x...) do {                              \
 	if (smp2p_get_debug_mask() & MSM_SMP2P_INFO) \
-			SMP2P_IPC_LOG_STR(x);  \
+		SMP2P_IPC_LOG_STR(x);  \
 } while (0)
 
 #define SMP2P_ERR(x...) do {                              \
@@ -169,7 +169,7 @@ enum {
 
 #define SMP2P_GPIO(x...) do {                              \
 	if (smp2p_get_debug_mask() & MSM_SMP2P_GPIO) \
-			SMP2P_IPC_LOG_STR(x);  \
+		SMP2P_IPC_LOG_STR(x);  \
 } while (0)
 
 
@@ -224,7 +224,7 @@ void smp2p_init_header(struct smp2p_smem *header_ptr, int local_pid,
 void *msm_smp2p_get_remote_mock(void);
 int smp2p_remote_mock_rx_interrupt(void);
 int smp2p_reset_mock_edge(void);
-void msm_smp2p_interrupt_handler(int);
+void msm_smp2p_interrupt_handler(int remote_pid);
 void msm_smp2p_set_remote_mock_exists(bool item_exists);
 void *msm_smp2p_get_remote_mock_smem_item(uint32_t *size);
 void *msm_smp2p_init_rmt_lpb_proc(int remote_pid);
@@ -241,8 +241,8 @@ struct smp2p_interrupt_config {
 	const char *name;
 
 	/* interrupt stats */
-	unsigned in_interrupt_count;
-	unsigned out_interrupt_count;
+	unsigned int in_interrupt_count;
+	unsigned int out_interrupt_count;
 };
 
 struct smp2p_interrupt_config *smp2p_get_interrupt_config(void);

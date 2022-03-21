@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <linux/acpi.h>
 #include <linux/bitops.h>
 #include <linux/cacheinfo.h>
 #include <linux/compiler.h>
@@ -104,9 +105,16 @@ static int cache_shared_cpu_map_setup(unsigned int cpu)
 	struct cpu_cacheinfo *this_cpu_ci = get_cpu_cacheinfo(cpu);
 	struct cacheinfo *this_leaf, *sib_leaf;
 	unsigned int index;
-	int ret;
+	int ret = 0;
 
-	ret = cache_setup_of_node(cpu);
+	if (this_cpu_ci->cpu_map_populated)
+		return 0;
+
+	if (of_have_populated_dt())
+		ret = cache_setup_of_node(cpu);
+	else if (!acpi_disabled)
+		/* No cache property/hierarchy support yet in ACPI */
+		ret = -ENOTSUPP;
 	if (ret)
 		return ret;
 
@@ -203,8 +211,7 @@ static int detect_cache_attributes(unsigned int cpu)
 	 */
 	ret = cache_shared_cpu_map_setup(cpu);
 	if (ret) {
-		pr_warn("Unable to detect cache hierarchy from DT for CPU %d\n",
-			cpu);
+		pr_warn("Unable to detect cache hierarchy for CPU %d\n", cpu);
 		goto free_ci;
 	}
 	return 0;
@@ -251,14 +258,8 @@ static ssize_t shared_cpumap_show_func(struct device *dev, bool list, char *buf)
 {
 	struct cacheinfo *this_leaf = dev_get_drvdata(dev);
 	const struct cpumask *mask = &this_leaf->shared_cpu_map;
-	int len;
 
-	len = list ?
-		cpulist_scnprintf(buf, PAGE_SIZE-2, mask) :
-		cpumask_scnprintf(buf, PAGE_SIZE-2, mask);
-	buf[len++] = '\n';
-	buf[len] = '\0';
-	return len;
+	return cpumap_print_to_pagebuf(list, buf, mask);
 }
 
 static ssize_t shared_cpu_map_show(struct device *dev,

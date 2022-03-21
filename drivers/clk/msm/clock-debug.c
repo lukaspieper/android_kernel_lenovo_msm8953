@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2014, 2017,  The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -42,7 +42,8 @@ static int clock_debug_rate_set(void *data, u64 val)
 	int ret;
 
 	/* Only increases to max rate will succeed, but that's actually good
-	 * for debugging purposes so we don't check for error. */
+	 * for debugging purposes so we don't check for error.
+	 */
 	if (clock->flags & CLKFLAG_MAX)
 		clk_set_max_rate(clock, val);
 	ret = clk_set_rate(clock, val);
@@ -81,7 +82,7 @@ static int clock_debug_measure_get(void *data, u64 *val)
 	if (!ret) {
 		/*
 		 * Disable hw gating to get accurate rate measurements. Only do
-		 * this if the clock is explictly enabled by software. This
+		 * this if the clock is explicitly enabled by software. This
 		 * allows us to detect errors where clocks are on even though
 		 * software is not requesting them to be on due to broken
 		 * hardware gating signals.
@@ -164,6 +165,7 @@ DEFINE_SIMPLE_ATTRIBUTE(clock_local_fops, clock_debug_local_get,
 static int clock_debug_hwcg_get(void *data, u64 *val)
 {
 	struct clk *clock = data;
+
 	if (clock->ops->in_hwcg_mode)
 		*val = !!clock->ops->in_hwcg_mode(clock);
 	else
@@ -205,6 +207,7 @@ static int fmax_rates_show(struct seq_file *m, void *unused)
 	char reg_name[10];
 
 	int vdd_level = find_vdd_level(clock, clock->rate);
+
 	if (vdd_level < 0) {
 		seq_printf(m, "could not find_vdd_level for %s, %ld\n",
 			clock->dbg_name, clock->rate);
@@ -225,7 +228,7 @@ static int fmax_rates_show(struct seq_file *m, void *unused)
 		if (vdd_class->vdd_ua)
 			seq_printf(m, "%10s", "uA");
 	}
-	seq_printf(m, "\n");
+	seq_puts(m, "\n");
 
 	for (level = 0; level < clock->num_fmax; level++)
 		clock_print_fmax_by_level(m, level);
@@ -277,6 +280,43 @@ do {							\
 		pr_info(fmt, ##__VA_ARGS__);		\
 } while (0)
 
+/*
+ * clock_debug_print_enabled_debug_suspend() - Print names of enabled clocks
+ * during suspend.
+ */
+static void clock_debug_print_enabled_debug_suspend(struct seq_file *s)
+{
+	struct clk *c;
+	int cnt = 0;
+
+	if (!mutex_trylock(&clk_list_lock))
+		return;
+
+	clock_debug_output(s, 0, "Enabled clocks:\n");
+
+	list_for_each_entry(c, &clk_list, list) {
+		if (!c || !c->prepare_count)
+			continue;
+		if (c->vdd_class)
+			clock_debug_output(s, 0, " %s:%lu:%lu [%ld, %d]",
+					c->dbg_name, c->prepare_count,
+						c->count, c->rate,
+					find_vdd_level(c, c->rate));
+		else
+				 clock_debug_output(s, 0, " %s:%lu:%lu [%ld]",
+					c->dbg_name, c->prepare_count,
+					c->count, c->rate);
+		cnt++;
+	}
+
+	mutex_unlock(&clk_list_lock);
+
+	if (cnt)
+		clock_debug_output(s, 0, "Enabled clock count: %d\n", cnt);
+	else
+		clock_debug_output(s, 0, "No clocks enabled.\n");
+}
+
 static int clock_debug_print_clock(struct clk *c, struct seq_file *m)
 {
 	char *start = "";
@@ -287,11 +327,11 @@ static int clock_debug_print_clock(struct clk *c, struct seq_file *m)
 	clock_debug_output(m, 0, "\t");
 	do {
 		if (c->vdd_class)
-			clock_debug_output(m, 1, "%s%s:%u:%u [%ld, %d]", start,
-				c->dbg_name, c->prepare_count, c->count,
+			clock_debug_output(m, 1, "%s%s:%lu:%lu [%ld, %d]",
+				start, c->dbg_name, c->prepare_count, c->count,
 				c->rate, find_vdd_level(c, c->rate));
 		else
-			clock_debug_output(m, 1, "%s%s:%u:%u [%ld]", start,
+			clock_debug_output(m, 1, "%s%s:%lu:%lu [%ld]", start,
 				c->dbg_name, c->prepare_count, c->count,
 				c->rate);
 		start = " -> ";
@@ -493,6 +533,7 @@ void clk_debug_print_hw(struct clk *clk, struct seq_file *f)
 	while (!IS_ERR(base)) {
 		for (i = 0; i < size; i++) {
 			u32 val = readl_relaxed(base + regs[i].offset);
+
 			clock_debug_output(f, false, "%20s: 0x%.8x\n",
 						regs[i].name, val);
 		}
@@ -504,6 +545,7 @@ void clk_debug_print_hw(struct clk *clk, struct seq_file *f)
 static int print_hw_show(struct seq_file *m, void *unused)
 {
 	struct clk *c = m->private;
+
 	clk_debug_print_hw(c, m);
 
 	return 0;
@@ -530,7 +572,7 @@ static void clock_measure_add(struct clk *clock)
 	if (clk_set_parent(measure, clock))
 		return;
 
-	debugfs_create_file("measure", S_IRUGO, clock->clk_dir, clock,
+	debugfs_create_file("measure", 0444, clock->clk_dir, clock,
 				&clock_measure_fops);
 }
 
@@ -552,38 +594,38 @@ static int clock_debug_add(struct clk *clock)
 
 	clock->clk_dir = clk_dir;
 
-	if (!debugfs_create_file("rate", S_IRUGO | S_IWUSR, clk_dir,
+	if (!debugfs_create_file("rate", 0644, clk_dir,
 				clock, &clock_rate_fops))
 		goto error;
 
-	if (!debugfs_create_file("enable", S_IRUGO | S_IWUSR, clk_dir,
+	if (!debugfs_create_file("enable", 0644, clk_dir,
 				clock, &clock_enable_fops))
 		goto error;
 
-	if (!debugfs_create_file("is_local", S_IRUGO, clk_dir, clock,
+	if (!debugfs_create_file("is_local", 0444, clk_dir, clock,
 				&clock_local_fops))
 		goto error;
 
-	if (!debugfs_create_file("has_hw_gating", S_IRUGO, clk_dir, clock,
+	if (!debugfs_create_file("has_hw_gating", 0444, clk_dir, clock,
 				&clock_hwcg_fops))
 		goto error;
 
 	if (clock->ops->list_rate)
 		if (!debugfs_create_file("list_rates",
-				S_IRUGO, clk_dir, clock, &list_rates_fops))
+				0444, clk_dir, clock, &list_rates_fops))
 			goto error;
 
-	if (clock->vdd_class && !debugfs_create_file("fmax_rates",
-				S_IRUGO, clk_dir, clock, &fmax_rates_fops))
-			goto error;
+	if (clock->vdd_class && !debugfs_create_file(
+			"fmax_rates", 0444, clk_dir, clock, &fmax_rates_fops))
+		goto error;
 
-	if (!debugfs_create_file("parent", S_IRUGO, clk_dir, clock,
-				&clock_parent_fops))
-			goto error;
+	if (!debugfs_create_file("parent", 0444, clk_dir, clock,
+			&clock_parent_fops))
+		goto error;
 
-	if (!debugfs_create_file("print", S_IRUGO, clk_dir, clock,
-				&clock_print_hw_fops))
-			goto error;
+	if (!debugfs_create_file("print", 0444, clk_dir, clock,
+			&clock_print_hw_fops))
+		goto error;
 
 	clock_measure_add(clock);
 
@@ -610,21 +652,21 @@ static int clock_debug_init(void)
 	if (!debugfs_base)
 		return -ENOMEM;
 
-	if (!debugfs_create_u32("debug_suspend", S_IRUGO | S_IWUSR,
+	if (!debugfs_create_u32("debug_suspend", 0644,
 				debugfs_base, &debug_suspend)) {
 		debugfs_remove_recursive(debugfs_base);
 		return -ENOMEM;
 	}
 
-	if (!debugfs_create_file("enabled_clocks", S_IRUGO, debugfs_base, NULL,
+	if (!debugfs_create_file("enabled_clocks", 0444, debugfs_base, NULL,
 				&enabled_clocks_fops))
 		return -ENOMEM;
 
-	if (!debugfs_create_file("orphan_list", S_IRUGO, debugfs_base, NULL,
+	if (!debugfs_create_file("orphan_list", 0444, debugfs_base, NULL,
 				&orphan_list_fops))
 		return -ENOMEM;
 
-	if (!debugfs_create_file("trace_clocks", S_IRUGO, debugfs_base, NULL,
+	if (!debugfs_create_file("trace_clocks", 0444, debugfs_base, NULL,
 				&trace_clocks_fops))
 		return -ENOMEM;
 
@@ -667,10 +709,13 @@ out:
 /*
  * Print the names of enabled clocks and their parents if debug_suspend is set
  */
-void clock_debug_print_enabled(void)
+void clock_debug_print_enabled(bool print_parent)
 {
 	if (likely(!debug_suspend))
 		return;
+	if (print_parent)
+		clock_debug_print_enabled_clocks(NULL);
+	else
+		clock_debug_print_enabled_debug_suspend(NULL);
 
-	clock_debug_print_enabled_clocks(NULL);
 }

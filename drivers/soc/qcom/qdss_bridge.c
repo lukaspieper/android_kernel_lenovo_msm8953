@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -88,7 +88,7 @@ struct qdss_buf_tbl_lst *qdss_get_buf_tbl_entry(
 {
 	struct qdss_buf_tbl_lst *entry;
 
-	list_for_each_entry(entry , &drvdata->buf_tbl, link) {
+	list_for_each_entry(entry, &drvdata->buf_tbl, link) {
 		if (atomic_read(&entry->available))
 			continue;
 		if (entry->buf == buf)
@@ -245,7 +245,7 @@ static void usb_notifier(void *priv, unsigned int event,
 
 	switch (event) {
 	case USB_QDSS_CONNECT:
-		usb_qdss_alloc_req(drvdata->usb_ch, poolsize, 0);
+		usb_qdss_alloc_req(ch, poolsize, 0);
 		mhi_queue_read(drvdata);
 		break;
 
@@ -299,7 +299,7 @@ static void qdss_bridge_open_work_fn(struct work_struct *work)
 	if (ret)
 		goto err;
 
-	drvdata->usb_ch = usb_qdss_open("PCIE", drvdata, usb_notifier);
+	drvdata->usb_ch = usb_qdss_open("qdss_mdm", drvdata, usb_notifier);
 	if (IS_ERR_OR_NULL(drvdata->usb_ch)) {
 		ret = PTR_ERR(drvdata->usb_ch);
 		goto err;
@@ -459,3 +459,5 @@ static void __exit qdss_bridge_exit(void)
 
 module_init(qdss_bridge_init);
 module_exit(qdss_bridge_exit);
+MODULE_LICENSE("GPL v2")
+MODULE_DESCRIPTION("QDSS Bridge driver");

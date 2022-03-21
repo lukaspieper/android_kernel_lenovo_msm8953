@@ -1,5 +1,4 @@
-/*
- * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,7 +10,6 @@
  * GNU General Public License for more details.
  *
  * RMNET Data ingress/egress handler
- *
  */
 
 #include <linux/skbuff.h>
@@ -22,33 +20,51 @@
 #include <linux/netdev_features.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
+#include <net/rmnet_config.h>
 #include "rmnet_data_private.h"
 #include "rmnet_data_config.h"
 #include "rmnet_data_vnd.h"
 #include "rmnet_map.h"
 #include "rmnet_data_stats.h"
 #include "rmnet_data_trace.h"
+#include "rmnet_data_handlers.h"
 
 RMNET_LOG_MODULE(RMNET_DATA_LOGMASK_HANDLER);
 
-
-void rmnet_egress_handler(struct sk_buff *skb,
-			  struct rmnet_logical_ep_conf_s *ep);
-
 #ifdef CONFIG_RMNET_DATA_DEBUG_PKT
 unsigned int dump_pkt_rx;
-module_param(dump_pkt_rx, uint, S_IRUGO | S_IWUSR);
+module_param(dump_pkt_rx, uint, 0644);
 MODULE_PARM_DESC(dump_pkt_rx, "Dump packets entering ingress handler");
 
 unsigned int dump_pkt_tx;
-module_param(dump_pkt_tx, uint, S_IRUGO | S_IWUSR);
+module_param(dump_pkt_tx, uint, 0644);
 MODULE_PARM_DESC(dump_pkt_tx, "Dump packets exiting egress handler");
 #endif /* CONFIG_RMNET_DATA_DEBUG_PKT */
 
+static bool gro_flush_logic_on __read_mostly = 1;
+module_param(gro_flush_logic_on, bool, 0644);
+MODULE_PARM_DESC(gro_flush_logic_on, "If off let GRO determine flushing");
+
+static bool dynamic_gro_on __read_mostly = 1;
+module_param(dynamic_gro_on, bool, 0644);
+MODULE_PARM_DESC(dynamic_gro_on, "Toggle to turn on dynamic gro logic");
+
 /* Time in nano seconds. This number must be less that a second. */
-long gro_flush_time __read_mostly = 10000L;
-module_param(gro_flush_time, long, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(gro_flush_time, "Flush GRO when spaced more than this");
+static long lower_flush_time __read_mostly = 10000L;
+module_param(lower_flush_time, long, 0644);
+MODULE_PARM_DESC(lower_flush_time, "Min time value for flushing GRO");
+
+static unsigned int lower_byte_limit __read_mostly = 7500;
+module_param(lower_byte_limit, uint, 0644);
+MODULE_PARM_DESC(lower_byte_limit, "Min byte count for flushing GRO");
+
+unsigned int upper_flush_time __read_mostly = 15000;
+module_param(upper_flush_time, uint, 0644);
+MODULE_PARM_DESC(upper_flush_time, "Max time value for flushing GRO");
+
+unsigned int upper_byte_limit __read_mostly = 10500;
+module_param(upper_byte_limit, uint, 0644);
+MODULE_PARM_DESC(upper_byte_limit, "Max byte count for flushing GRO");
 
 #define RMNET_DATA_IP_VERSION_4 0x40
 #define RMNET_DATA_IP_VERSION_6 0x60
@@ -56,10 +72,9 @@ MODULE_PARM_DESC(gro_flush_time, "Flush GRO when spaced more than this");
 #define RMNET_DATA_GRO_RCV_FAIL 0
 #define RMNET_DATA_GRO_RCV_PASS 1
 
-/* ***************** Helper Functions *************************************** */
+/* Helper Functions */
 
-/**
- * __rmnet_data_set_skb_proto() - Set skb->protocol field
+/* __rmnet_data_set_skb_proto() - Set skb->protocol field
  * @skb:      packet being modified
  *
  * Peek at the first byte of the packet and set the protocol. There is not
@@ -83,8 +98,7 @@ static inline void __rmnet_data_set_skb_proto(struct sk_buff *skb)
 }
 
 #ifdef CONFIG_RMNET_DATA_DEBUG_PKT
-/**
- * rmnet_print_packet() - Print packet / diagnostics
+/* rmnet_print_packet() - Print packet / diagnostics
  * @skb:      Packet to print
  * @printlen: Number of bytes to print
  * @dev:      Name of interface
@@ -129,42 +143,39 @@ void rmnet_print_packet(const struct sk_buff *skb, const char *dev, char dir)
 		      ((unsigned int)(uintptr_t)skb->data);
 
 	pr_err("[%s][%c] - PKT len: %d, printing first %d bytes\n",
-		dev, dir, len, printlen);
+	       dev, dir, len, printlen);
 
 	memset(buffer, 0, sizeof(buffer));
 	for (i = 0; (i < printlen) && (i < len); i++) {
-		if ((i%16) == 0) {
+		if ((i % 16) == 0) {
 			pr_err("[%s][%c] - PKT%s\n", dev, dir, buffer);
 			memset(buffer, 0, sizeof(buffer));
 			buffloc = 0;
 			buffloc += snprintf(&buffer[buffloc],
-					sizeof(buffer)-buffloc, "%04X:",
-					i);
+					    sizeof(buffer) - buffloc, "%04X:",
+					    i);
 		}
 
-		buffloc += snprintf(&buffer[buffloc], sizeof(buffer)-buffloc,
+		buffloc += snprintf(&buffer[buffloc], sizeof(buffer) - buffloc,
 					" %02x", skb->data[i]);
-
 	}
 	pr_err("[%s][%c] - PKT%s\n", dev, dir, buffer);
 }
 #else
 void rmnet_print_packet(const struct sk_buff *skb, const char *dev, char dir)
 {
-	return;
 }
 #endif /* CONFIG_RMNET_DATA_DEBUG_PKT */
 
-/* ***************** Generic handler **************************************** */
+/* Generic handler */
 
-/**
- * rmnet_bridge_handler() - Bridge related functionality
+/* rmnet_bridge_handler() - Bridge related functionality
  *
  * Return:
  *      - RX_HANDLER_CONSUMED in all cases
  */
-static rx_handler_result_t rmnet_bridge_handler(struct sk_buff *skb,
-					struct rmnet_logical_ep_conf_s *ep)
+static rx_handler_result_t rmnet_bridge_handler
+	(struct sk_buff *skb, struct rmnet_logical_ep_conf_s *ep)
 {
 	if (!ep->egress_dev) {
 		LOGD("Missing egress device for packet arriving on %s",
@@ -177,22 +188,37 @@ static rx_handler_result_t rmnet_bridge_handler(struct sk_buff *skb,
 	return RX_HANDLER_CONSUMED;
 }
 
-#ifdef NET_SKBUFF_DATA_USES_OFFSET
-static void rmnet_reset_mac_header(struct sk_buff *skb)
-{
-	skb->mac_header = 0;
-	skb->mac_len = 0;
-}
-#else
-static void rmnet_reset_mac_header(struct sk_buff *skb)
-{
-	skb->mac_header = skb->network_header;
-	skb->mac_len = 0;
-}
-#endif /*NET_SKBUFF_DATA_USES_OFFSET*/
+/* RX/TX Fixup */
 
-/**
- * rmnet_check_skb_can_gro() - Check is skb can be passed through GRO handler
+/* rmnet_vnd_rx_fixup() - Virtual Network Device receive fixup hook
+ * @skb:        Socket buffer ("packet") to modify
+ * @dev:        Virtual network device
+ *
+ * Additional VND specific packet processing for ingress packets
+ *
+ * Return: void
+ */
+static void rmnet_vnd_rx_fixup(struct sk_buff *skb, struct net_device *dev)
+{
+	dev->stats.rx_packets++;
+	dev->stats.rx_bytes += skb->len;
+}
+
+/* rmnet_vnd_tx_fixup() - Virtual Network Device transmic fixup hook
+ * @skb:      Socket buffer ("packet") to modify
+ * @dev:      Virtual network device
+ *
+ * Additional VND specific packet processing for egress packets
+ *
+ * Return: void
+ */
+static void rmnet_vnd_tx_fixup(struct sk_buff *skb, struct net_device *dev)
+{
+	dev->stats.tx_packets++;
+	dev->stats.tx_bytes += skb->len;
+}
+
+/* rmnet_check_skb_can_gro() - Check is skb can be passed through GRO handler
  *
  * Determines whether to pass the skb to the GRO handler napi_gro_receive() or
  * handle normally by passing to netif_receive_skb().
@@ -222,8 +248,7 @@ static int rmnet_check_skb_can_gro(struct sk_buff *skb)
 	return RMNET_DATA_GRO_RCV_FAIL;
 }
 
-/**
- * rmnet_optional_gro_flush() - Check if GRO handler needs to flush now
+/* rmnet_optional_gro_flush() - Check if GRO handler needs to flush now
  *
  * Determines whether GRO handler needs to flush packets which it has
  * coalesced so far.
@@ -232,27 +257,75 @@ static int rmnet_check_skb_can_gro(struct sk_buff *skb)
  * ratio.
  */
 static void rmnet_optional_gro_flush(struct napi_struct *napi,
-				     struct rmnet_logical_ep_conf_s *ep)
+				     struct rmnet_logical_ep_conf_s *ep,
+					 unsigned int skb_size)
 {
 	struct timespec curr_time, diff;
 
-	if (!gro_flush_time)
+	if (!gro_flush_logic_on)
 		return;
 
-	if (unlikely(ep->flush_time.tv_sec == 0)) {
-		getnstimeofday(&ep->flush_time);
+	if (unlikely(ep->last_flush_time.tv_sec == 0)) {
+		getnstimeofday(&ep->last_flush_time);
+		ep->flush_byte_count = 0;
+		ep->curr_time_limit = lower_flush_time;
+		ep->curr_byte_threshold = lower_byte_limit;
 	} else {
 		getnstimeofday(&(curr_time));
-		diff = timespec_sub(curr_time, ep->flush_time);
-		if ((diff.tv_sec > 0) || (diff.tv_nsec > gro_flush_time)) {
+		diff = timespec_sub(curr_time, ep->last_flush_time);
+		ep->flush_byte_count += skb_size;
+
+		if (dynamic_gro_on) {
+			if ((!(diff.tv_sec > 0) || diff.tv_nsec <=
+					ep->curr_time_limit) &&
+					ep->flush_byte_count >=
+					ep->curr_byte_threshold) {
+				/* Processed many bytes in a small time window.
+				 * No longer need to flush so often and we can
+				 * increase our byte limit
+				 */
+				ep->curr_time_limit = upper_flush_time;
+				ep->curr_byte_threshold = upper_byte_limit;
+			} else if ((diff.tv_sec > 0 ||
+					diff.tv_nsec > ep->curr_time_limit) &&
+					ep->flush_byte_count <
+					ep->curr_byte_threshold) {
+				/* We have not hit our time limit and we are not
+				 * receive many bytes. Demote ourselves to the
+				 * lowest limits and flush
+				 */
+				napi_gro_flush(napi, false);
+				ep->last_flush_time = curr_time;
+				ep->flush_byte_count = 0;
+				ep->curr_time_limit = lower_flush_time;
+				ep->curr_byte_threshold = lower_byte_limit;
+			} else if ((diff.tv_sec > 0 ||
+					diff.tv_nsec > ep->curr_time_limit) &&
+					ep->flush_byte_count >=
+					ep->curr_byte_threshold) {
+				/* Above byte and time limt, therefore we can
+				 * move/maintain our limits to be the max
+				 * and flush
+				 */
+				napi_gro_flush(napi, false);
+				ep->last_flush_time = curr_time;
+				ep->flush_byte_count = 0;
+				ep->curr_time_limit = upper_flush_time;
+				ep->curr_byte_threshold = upper_byte_limit;
+			}
+			/* else, below time limit and below
+			 * byte thresh, so change nothing
+			 */
+		} else if (diff.tv_sec > 0 ||
+				diff.tv_nsec >= lower_flush_time) {
 			napi_gro_flush(napi, false);
-			getnstimeofday(&ep->flush_time);
+			ep->last_flush_time = curr_time;
+			ep->flush_byte_count = 0;
 		}
 	}
 }
 
-/**
- * __rmnet_deliver_skb() - Deliver skb
+/* __rmnet_deliver_skb() - Deliver skb
  *
  * Determines where to deliver skb. Options are: consume by network stack,
  * pass to bridge handler, or pass to virtual network device
@@ -261,57 +334,51 @@ static void rmnet_optional_gro_flush(struct napi_struct *napi,
  *      - RX_HANDLER_CONSUMED if packet forwarded or dropped
  *      - RX_HANDLER_PASS if packet is to be consumed by network stack as-is
  */
-static rx_handler_result_t __rmnet_deliver_skb(struct sk_buff *skb,
-					 struct rmnet_logical_ep_conf_s *ep)
+static rx_handler_result_t __rmnet_deliver_skb
+	(struct sk_buff *skb, struct rmnet_logical_ep_conf_s *ep)
 {
 	struct napi_struct *napi = NULL;
 	gro_result_t gro_res;
+	unsigned int skb_size;
 
 	trace___rmnet_deliver_skb(skb);
 	switch (ep->rmnet_mode) {
+	case RMNET_EPMODE_VND:
+		skb_reset_transport_header(skb);
+		skb_reset_network_header(skb);
+		rmnet_vnd_rx_fixup(skb, skb->dev);
+
+		skb->pkt_type = PACKET_HOST;
+		skb_set_mac_header(skb, 0);
+
+		if (rmnet_check_skb_can_gro(skb) &&
+		    (skb->dev->features & NETIF_F_GRO)) {
+			napi = get_current_napi_context();
+
+			skb_size = skb->len;
+			skb_get_hash(skb);
+			gro_res = napi_gro_receive(napi, skb);
+			trace_rmnet_gro_downlink(gro_res);
+			rmnet_optional_gro_flush(napi, ep, skb_size);
+		} else{
+			netif_receive_skb(skb);
+		}
+		return RX_HANDLER_CONSUMED;
+
 	case RMNET_EPMODE_NONE:
 		return RX_HANDLER_PASS;
 
 	case RMNET_EPMODE_BRIDGE:
 		return rmnet_bridge_handler(skb, ep);
 
-	case RMNET_EPMODE_VND:
-		skb_reset_transport_header(skb);
-		skb_reset_network_header(skb);
-		switch (rmnet_vnd_rx_fixup(skb, skb->dev)) {
-		case RX_HANDLER_CONSUMED:
-			return RX_HANDLER_CONSUMED;
-
-		case RX_HANDLER_PASS:
-			skb->pkt_type = PACKET_HOST;
-			rmnet_reset_mac_header(skb);
-			if (rmnet_check_skb_can_gro(skb) &&
-			    (skb->dev->features & NETIF_F_GRO)) {
-				napi = get_current_napi_context();
-				if (napi != NULL) {
-					gro_res = napi_gro_receive(napi, skb);
-					trace_rmnet_gro_downlink(gro_res);
-					rmnet_optional_gro_flush(napi, ep);
-				} else {
-					WARN_ONCE(1, "current napi is NULL\n");
-					netif_receive_skb(skb);
-				}
-			} else {
-				netif_receive_skb(skb);
-			}
-			return RX_HANDLER_CONSUMED;
-		}
-		return RX_HANDLER_PASS;
-
 	default:
-		LOGD("Unkown ep mode %d", ep->rmnet_mode);
+		LOGD("Unknown ep mode %d", ep->rmnet_mode);
 		rmnet_kfree_skb(skb, RMNET_STATS_SKBFREE_DELIVER_NO_EP);
 		return RX_HANDLER_CONSUMED;
 	}
 }
 
-/**
- * rmnet_ingress_deliver_packet() - Ingress handler for raw IP and bridged
+/* rmnet_ingress_deliver_packet() - Ingress handler for raw IP and bridged
  *                                  MAP packets.
  * @skb:     Packet needing a destination.
  * @config:  Physical end point configuration that the packet arrived on.
@@ -320,8 +387,8 @@ static rx_handler_result_t __rmnet_deliver_skb(struct sk_buff *skb,
  *      - RX_HANDLER_CONSUMED if packet forwarded/dropped
  *      - RX_HANDLER_PASS if packet should be passed up the stack by caller
  */
-static rx_handler_result_t rmnet_ingress_deliver_packet(struct sk_buff *skb,
-					    struct rmnet_phys_ep_conf_s *config)
+static rx_handler_result_t rmnet_ingress_deliver_packet
+	(struct sk_buff *skb, struct rmnet_phys_ep_config *config)
 {
 	if (!config) {
 		LOGD("%s", "NULL physical EP provided");
@@ -331,20 +398,19 @@ static rx_handler_result_t rmnet_ingress_deliver_packet(struct sk_buff *skb,
 
 	if (!(config->local_ep.refcount)) {
 		LOGD("Packet on %s has no local endpoint configuration",
-			skb->dev->name);
+		     skb->dev->name);
 		rmnet_kfree_skb(skb, RMNET_STATS_SKBFREE_IPINGRESS_NO_EP);
 		return RX_HANDLER_CONSUMED;
 	}
 
 	skb->dev = config->local_ep.egress_dev;
 
-	return __rmnet_deliver_skb(skb, &(config->local_ep));
+	return __rmnet_deliver_skb(skb, &config->local_ep);
 }
 
-/* ***************** MAP handler ******************************************** */
+/* MAP handler */
 
-/**
- * _rmnet_map_ingress_handler() - Actual MAP ingress handler
+/* _rmnet_map_ingress_handler() - Actual MAP ingress handler
  * @skb:        Packet being received
  * @config:     Physical endpoint configuration for the ingress device
  *
@@ -355,12 +421,12 @@ static rx_handler_result_t rmnet_ingress_deliver_packet(struct sk_buff *skb,
  *      - RX_HANDLER_CONSUMED if packet is dropped
  *      - result of __rmnet_deliver_skb() for all other cases
  */
-static rx_handler_result_t _rmnet_map_ingress_handler(struct sk_buff *skb,
-					    struct rmnet_phys_ep_conf_s *config)
+static rx_handler_result_t _rmnet_map_ingress_handler
+	(struct sk_buff *skb, struct rmnet_phys_ep_config *config)
 {
 	struct rmnet_logical_ep_conf_s *ep;
-	uint8_t mux_id;
-	uint16_t len;
+	u8 mux_id;
+	u16 len;
 	int ckresult;
 
 	if (RMNET_MAP_GET_CD_BIT(skb)) {
@@ -382,13 +448,12 @@ static rx_handler_result_t _rmnet_map_ingress_handler(struct sk_buff *skb,
 
 	if (mux_id >= RMNET_DATA_MAX_LOGICAL_EP) {
 		LOGD("Got packet on %s with bad mux id %d",
-			skb->dev->name, mux_id);
+		     skb->dev->name, mux_id);
 		rmnet_kfree_skb(skb, RMNET_STATS_SKBFREE_MAPINGRESS_BAD_MUX);
 			return RX_HANDLER_CONSUMED;
 	}
 
-	ep = &(config->muxed_ep[mux_id]);
-
+	ep = &config->muxed_ep[mux_id];
 	if (!ep->refcount) {
 		LOGD("Packet on %s:%d; has no logical endpoint config",
 		     skb->dev->name, mux_id);
@@ -397,23 +462,24 @@ static rx_handler_result_t _rmnet_map_ingress_handler(struct sk_buff *skb,
 		return RX_HANDLER_CONSUMED;
 	}
 
-	if (config->ingress_data_format & RMNET_INGRESS_FORMAT_DEMUXING)
-		skb->dev = ep->egress_dev;
+	skb->dev = ep->egress_dev;
 
 	if ((config->ingress_data_format & RMNET_INGRESS_FORMAT_MAP_CKSUMV3) ||
 	    (config->ingress_data_format & RMNET_INGRESS_FORMAT_MAP_CKSUMV4)) {
 		ckresult = rmnet_map_checksum_downlink_packet(skb);
 		trace_rmnet_map_checksum_downlink_packet(skb, ckresult);
 		rmnet_stats_dl_checksum(ckresult);
-		if (likely((ckresult == RMNET_MAP_CHECKSUM_OK)
-			    || (ckresult == RMNET_MAP_CHECKSUM_SKIPPED)))
+		if (likely((ckresult == RMNET_MAP_CHECKSUM_OK) ||
+			   (ckresult == RMNET_MAP_CHECKSUM_SKIPPED)))
 			skb->ip_summed |= CHECKSUM_UNNECESSARY;
-		else if (ckresult != RMNET_MAP_CHECKSUM_ERR_UNKNOWN_IP_VERSION
-			&& ckresult != RMNET_MAP_CHECKSUM_ERR_UNKNOWN_TRANSPORT
-			&& ckresult != RMNET_MAP_CHECKSUM_VALID_FLAG_NOT_SET
-			&& ckresult != RMNET_MAP_CHECKSUM_FRAGMENTED_PACKET) {
-			rmnet_kfree_skb(skb,
-				RMNET_STATS_SKBFREE_INGRESS_BAD_MAP_CKSUM);
+		else if (ckresult !=
+			 RMNET_MAP_CHECKSUM_ERR_UNKNOWN_IP_VERSION &&
+			 ckresult != RMNET_MAP_CHECKSUM_VALIDATION_FAILED &&
+			 ckresult != RMNET_MAP_CHECKSUM_ERR_UNKNOWN_TRANSPORT &&
+			 ckresult != RMNET_MAP_CHECKSUM_VALID_FLAG_NOT_SET &&
+			 ckresult != RMNET_MAP_CHECKSUM_FRAGMENTED_PACKET) {
+			rmnet_kfree_skb
+			(skb, RMNET_STATS_SKBFREE_INGRESS_BAD_MAP_CKSUM);
 			return RX_HANDLER_CONSUMED;
 		}
 	}
@@ -425,8 +491,7 @@ static rx_handler_result_t _rmnet_map_ingress_handler(struct sk_buff *skb,
 	return __rmnet_deliver_skb(skb, ep);
 }
 
-/**
- * rmnet_map_ingress_handler() - MAP ingress handler
+/* rmnet_map_ingress_handler() - MAP ingress handler
  * @skb:        Packet being received
  * @config:     Physical endpoint configuration for the ingress device
  *
@@ -439,21 +504,17 @@ static rx_handler_result_t _rmnet_map_ingress_handler(struct sk_buff *skb,
  *      - RX_HANDLER_CONSUMED for dropped packets
  *      - result of _rmnet_map_ingress_handler() for all other cases
  */
-static rx_handler_result_t rmnet_map_ingress_handler(struct sk_buff *skb,
-					    struct rmnet_phys_ep_conf_s *config)
+static rx_handler_result_t rmnet_map_ingress_handler
+	(struct sk_buff *skb, struct rmnet_phys_ep_config *config)
 {
 	struct sk_buff *skbn;
-	int rc, co = 0;
+	int rc;
 
 	if (config->ingress_data_format & RMNET_INGRESS_FORMAT_DEAGGREGATION) {
 		trace_rmnet_start_deaggregation(skb);
 		while ((skbn = rmnet_map_deaggregate(skb, config)) != 0) {
 			_rmnet_map_ingress_handler(skbn, config);
-			co++;
 		}
-		trace_rmnet_end_deaggregation(skb, co);
-		LOGD("De-aggregated %d packets", co);
-		rmnet_stats_deagg_pkts(co);
 		rmnet_kfree_skb(skb, RMNET_STATS_SKBFREE_MAPINGRESS_AGGBUF);
 		rc = RX_HANDLER_CONSUMED;
 	} else {
@@ -463,8 +524,7 @@ static rx_handler_result_t rmnet_map_ingress_handler(struct sk_buff *skb,
 	return rc;
 }
 
-/**
- * rmnet_map_egress_handler() - MAP egress handler
+/* rmnet_map_egress_handler() - MAP egress handler
  * @skb:        Packet being sent
  * @config:     Physical endpoint configuration for the egress device
  * @ep:         logical endpoint configuration of the packet originator
@@ -480,18 +540,22 @@ static rx_handler_result_t rmnet_map_ingress_handler(struct sk_buff *skb,
  *      - 1 on failure
  */
 static int rmnet_map_egress_handler(struct sk_buff *skb,
-				    struct rmnet_phys_ep_conf_s *config,
+				    struct rmnet_phys_ep_config *config,
 				    struct rmnet_logical_ep_conf_s *ep,
 				    struct net_device *orig_dev)
 {
 	int required_headroom, additional_header_length, ckresult;
 	struct rmnet_map_header_s *map_header;
+	int non_linear_skb;
+	int csum_required = (config->egress_data_format &
+			     RMNET_EGRESS_FORMAT_MAP_CKSUMV3) ||
+			    (config->egress_data_format &
+			     RMNET_EGRESS_FORMAT_MAP_CKSUMV4);
 
 	additional_header_length = 0;
 
 	required_headroom = sizeof(struct rmnet_map_header_s);
-	if ((config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV3) ||
-	    (config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV4)) {
+	if (csum_required) {
 		required_headroom +=
 			sizeof(struct rmnet_map_ul_checksum_header_s);
 		additional_header_length +=
@@ -506,17 +570,19 @@ static int rmnet_map_egress_handler(struct sk_buff *skb,
 		return 1;
 	}
 
-	if ((config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV3) ||
-	    (config->egress_data_format & RMNET_EGRESS_FORMAT_MAP_CKSUMV4)) {
+	if (csum_required) {
 		ckresult = rmnet_map_checksum_uplink_packet
 				(skb, orig_dev, config->egress_data_format);
 		trace_rmnet_map_checksum_uplink_packet(orig_dev, ckresult);
 		rmnet_stats_ul_checksum(ckresult);
 	}
 
+	non_linear_skb = (orig_dev->features & NETIF_F_GSO) &&
+			 skb_is_nonlinear(skb);
+
 	if ((!(config->egress_data_format &
-	    RMNET_EGRESS_FORMAT_AGGREGATION)) ||
-	    ((orig_dev->features & NETIF_F_GSO) && skb_is_nonlinear(skb)))
+	    RMNET_EGRESS_FORMAT_AGGREGATION)) || csum_required ||
+	    non_linear_skb)
 		map_header = rmnet_map_add_map_header
 		(skb, additional_header_length, RMNET_MAP_NO_PAD_BYTES);
 	else
@@ -539,16 +605,23 @@ static int rmnet_map_egress_handler(struct sk_buff *skb,
 	skb->protocol = htons(ETH_P_MAP);
 
 	if (config->egress_data_format & RMNET_EGRESS_FORMAT_AGGREGATION) {
+		if (rmnet_ul_aggregation_skip(skb, required_headroom))
+			return RMNET_MAP_SUCCESS;
+
+		if (non_linear_skb)
+			if (unlikely(__skb_linearize(skb)))
+				return RMNET_MAP_SUCCESS;
+
 		rmnet_map_aggregate(skb, config);
 		return RMNET_MAP_CONSUMED;
 	}
 
 	return RMNET_MAP_SUCCESS;
 }
-/* ***************** Ingress / Egress Entry Points ************************** */
 
-/**
- * rmnet_ingress_handler() - Ingress handler entry point
+/* Ingress / Egress Entry Points */
+
+/* rmnet_ingress_handler() - Ingress handler entry point
  * @skb: Packet being received
  *
  * Processes packet as per ingress data format for receiving device. Logical
@@ -562,19 +635,18 @@ static int rmnet_map_egress_handler(struct sk_buff *skb,
  */
 rx_handler_result_t rmnet_ingress_handler(struct sk_buff *skb)
 {
-	struct rmnet_phys_ep_conf_s *config;
+	struct rmnet_phys_ep_config *config;
 	struct net_device *dev;
 	int rc;
 
 	if (!skb)
-		BUG();
+		return RX_HANDLER_CONSUMED;
 
 	dev = skb->dev;
 	trace_rmnet_ingress_handler(skb);
 	rmnet_print_packet(skb, dev->name, 'r');
 
-	config = (struct rmnet_phys_ep_conf_s *)
-		rcu_dereference(skb->dev->rx_handler_data);
+	config = _rmnet_get_phys_ep_config(skb->dev);
 
 	if (!config) {
 		LOGD("%s is not associated with rmnet_data", skb->dev->name);
@@ -593,7 +665,7 @@ rx_handler_result_t rmnet_ingress_handler(struct sk_buff *skb)
 	}
 
 	if (config->ingress_data_format & RMNET_INGRESS_FORMAT_MAP) {
-			rc = rmnet_map_ingress_handler(skb, config);
+		rc = rmnet_map_ingress_handler(skb, config);
 	} else {
 		switch (ntohs(skb->protocol)) {
 		case ETH_P_MAP:
@@ -602,9 +674,10 @@ rx_handler_result_t rmnet_ingress_handler(struct sk_buff *skb)
 				rc = rmnet_ingress_deliver_packet(skb, config);
 			} else {
 				LOGD("MAP packet on %s; MAP not set",
-					dev->name);
-				rmnet_kfree_skb(skb,
-				   RMNET_STATS_SKBFREE_INGRESS_NOT_EXPECT_MAPD);
+				     dev->name);
+				rmnet_kfree_skb
+				(skb,
+				 RMNET_STATS_SKBFREE_INGRESS_NOT_EXPECT_MAPD);
 				rc = RX_HANDLER_CONSUMED;
 			}
 			break;
@@ -617,7 +690,7 @@ rx_handler_result_t rmnet_ingress_handler(struct sk_buff *skb)
 
 		default:
 			LOGD("Unknown skb->proto 0x%04X\n",
-				ntohs(skb->protocol) & 0xFFFF);
+			     ntohs(skb->protocol) & 0xFFFF);
 			rc = RX_HANDLER_PASS;
 		}
 	}
@@ -625,8 +698,7 @@ rx_handler_result_t rmnet_ingress_handler(struct sk_buff *skb)
 	return rc;
 }
 
-/**
- * rmnet_rx_handler() - Rx handler callback registered with kernel
+/* rmnet_rx_handler() - Rx handler callback registered with kernel
  * @pskb: Packet to be processed by rx handler
  *
  * Standard kernel-expected footprint for rx handlers. Calls
@@ -640,8 +712,7 @@ rx_handler_result_t rmnet_rx_handler(struct sk_buff **pskb)
 	return rmnet_ingress_handler(*pskb);
 }
 
-/**
- * rmnet_egress_handler() - Egress handler entry point
+/* rmnet_egress_handler() - Egress handler entry point
  * @skb:        packet to transmit
  * @ep:         logical endpoint configuration of the packet originator
  *              (e.g.. RmNet virtual network device)
@@ -653,14 +724,14 @@ rx_handler_result_t rmnet_rx_handler(struct sk_buff **pskb)
 void rmnet_egress_handler(struct sk_buff *skb,
 			  struct rmnet_logical_ep_conf_s *ep)
 {
-	struct rmnet_phys_ep_conf_s *config;
+	struct rmnet_phys_ep_config *config;
 	struct net_device *orig_dev;
 	int rc;
+
 	orig_dev = skb->dev;
 	skb->dev = ep->egress_dev;
 
-	config = (struct rmnet_phys_ep_conf_s *)
-		rcu_dereference(skb->dev->rx_handler_data);
+	config = _rmnet_get_phys_ep_config(skb->dev);
 
 	if (!config) {
 		LOGD("%s is not associated with rmnet_data", skb->dev->name);
@@ -670,6 +741,9 @@ void rmnet_egress_handler(struct sk_buff *skb,
 
 	LOGD("Packet going out on %s with egress format 0x%08X",
 	     skb->dev->name, config->egress_data_format);
+
+	if (ep->rmnet_mode == RMNET_EPMODE_VND)
+		rmnet_vnd_tx_fixup(skb, orig_dev);
 
 	if (config->egress_data_format & RMNET_EGRESS_FORMAT_MAP) {
 		switch (rmnet_map_egress_handler(skb, config, ep, orig_dev)) {
@@ -688,15 +762,12 @@ void rmnet_egress_handler(struct sk_buff *skb,
 		}
 	}
 
-	if (ep->rmnet_mode == RMNET_EPMODE_VND)
-		rmnet_vnd_tx_fixup(skb, orig_dev);
-
 	rmnet_print_packet(skb, skb->dev->name, 't');
 	trace_rmnet_egress_handler(skb);
 	rc = dev_queue_xmit(skb);
 	if (rc != 0) {
 		LOGD("Failed to queue packet for transmission on [%s]",
-		      skb->dev->name);
+		     skb->dev->name);
 	}
 	rmnet_stats_queue_xmit(rc, RMNET_STATS_QUEUE_XMIT_EGRESS);
 }

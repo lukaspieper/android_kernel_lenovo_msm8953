@@ -57,7 +57,7 @@ struct ci13xxx_td {
 #define TD_CURR_OFFSET        (0x0FFFUL <<  0)
 #define TD_FRAME_NUM          (0x07FFUL <<  0)
 #define TD_RESERVED_MASK      (0x0FFFUL <<  0)
-} __attribute__ ((packed, aligned(4)));
+} __packed __aligned(4);
 
 /* DMA layout of queue heads */
 struct ci13xxx_qh {
@@ -75,19 +75,19 @@ struct ci13xxx_qh {
 	/* 9 */
 	u32 RESERVED;
 	struct usb_ctrlrequest   setup;
-} __attribute__ ((packed, aligned(4)));
+} __packed __aligned(4);
 
 /* cache of larger request's original attributes */
 struct ci13xxx_multi_req {
-	unsigned             len;
-	unsigned             actual;
+	unsigned int	     len;
+	unsigned int	     actual;
 	void                *buf;
 };
 
 /* Extension of usb_request */
 struct ci13xxx_req {
 	struct usb_request   req;
-	unsigned             map;
+	unsigned int	     map;
 	struct list_head     queue;
 	struct ci13xxx_td   *ptr;
 	dma_addr_t           dma;
@@ -148,7 +148,7 @@ struct ci13xxx_udc_driver {
 #define CI13XXX_CONTROLLER_UDC_STARTED_EVENT		6
 #define CI13XXX_CONTROLLER_ERROR_EVENT			7
 
-	void	(*notify_event)(struct ci13xxx *udc, unsigned event);
+	void	(*notify_event)(struct ci13xxx *udc, unsigned int event);
 	bool    (*in_lpm)(struct ci13xxx *udc);
 };
 
@@ -178,9 +178,11 @@ struct ci13xxx {
 	int                        softconnect; /* is pull-up enable allowed */
 	unsigned long dTD_update_fail_count;
 	struct usb_phy            *transceiver; /* Transceiver struct */
-	bool                      skip_flush; /* skip flushing remaining EP
-						upon flush timeout for the
-						first EP. */
+	bool                      skip_flush;   /*
+						 * skip flushing remaining EP
+						 * upon flush timeout for the
+						 * first EP.
+						 */
 };
 
 /******************************************************************************

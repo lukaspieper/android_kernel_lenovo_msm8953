@@ -8,13 +8,11 @@
 
 UTS_MACHINE := arc
 
-ifeq ($(CROSS_COMPILE),)
-CROSS_COMPILE := arc-linux-uclibc-
-endif
+KBUILD_DEFCONFIG := nsim_hs_defconfig
 
-KBUILD_DEFCONFIG := fpga_defconfig
-
-cflags-y	+= -mA7 -fno-common -pipe -fno-builtin -D__linux__
+cflags-y	+= -fno-common -pipe -fno-builtin -mmedium-calls -D__linux__
+cflags-$(CONFIG_ISA_ARCOMPACT)	+= -mA7
+cflags-$(CONFIG_ISA_ARCV2)	+= -mcpu=archs
 
 ifdef CONFIG_ARC_CURR_IN_REG
 # For a global register defintion, make sure it gets passed to every file
@@ -27,22 +25,33 @@ endif
 
 upto_gcc44    :=  $(call cc-ifversion, -le, 0404, y)
 atleast_gcc44 :=  $(call cc-ifversion, -ge, 0404, y)
-atleast_gcc48 :=  $(call cc-ifversion, -ge, 0408, y)
 
 cflags-$(atleast_gcc44)			+= -fsection-anchors
 
 cflags-$(CONFIG_ARC_HAS_LLSC)		+= -mlock
 cflags-$(CONFIG_ARC_HAS_SWAPE)		+= -mswape
-cflags-$(CONFIG_ARC_HAS_RTSC)		+= -mrtsc
 
-# By default gcc 4.8 generates dwarf4 which kernel unwinder can't grok
-ifeq ($(atleast_gcc48),y)
-cflags-$(CONFIG_ARC_DW2_UNWIND)		+= -gdwarf-2
+ifdef CONFIG_ISA_ARCV2
+
+ifndef CONFIG_ARC_HAS_LL64
+cflags-y				+= -mno-ll64
 endif
+
+ifndef CONFIG_ARC_HAS_DIV_REM
+cflags-y				+= -mno-div-rem
+endif
+
+endif
+
+cfi := $(call as-instr,.cfi_startproc\n.cfi_endproc,-DARC_DW2_UNWIND_AS_CFI)
+cflags-$(CONFIG_ARC_DW2_UNWIND)		+= -fasynchronous-unwind-tables $(cfi)
 
 ifndef CONFIG_CC_OPTIMIZE_FOR_SIZE
 # Generic build system uses -O2, we want -O3
-cflags-y  += -O3
+# Note: No need to add to cflags-y as that happens anyways
+#
+# Disable the false maybe-uninitialized warings gcc spits out at -O3
+ARCH_CFLAGS += -O3 $(call cc-disable-warning,maybe-uninitialized,)
 endif
 
 # small data is default for elf32 tool-chain. If not usable, disable it
@@ -58,14 +67,10 @@ ldflags-$(CONFIG_CPU_BIG_ENDIAN)	+= -EB
 # --build-id w/o "-marclinux". Default arc-elf32-ld is OK
 ldflags-$(upto_gcc44)			+= -marclinux
 
-ifndef CONFIG_ARC_HAS_HW_MPY
-	cflags-y	+= -mno-mpy
-endif
-
-LIBGCC	:= $(shell $(CC) $(cflags-y) --print-libgcc-file-name)
+LIBGCC	= $(shell $(CC) $(cflags-y) --print-libgcc-file-name)
 
 # Modules with short calls might break for calls into builtin-kernel
-KBUILD_CFLAGS_MODULE	+= -mlong-calls
+KBUILD_CFLAGS_MODULE	+= -mlong-calls -mno-millicode
 
 # Finally dump eveything into kernel build system
 KBUILD_CFLAGS	+= $(cflags-y)
@@ -80,8 +85,14 @@ core-y		+= arch/arc/
 # w/o this dtb won't embed into kernel binary
 core-y		+= arch/arc/boot/dts/
 
-core-$(CONFIG_ARC_PLAT_FPGA_LEGACY)	+= arch/arc/plat-arcfpga/
-core-$(CONFIG_ARC_PLAT_TB10X)		+= arch/arc/plat-tb10x/
+core-$(CONFIG_ARC_PLAT_SIM)	+= arch/arc/plat-sim/
+core-$(CONFIG_ARC_PLAT_TB10X)	+= arch/arc/plat-tb10x/
+core-$(CONFIG_ARC_PLAT_AXS10X)	+= arch/arc/plat-axs10x/
+core-$(CONFIG_ARC_PLAT_EZNPS)	+= arch/arc/plat-eznps/
+
+ifdef CONFIG_ARC_PLAT_EZNPS
+KBUILD_CPPFLAGS += -I$(srctree)/arch/arc/plat-eznps/include
+endif
 
 drivers-$(CONFIG_OPROFILE)	+= arch/arc/oprofile/
 
@@ -89,7 +100,7 @@ libs-y		+= arch/arc/lib/ $(LIBGCC)
 
 boot		:= arch/arc/boot
 
-#default target for make without any arguements.
+#default target for make without any arguments.
 KBUILD_IMAGE	:= bootpImage
 
 all:	$(KBUILD_IMAGE)
@@ -104,20 +115,7 @@ $(boot_targets): vmlinux
 	$(Q)$(MAKE) $(build)=$(boot)/dts $(boot)/dts/$@
 
 dtbs: scripts
-	$(Q)$(MAKE) $(build)=$(boot)/dts dtbs
+	$(Q)$(MAKE) $(build)=$(boot)/dts
 
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
-
-# Hacks to enable final link due to absence of link-time branch relexation
-# and gcc choosing optimal(shorter) branches at -O3
-#
-# vineetg Feb 2010: -mlong-calls switched off for overall kernel build
-# However lib/decompress_inflate.o (.init.text) calls
-# zlib_inflate_workspacesize (.text) causing relocation errors.
-# Thus forcing all exten calls in this file to be long calls
-export CFLAGS_decompress_inflate.o = -mmedium-calls
-export CFLAGS_initramfs.o = -mmedium-calls
-ifdef CONFIG_SMP
-export CFLAGS_core.o = -mmedium-calls
-endif

@@ -14,55 +14,48 @@
  * of the License.
  */
 #include <linux/debugfs.h>
+#include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/io.h>
+#include <linux/init.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/seq_file.h>
 
 #include <asm/fixmap.h>
+#include <asm/kasan.h>
+#include <asm/memory.h>
 #include <asm/pgtable.h>
+#include <asm/pgtable-hwdef.h>
+#include <asm/ptdump.h>
 
-#define LOWEST_ADDR	(UL(0xffffffffffffffff) << VA_BITS)
-
-struct addr_marker {
-	unsigned long start_address;
-	const char *name;
-};
-
-enum address_markers_idx {
-	VMALLOC_START_NR = 0,
-	VMALLOC_END_NR,
-#ifdef CONFIG_SPARSEMEM_VMEMMAP
-	VMEMMAP_START_NR,
-	VMEMMAP_END_NR,
+static const struct addr_marker address_markers[] = {
+#ifdef CONFIG_KASAN
+	{ KASAN_SHADOW_START,		"Kasan shadow start" },
+	{ KASAN_SHADOW_END,		"Kasan shadow end" },
 #endif
-	PCI_START_NR,
-	PCI_END_NR,
-	FIXADDR_START_NR,
-	FIXADDR_END_NR,
-	MODULES_START_NR,
-	MODUELS_END_NR,
-	KERNEL_SPACE_NR,
-};
-
-static struct addr_marker address_markers[] = {
-	{ VMALLOC_START,	"vmalloc() Area" },
-	{ VMALLOC_END,		"vmalloc() End" },
+	{ MODULES_VADDR,		"Modules start" },
+	{ MODULES_END,			"Modules end" },
+	{ VMALLOC_START,		"vmalloc() Area" },
+	{ VMALLOC_END,			"vmalloc() End" },
+	{ FIXADDR_START,		"Fixmap start" },
+	{ FIXADDR_TOP,			"Fixmap end" },
+	{ PCI_IO_START,			"PCI I/O start" },
+	{ PCI_IO_END,			"PCI I/O end" },
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
-	{ 0,			"vmemmap start" },
-	{ 0,			"vmemmap end" },
+	{ VMEMMAP_START,		"vmemmap start" },
+	{ VMEMMAP_START + VMEMMAP_SIZE,	"vmemmap end" },
 #endif
-	{ (unsigned long) PCI_IOBASE,		"PCI I/O start" },
-	{ (unsigned long) PCI_IOBASE + SZ_16M,	"PCI I/O end" },
-	{ FIXADDR_START,	"Fixmap start" },
-	{ FIXADDR_TOP,		"Fixmap end" },
-	{ MODULES_VADDR,	"Modules start" },
-	{ MODULES_END,		"Modules end" },
-	{ PAGE_OFFSET,		"Kernel Mapping" },
-	{ -1,			NULL },
+	{ PAGE_OFFSET,			"Linear Mapping" },
+	{ -1,				NULL },
 };
 
+/*
+ * The page dumper groups page table entries of the same type into a single
+ * description. It uses pg_state to track the range information while
+ * iterating over the pte entries. When the continuity is broken it then
+ * dumps out a description of the range.
+ */
 struct pg_state {
 	struct seq_file *seq;
 	const struct addr_marker *marker;
@@ -80,6 +73,11 @@ struct prot_bits {
 
 static const struct prot_bits pte_bits[] = {
 	{
+		.mask	= PTE_VALID,
+		.val	= PTE_VALID,
+		.set	= " ",
+		.clear	= "F",
+	}, {
 		.mask	= PTE_USER,
 		.val	= PTE_USER,
 		.set	= "USR",
@@ -110,6 +108,16 @@ static const struct prot_bits pte_bits[] = {
 		.set	= "NG",
 		.clear	= "  ",
 	}, {
+		.mask	= PTE_CONT,
+		.val	= PTE_CONT,
+		.set	= "CON",
+		.clear	= "   ",
+	}, {
+		.mask	= PTE_TABLE_BIT,
+		.val	= PTE_TABLE_BIT,
+		.set	= "   ",
+		.clear	= "BLK",
+	}, {
 		.mask	= PTE_UXN,
 		.val	= PTE_UXN,
 		.set	= "UXN",
@@ -138,6 +146,7 @@ static const struct prot_bits pte_bits[] = {
 
 struct pg_level {
 	const struct prot_bits *bits;
+	const char *name;
 	size_t num;
 	u64 mask;
 };
@@ -145,15 +154,19 @@ struct pg_level {
 static struct pg_level pg_level[] = {
 	{
 	}, { /* pgd */
+		.name	= "PGD",
 		.bits	= pte_bits,
 		.num	= ARRAY_SIZE(pte_bits),
 	}, { /* pud */
+		.name	= (CONFIG_PGTABLE_LEVELS > 3) ? "PUD" : "PGD",
 		.bits	= pte_bits,
 		.num	= ARRAY_SIZE(pte_bits),
 	}, { /* pmd */
+		.name	= (CONFIG_PGTABLE_LEVELS > 2) ? "PMD" : "PGD",
 		.bits	= pte_bits,
 		.num	= ARRAY_SIZE(pte_bits),
 	}, { /* pte */
+		.name	= "PTE",
 		.bits	= pte_bits,
 		.num	= ARRAY_SIZE(pte_bits),
 	},
@@ -183,9 +196,6 @@ static void note_page(struct pg_state *st, unsigned long addr, unsigned level,
 	static const char units[] = "KMGTPE";
 	u64 prot = val & pg_level[level].mask;
 
-	if (addr < LOWEST_ADDR)
-		return;
-
 	if (!st->level) {
 		st->level = level;
 		st->current_prot = prot;
@@ -197,7 +207,7 @@ static void note_page(struct pg_state *st, unsigned long addr, unsigned level,
 		unsigned long delta;
 
 		if (st->current_prot) {
-			seq_printf(st->seq, "0x%16lx-0x%16lx   ",
+			seq_printf(st->seq, "0x%016lx-0x%016lx   ",
 				   st->start_address, addr);
 
 			delta = (addr - st->start_address) >> 10;
@@ -205,7 +215,8 @@ static void note_page(struct pg_state *st, unsigned long addr, unsigned level,
 				delta >>= 10;
 				unit++;
 			}
-			seq_printf(st->seq, "%9lu%c", delta, *unit);
+			seq_printf(st->seq, "%9lu%c %s", delta, *unit,
+				   pg_level[st->level].name);
 			if (pg_level[st->level].bits)
 				dump_prot(st, pg_level[st->level].bits,
 					  pg_level[st->level].num);
@@ -231,7 +242,7 @@ static void note_page(struct pg_state *st, unsigned long addr, unsigned level,
 
 static void walk_pte(struct pg_state *st, pmd_t *pmd, unsigned long start)
 {
-	pte_t *pte = pte_offset_kernel(pmd, 0);
+	pte_t *pte = pte_offset_kernel(pmd, 0UL);
 	unsigned long addr;
 	unsigned i;
 
@@ -243,57 +254,65 @@ static void walk_pte(struct pg_state *st, pmd_t *pmd, unsigned long start)
 
 static void walk_pmd(struct pg_state *st, pud_t *pud, unsigned long start)
 {
-	pmd_t *pmd = pmd_offset(pud, 0);
+	pmd_t *pmd = pmd_offset(pud, 0UL);
 	unsigned long addr;
 	unsigned i;
 
 	for (i = 0; i < PTRS_PER_PMD; i++, pmd++) {
 		addr = start + i * PMD_SIZE;
-		if (pmd_none(*pmd) || pmd_sect(*pmd) || pmd_bad(*pmd))
+		if (pmd_none(*pmd) || pmd_sect(*pmd)) {
 			note_page(st, addr, 3, pmd_val(*pmd));
-		else
+		} else {
+			BUG_ON(pmd_bad(*pmd));
 			walk_pte(st, pmd, addr);
+		}
 	}
 }
 
 static void walk_pud(struct pg_state *st, pgd_t *pgd, unsigned long start)
 {
-	pud_t *pud = pud_offset(pgd, 0);
+	pud_t *pud = pud_offset(pgd, 0UL);
 	unsigned long addr;
 	unsigned i;
 
 	for (i = 0; i < PTRS_PER_PUD; i++, pud++) {
 		addr = start + i * PUD_SIZE;
-		if (pud_none(*pud) || pud_sect(*pud) || pud_bad(*pud))
+		if (pud_none(*pud) || pud_sect(*pud)) {
 			note_page(st, addr, 2, pud_val(*pud));
-		else
+		} else {
+			BUG_ON(pud_bad(*pud));
 			walk_pmd(st, pud, addr);
+		}
 	}
 }
 
-static void walk_pgd(struct pg_state *st, struct mm_struct *mm, unsigned long start)
+static void walk_pgd(struct pg_state *st, struct mm_struct *mm,
+		     unsigned long start)
 {
-	pgd_t *pgd = pgd_offset(mm, 0);
+	pgd_t *pgd = pgd_offset(mm, 0UL);
 	unsigned i;
 	unsigned long addr;
 
 	for (i = 0; i < PTRS_PER_PGD; i++, pgd++) {
 		addr = start + i * PGDIR_SIZE;
-		if (pgd_none(*pgd) || pgd_bad(*pgd))
+		if (pgd_none(*pgd)) {
 			note_page(st, addr, 1, pgd_val(*pgd));
-		else
+		} else {
+			BUG_ON(pgd_bad(*pgd));
 			walk_pud(st, pgd, addr);
+		}
 	}
 }
 
 static int ptdump_show(struct seq_file *m, void *v)
 {
+	struct ptdump_info *info = m->private;
 	struct pg_state st = {
 		.seq = m,
-		.marker = address_markers,
+		.marker = info->markers,
 	};
 
-	walk_pgd(&st, &init_mm, LOWEST_ADDR);
+	walk_pgd(&st, info->mm, info->base_addr);
 
 	note_page(&st, 0, 0, 0);
 	return 0;
@@ -301,7 +320,7 @@ static int ptdump_show(struct seq_file *m, void *v)
 
 static int ptdump_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, ptdump_show, NULL);
+	return single_open(file, ptdump_show, inode->i_private);
 }
 
 static const struct file_operations ptdump_fops = {
@@ -311,7 +330,7 @@ static const struct file_operations ptdump_fops = {
 	.release	= single_release,
 };
 
-static int ptdump_init(void)
+int ptdump_register(struct ptdump_info *info, const char *name)
 {
 	struct dentry *pe;
 	unsigned i, j;
@@ -321,13 +340,18 @@ static int ptdump_init(void)
 			for (j = 0; j < pg_level[i].num; j++)
 				pg_level[i].mask |= pg_level[i].bits[j].mask;
 
-	address_markers[VMEMMAP_START_NR].start_address =
-				(unsigned long)virt_to_page(PAGE_OFFSET);
-	address_markers[VMEMMAP_END_NR].start_address =
-				(unsigned long)virt_to_page(high_memory);
-
-	pe = debugfs_create_file("kernel_page_tables", 0400, NULL, NULL,
-				 &ptdump_fops);
+	pe = debugfs_create_file(name, 0400, NULL, info, &ptdump_fops);
 	return pe ? 0 : -ENOMEM;
+}
+
+static struct ptdump_info kernel_ptdump_info = {
+	.mm		= &init_mm,
+	.markers	= address_markers,
+	.base_addr	= VA_START,
+};
+
+static int ptdump_init(void)
+{
+	return ptdump_register(&kernel_ptdump_info, "kernel_page_tables");
 }
 device_initcall(ptdump_init);

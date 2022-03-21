@@ -1,7 +1,8 @@
 /*
- *  stmvl53l0-i2c.h - Linux kernel modules for STM VL53L0 FlightSense TOF sensor
+ *  stmvl53l0x-i2c.h - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
- *  Copyright (C) 2016 STMicroelectronics Imaging Division
+ *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -15,7 +16,6 @@
  *  GNU General Public License for more details.
  */
 
-
 #ifndef STMVL_I2C_H
 #define STMVL_I2C_H
 #include <linux/types.h>
@@ -27,9 +27,9 @@ struct i2c_data {
 	uint8_t power_up;
 };
 int stmvl53l0x_init_i2c(void);
-void stmvl53l0x_exit_i2c(void *);
-int stmvl53l0x_power_up_i2c(void *, unsigned int *);
-int stmvl53l0x_power_down_i2c(void *);
+void stmvl53l0x_exit_i2c(void *i2c_object);
+int stmvl53l0x_power_up_i2c(void *i2c_object, unsigned int *preset_flag);
+int stmvl53l0x_power_down_i2c(void *i2c_object);
 
 #endif /* NOT CAMERA_CCI */
 #endif /* STMVL_I2C_H */

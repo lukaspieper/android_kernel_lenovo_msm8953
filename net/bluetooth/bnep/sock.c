@@ -37,7 +37,7 @@ static int bnep_sock_release(struct socket *sock)
 {
 	struct sock *sk = sock->sk;
 
-	BT_DBG("sock %pK sk %pK", sock, sk);
+	BT_DBG("sock %p sk %p", sock, sk);
 
 	if (!sk)
 		return 0;
@@ -57,6 +57,7 @@ static int bnep_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 	struct bnep_conninfo ci;
 	struct socket *nsock;
 	void __user *argp = (void __user *)arg;
+	__u32 supp_feat = BIT(BNEP_SETUP_RESPONSE);
 	int err;
 
 	BT_DBG("cmd %x arg %lx", cmd, arg);
@@ -119,6 +120,12 @@ static int bnep_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 			return -EFAULT;
 
 		return err;
+
+	case BNEPGETSUPPFEAT:
+		if (copy_to_user(argp, &supp_feat, sizeof(supp_feat)))
+			return -EFAULT;
+
+		return 0;
 
 	default:
 		return -EINVAL;
@@ -190,12 +197,12 @@ static int bnep_sock_create(struct net *net, struct socket *sock, int protocol,
 {
 	struct sock *sk;
 
-	BT_DBG("sock %pK", sock);
+	BT_DBG("sock %p", sock);
 
 	if (sock->type != SOCK_RAW)
 		return -ESOCKTNOSUPPORT;
 
-	sk = sk_alloc(net, PF_BLUETOOTH, GFP_ATOMIC, &bnep_proto);
+	sk = sk_alloc(net, PF_BLUETOOTH, GFP_ATOMIC, &bnep_proto, kern);
 	if (!sk)
 		return -ENOMEM;
 

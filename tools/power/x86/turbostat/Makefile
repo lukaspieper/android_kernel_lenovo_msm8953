@@ -1,15 +1,15 @@
 CC		= $(CROSS_COMPILE)gcc
 BUILD_OUTPUT	:= $(CURDIR)
-PREFIX		:= /usr
-DESTDIR		:=
+PREFIX		?= /usr
+DESTDIR		?=
 
 ifeq ("$(origin O)", "command line")
 	BUILD_OUTPUT := $(O)
 endif
 
 turbostat : turbostat.c
-CFLAGS +=	-Wall
-CFLAGS +=	-DMSRHEADER='"../../../../arch/x86/include/uapi/asm/msr-index.h"'
+CFLAGS +=	-Wall -I../../../include
+CFLAGS +=	-DMSRHEADER='"../../../../arch/x86/include/asm/msr-index.h"'
 
 %: %.c
 	@mkdir -p $(BUILD_OUTPUT)

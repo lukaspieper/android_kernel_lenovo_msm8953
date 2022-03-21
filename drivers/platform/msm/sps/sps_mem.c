@@ -118,14 +118,13 @@ int sps_mem_init(phys_addr_t pipemem_phys_base, u32 pipemem_size)
 			SPS_ERR(sps, "sps:%s:Invalid Pipe-Mem address",
 				__func__);
 			return SPS_ERROR;
-		} else {
-			iomem_virt = ioremap(iomem_phys, iomem_size);
-			if (!iomem_virt) {
-				SPS_ERR(sps,
+		}
+		iomem_virt = ioremap(iomem_phys, iomem_size);
+		if (!iomem_virt) {
+			SPS_ERR(sps,
 				"sps:%s:Failed to IO map pipe memory.\n",
 					__func__);
-				return -ENOMEM;
-			}
+			return -ENOMEM;
 		}
 
 		iomem_offset = 0;
@@ -167,8 +166,7 @@ int sps_mem_de_init(void)
 
 	if (total_alloc == total_free)
 		return 0;
-	else {
-		SPS_ERR(sps, "sps:%s:some memory not free", __func__);
-		return SPS_ERROR;
-	}
+
+	SPS_ERR(sps, "sps:%s:some memory not free", __func__);
+	return SPS_ERROR;
 }

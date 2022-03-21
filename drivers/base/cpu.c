@@ -16,6 +16,7 @@
 #include <linux/acpi.h>
 #include <linux/of.h>
 #include <linux/cpufeature.h>
+#include <linux/tick.h>
 
 #include "base.h"
 
@@ -40,7 +41,7 @@ static void change_cpu_under_node(struct cpu *cpu,
 	cpu->node_id = to_nid;
 }
 
-static int __ref cpu_subsys_online(struct device *dev)
+static int cpu_subsys_online(struct device *dev)
 {
 	struct cpu *cpu = container_of(dev, struct cpu, dev);
 	int cpuid = dev->id;
@@ -179,303 +180,95 @@ static struct attribute_group crash_note_cpu_attr_group = {
 };
 #endif
 
-#ifdef CONFIG_SCHED_HMP
+#ifdef CONFIG_HOTPLUG_CPU
 
-static ssize_t show_sched_static_cpu_pwr_cost(struct device *dev,
-				struct device_attribute *attr, char *buf)
+static ssize_t isolate_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
 {
 	struct cpu *cpu = container_of(dev, struct cpu, dev);
 	ssize_t rc;
 	int cpuid = cpu->dev.id;
-	unsigned int pwr_cost;
+	unsigned int isolated = cpu_isolated(cpuid);
 
-	pwr_cost = sched_get_static_cpu_pwr_cost(cpuid);
-
-	rc = snprintf(buf, PAGE_SIZE-2, "%d\n", pwr_cost);
+	rc = snprintf(buf, PAGE_SIZE-2, "%d\n", isolated);
 
 	return rc;
 }
 
-static ssize_t __ref store_sched_static_cpu_pwr_cost(struct device *dev,
-				struct device_attribute *attr,
-				const char *buf, size_t count)
-{
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
-	int err;
-	int cpuid = cpu->dev.id;
-	unsigned int pwr_cost;
+static DEVICE_ATTR_RO(isolate);
 
-	err = kstrtouint(strstrip((char *)buf), 0, &pwr_cost);
-	if (err)
-		return err;
-
-	err = sched_set_static_cpu_pwr_cost(cpuid, pwr_cost);
-
-	if (err >= 0)
-		err = count;
-
-	return err;
-}
-
-static ssize_t show_sched_static_cluster_pwr_cost(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
-	ssize_t rc;
-	int cpuid = cpu->dev.id;
-	unsigned int pwr_cost;
-
-	pwr_cost = sched_get_static_cluster_pwr_cost(cpuid);
-
-	rc = snprintf(buf, PAGE_SIZE-2, "%d\n", pwr_cost);
-
-	return rc;
-}
-
-static ssize_t __ref store_sched_static_cluster_pwr_cost(struct device *dev,
-				struct device_attribute *attr,
-				const char *buf, size_t count)
-{
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
-	int err;
-	int cpuid = cpu->dev.id;
-	unsigned int pwr_cost;
-
-	err = kstrtouint(strstrip((char *)buf), 0, &pwr_cost);
-	if (err)
-		return err;
-
-	err = sched_set_static_cluster_pwr_cost(cpuid, pwr_cost);
-
-	if (err >= 0)
-		err = count;
-
-	return err;
-}
-
-static DEVICE_ATTR(sched_static_cpu_pwr_cost, 0644,
-					show_sched_static_cpu_pwr_cost,
-					store_sched_static_cpu_pwr_cost);
-static DEVICE_ATTR(sched_static_cluster_pwr_cost, 0644,
-					show_sched_static_cluster_pwr_cost,
-					store_sched_static_cluster_pwr_cost);
-
-static struct attribute *hmp_sched_cpu_attrs[] = {
-	&dev_attr_sched_static_cpu_pwr_cost.attr,
-	&dev_attr_sched_static_cluster_pwr_cost.attr,
+static struct attribute *cpu_isolated_attrs[] = {
+	&dev_attr_isolate.attr,
 	NULL
 };
 
-static struct attribute_group sched_hmp_cpu_attr_group = {
-	.attrs = hmp_sched_cpu_attrs,
+static struct attribute_group cpu_isolated_attr_group = {
+	.attrs = cpu_isolated_attrs,
 };
 
-#endif /* CONFIG_SCHED_HMP */
+#endif
 
-#ifdef CONFIG_SCHED_QHMP
-static ssize_t show_sched_mostly_idle_load(struct device *dev,
-		 struct device_attribute *attr, char *buf)
+static ssize_t show_sched_load_boost(struct device *dev,
+				struct device_attribute *attr, char *buf)
 {
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
 	ssize_t rc;
-	int cpunum;
-	int mostly_idle_pct;
-
-	cpunum = cpu->dev.id;
-
-	mostly_idle_pct = sched_get_cpu_mostly_idle_load(cpunum);
-
-	rc = snprintf(buf, PAGE_SIZE-2, "%d\n", mostly_idle_pct);
-
-	return rc;
-}
-
-static ssize_t __ref store_sched_mostly_idle_load(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
+	unsigned int boost;
 	struct cpu *cpu = container_of(dev, struct cpu, dev);
 	int cpuid = cpu->dev.id;
-	int mostly_idle_load, err;
 
-	err = kstrtoint(strstrip((char *)buf), 0, &mostly_idle_load);
-	if (err)
-		return err;
-
-	err = sched_set_cpu_mostly_idle_load(cpuid, mostly_idle_load);
-	if (err >= 0)
-		err = count;
-
-	return err;
-}
-
-static ssize_t show_sched_mostly_idle_freq(struct device *dev,
-		 struct device_attribute *attr, char *buf)
-{
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
-	ssize_t rc;
-	int cpunum;
-	unsigned int mostly_idle_freq;
-
-	cpunum = cpu->dev.id;
-
-	mostly_idle_freq = sched_get_cpu_mostly_idle_freq(cpunum);
-
-	rc = snprintf(buf, PAGE_SIZE-2, "%d\n", mostly_idle_freq);
+	boost = per_cpu(sched_load_boost, cpuid);
+	rc = snprintf(buf, PAGE_SIZE-2, "%d\n", boost);
 
 	return rc;
 }
 
-static ssize_t __ref store_sched_mostly_idle_freq(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
-	int cpuid = cpu->dev.id, err;
-	unsigned int mostly_idle_freq;
-
-	err = kstrtoint(strstrip((char *)buf), 0, &mostly_idle_freq);
-	if (err)
-		return err;
-
-	err = sched_set_cpu_mostly_idle_freq(cpuid, mostly_idle_freq);
-	if (err >= 0)
-		err = count;
-
-	return err;
-}
-
-static ssize_t show_sched_mostly_idle_nr_run(struct device *dev,
-		 struct device_attribute *attr, char *buf)
-{
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
-	ssize_t rc;
-	int cpunum;
-	int mostly_idle_nr_run;
-
-	cpunum = cpu->dev.id;
-
-	mostly_idle_nr_run = sched_get_cpu_mostly_idle_nr_run(cpunum);
-
-	rc = snprintf(buf, PAGE_SIZE-2, "%d\n", mostly_idle_nr_run);
-
-	return rc;
-}
-
-static ssize_t __ref store_sched_mostly_idle_nr_run(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
-	int cpuid = cpu->dev.id;
-	int mostly_idle_nr_run, err;
-
-	err = kstrtoint(strstrip((char *)buf), 0, &mostly_idle_nr_run);
-	if (err)
-		return err;
-
-	err = sched_set_cpu_mostly_idle_nr_run(cpuid, mostly_idle_nr_run);
-	if (err >= 0)
-		err = count;
-
-	return err;
-}
-
-static ssize_t show_sched_prefer_idle(struct device *dev,
-		 struct device_attribute *attr, char *buf)
-{
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
-	ssize_t rc;
-	int cpunum;
-	int prefer_idle;
-
-	cpunum = cpu->dev.id;
-
-	prefer_idle = sched_get_cpu_prefer_idle(cpunum);
-
-	rc = snprintf(buf, PAGE_SIZE-2, "%d\n", prefer_idle);
-
-	return rc;
-}
-
-static ssize_t __ref store_sched_prefer_idle(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
-	struct cpu *cpu = container_of(dev, struct cpu, dev);
-	int cpuid = cpu->dev.id;
-	int prefer_idle, err;
-
-	err = kstrtoint(strstrip((char *)buf), 0, &prefer_idle);
-	if (err)
-		return err;
-
-	err = sched_set_cpu_prefer_idle(cpuid, prefer_idle);
-	if (err >= 0)
-		err = count;
-
-	return err;
-}
-
-static DEVICE_ATTR(sched_mostly_idle_freq, 0664, show_sched_mostly_idle_freq,
-						store_sched_mostly_idle_freq);
-static DEVICE_ATTR(sched_mostly_idle_load, 0664, show_sched_mostly_idle_load,
-						store_sched_mostly_idle_load);
-static DEVICE_ATTR(sched_mostly_idle_nr_run, 0664,
-		show_sched_mostly_idle_nr_run, store_sched_mostly_idle_nr_run);
-static DEVICE_ATTR(sched_prefer_idle, 0664,
-		show_sched_prefer_idle, store_sched_prefer_idle);
-
-static struct attribute *qhmp_sched_cpu_attrs[] = {
-	&dev_attr_sched_mostly_idle_load.attr,
-	&dev_attr_sched_mostly_idle_nr_run.attr,
-	&dev_attr_sched_mostly_idle_freq.attr,
-	&dev_attr_sched_prefer_idle.attr,
-	NULL
-};
-
-static struct attribute_group sched_qhmp_cpu_attr_group = {
-	.attrs = qhmp_sched_cpu_attrs,
-};
-
-#endif	/* CONFIG_SCHED_QHMP */
-
-static ssize_t uevent_suppress_store(struct device *dev,
+static ssize_t __ref store_sched_load_boost(struct device *dev,
 				struct device_attribute *attr,
 				const char *buf, size_t count)
 {
-	bool val;
-	int ret;
+	int err;
+	int boost;
+	struct cpu *cpu = container_of(dev, struct cpu, dev);
+	int cpuid = cpu->dev.id;
 
-	ret = strtobool(buf, &val);
-	if (ret < 0)
-		return ret;
+	err = kstrtoint(strstrip((char *)buf), 0, &boost);
+	if (err)
+		return err;
 
-	dev_set_uevent_suppress(dev, val);
+	/*
+	 * -100 is low enough to cancel out CPU's load and make it near zro.
+	 * 1000 is close to the maximum value that cpu_util_freq_{walt,pelt}
+	 * can take without overflow.
+	 */
+	if (boost < -100 || boost > 1000)
+		return -EINVAL;
+
+	per_cpu(sched_load_boost, cpuid) = boost;
+
 	return count;
 }
 
-static DEVICE_ATTR_WO(uevent_suppress);
+static DEVICE_ATTR(sched_load_boost, 0644,
+		   show_sched_load_boost,
+		   store_sched_load_boost);
 
-static struct attribute *uevent_suppress_cpu_attrs[] = {
-	&dev_attr_uevent_suppress.attr,
+static struct attribute *sched_cpu_attrs[] = {
+	&dev_attr_sched_load_boost.attr,
 	NULL
 };
 
-static struct attribute_group uevent_suppress_cpu_attr_group = {
-	.attrs = uevent_suppress_cpu_attrs,
+static struct attribute_group sched_cpu_attr_group = {
+	.attrs = sched_cpu_attrs,
 };
 
 static const struct attribute_group *common_cpu_attr_groups[] = {
 #ifdef CONFIG_KEXEC
 	&crash_note_cpu_attr_group,
 #endif
-#ifdef CONFIG_SCHED_HMP
-	&sched_hmp_cpu_attr_group,
+#ifdef CONFIG_HOTPLUG_CPU
+	&cpu_isolated_attr_group,
 #endif
-#ifdef CONFIG_SCHED_QHMP
-	&sched_qhmp_cpu_attr_group,
-#endif
+	&sched_cpu_attr_group,
 	NULL
 };
 
@@ -483,13 +276,10 @@ static const struct attribute_group *hotplugable_cpu_attr_groups[] = {
 #ifdef CONFIG_KEXEC
 	&crash_note_cpu_attr_group,
 #endif
-#ifdef CONFIG_SCHED_HMP
-	&sched_hmp_cpu_attr_group,
+#ifdef CONFIG_HOTPLUG_CPU
+	&cpu_isolated_attr_group,
 #endif
-#ifdef CONFIG_SCHED_QHMP
-	&sched_qhmp_cpu_attr_group,
-#endif
-	&uevent_suppress_cpu_attr_group,
+	&sched_cpu_attr_group,
 	NULL
 };
 
@@ -499,7 +289,7 @@ static const struct attribute_group *hotplugable_cpu_attr_groups[] = {
 
 struct cpu_attr {
 	struct device_attribute attr;
-	const struct cpumask *const * const map;
+	const struct cpumask *const map;
 };
 
 static ssize_t show_cpus_attr(struct device *dev,
@@ -507,11 +297,8 @@ static ssize_t show_cpus_attr(struct device *dev,
 			      char *buf)
 {
 	struct cpu_attr *ca = container_of(attr, struct cpu_attr, attr);
-	int n = cpulist_scnprintf(buf, PAGE_SIZE-2, *(ca->map));
 
-	buf[n++] = '\n';
-	buf[n] = '\0';
-	return n;
+	return cpumap_print_to_pagebuf(true, buf, ca->map);
 }
 
 #define _CPU_ATTR(name, map) \
@@ -519,9 +306,10 @@ static ssize_t show_cpus_attr(struct device *dev,
 
 /* Keep in sync with cpu_subsys_attrs */
 static struct cpu_attr cpu_attrs[] = {
-	_CPU_ATTR(online, &cpu_online_mask),
-	_CPU_ATTR(possible, &cpu_possible_mask),
-	_CPU_ATTR(present, &cpu_present_mask),
+	_CPU_ATTR(online, &__cpu_online_mask),
+	_CPU_ATTR(possible, &__cpu_possible_mask),
+	_CPU_ATTR(present, &__cpu_present_mask),
+	_CPU_ATTR(core_ctl_isolated, &__cpu_isolated_mask),
 };
 
 /*
@@ -548,7 +336,7 @@ static ssize_t print_cpus_offline(struct device *dev,
 	if (!alloc_cpumask_var(&offline, GFP_KERNEL))
 		return -ENOMEM;
 	cpumask_andnot(offline, cpu_possible_mask, cpu_online_mask);
-	n = cpulist_scnprintf(buf, len, offline);
+	n = scnprintf(buf, len, "%*pbl", cpumask_pr_args(offline));
 	free_cpumask_var(offline);
 
 	/* display offline cpus >= nr_cpu_ids */
@@ -567,6 +355,30 @@ static ssize_t print_cpus_offline(struct device *dev,
 	return n;
 }
 static DEVICE_ATTR(offline, 0444, print_cpus_offline, NULL);
+
+static ssize_t print_cpus_isolated(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	int n = 0, len = PAGE_SIZE-2;
+
+	n = scnprintf(buf, len, "%*pbl\n", cpumask_pr_args(cpu_isolated_map));
+
+	return n;
+}
+static DEVICE_ATTR(isolated, 0444, print_cpus_isolated, NULL);
+
+#ifdef CONFIG_NO_HZ_FULL
+static ssize_t print_cpus_nohz_full(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	int n = 0, len = PAGE_SIZE-2;
+
+	n = scnprintf(buf, len, "%*pbl\n", cpumask_pr_args(tick_nohz_full_mask));
+
+	return n;
+}
+static DEVICE_ATTR(nohz_full, 0444, print_cpus_nohz_full, NULL);
+#endif
 
 static void cpu_device_release(struct device *dev)
 {
@@ -649,12 +461,13 @@ int register_cpu(struct cpu *cpu, int num)
 	if (cpu->hotpluggable)
 		cpu->dev.groups = hotplugable_cpu_attr_groups;
 	error = device_register(&cpu->dev);
-	if (!error)
-		per_cpu(cpu_sys_devices, num) = &cpu->dev;
-	if (!error)
-		register_cpu_under_node(num, cpu_to_node(num));
+	if (error)
+		return error;
 
-	return error;
+	per_cpu(cpu_sys_devices, num) = &cpu->dev;
+	register_cpu_under_node(num, cpu_to_node(num));
+
+	return 0;
 }
 
 struct device *get_cpu_device(unsigned cpu)
@@ -732,8 +545,13 @@ static struct attribute *cpu_root_attrs[] = {
 	&cpu_attrs[0].attr.attr,
 	&cpu_attrs[1].attr.attr,
 	&cpu_attrs[2].attr.attr,
+	&cpu_attrs[3].attr.attr,
 	&dev_attr_kernel_max.attr,
 	&dev_attr_offline.attr,
+	&dev_attr_isolated.attr,
+#ifdef CONFIG_NO_HZ_FULL
+	&dev_attr_nohz_full.attr,
+#endif
 #ifdef CONFIG_GENERIC_CPU_AUTOPROBE
 	&dev_attr_modalias.attr,
 #endif
@@ -772,10 +590,107 @@ static void __init cpu_dev_register_generic(void)
 #endif
 }
 
+#ifdef CONFIG_GENERIC_CPU_VULNERABILITIES
+
+ssize_t __weak cpu_show_meltdown(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "Not affected\n");
+}
+
+ssize_t __weak cpu_show_spectre_v1(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "Not affected\n");
+}
+
+ssize_t __weak cpu_show_spectre_v2(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "Not affected\n");
+}
+
+ssize_t __weak cpu_show_spec_store_bypass(struct device *dev,
+					  struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "Not affected\n");
+}
+
+ssize_t __weak cpu_show_l1tf(struct device *dev,
+			     struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "Not affected\n");
+}
+
+ssize_t __weak cpu_show_mds(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "Not affected\n");
+}
+
+ssize_t __weak cpu_show_tsx_async_abort(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	return sprintf(buf, "Not affected\n");
+}
+
+ssize_t __weak cpu_show_itlb_multihit(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "Not affected\n");
+}
+
+ssize_t __weak cpu_show_srbds(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "Not affected\n");
+}
+
+static DEVICE_ATTR(meltdown, 0444, cpu_show_meltdown, NULL);
+static DEVICE_ATTR(spectre_v1, 0444, cpu_show_spectre_v1, NULL);
+static DEVICE_ATTR(spectre_v2, 0444, cpu_show_spectre_v2, NULL);
+static DEVICE_ATTR(spec_store_bypass, 0444, cpu_show_spec_store_bypass, NULL);
+static DEVICE_ATTR(l1tf, 0444, cpu_show_l1tf, NULL);
+static DEVICE_ATTR(mds, 0444, cpu_show_mds, NULL);
+static DEVICE_ATTR(tsx_async_abort, 0444, cpu_show_tsx_async_abort, NULL);
+static DEVICE_ATTR(itlb_multihit, 0444, cpu_show_itlb_multihit, NULL);
+static DEVICE_ATTR(srbds, 0444, cpu_show_srbds, NULL);
+
+static struct attribute *cpu_root_vulnerabilities_attrs[] = {
+	&dev_attr_meltdown.attr,
+	&dev_attr_spectre_v1.attr,
+	&dev_attr_spectre_v2.attr,
+	&dev_attr_spec_store_bypass.attr,
+	&dev_attr_l1tf.attr,
+	&dev_attr_mds.attr,
+	&dev_attr_tsx_async_abort.attr,
+	&dev_attr_itlb_multihit.attr,
+	&dev_attr_srbds.attr,
+	NULL
+};
+
+static const struct attribute_group cpu_root_vulnerabilities_group = {
+	.name  = "vulnerabilities",
+	.attrs = cpu_root_vulnerabilities_attrs,
+};
+
+static void __init cpu_register_vulnerabilities(void)
+{
+	if (sysfs_create_group(&cpu_subsys.dev_root->kobj,
+			       &cpu_root_vulnerabilities_group))
+		pr_err("Unable to register CPU vulnerabilities\n");
+}
+
+#else
+static inline void cpu_register_vulnerabilities(void) { }
+#endif
+
 void __init cpu_dev_init(void)
 {
 	if (subsys_system_register(&cpu_subsys, cpu_root_attr_groups))
 		panic("Failed to register CPU subsystem");
 
 	cpu_dev_register_generic();
+	cpu_register_vulnerabilities();
 }

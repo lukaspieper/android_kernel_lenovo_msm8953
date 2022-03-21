@@ -164,6 +164,9 @@ void v4l2_event_queue(struct video_device *vdev, const struct v4l2_event *ev)
 	unsigned long flags;
 	struct timespec timestamp;
 
+	if (vdev == NULL)
+		return;
+
 	ktime_get_ts(&timestamp);
 
 	spin_lock_irqsave(&vdev->fh_lock, flags);
@@ -311,8 +314,9 @@ int v4l2_event_unsubscribe(struct v4l2_fh *fh,
 	if (sev && sev->ops && sev->ops->del)
 		sev->ops->del(sev);
 
-	kfree(sev);
 	mutex_unlock(&fh->subscribe_lock);
+
+	kfree(sev);
 
 	return 0;
 }

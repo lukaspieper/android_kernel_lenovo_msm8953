@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,8 +27,8 @@
 
 struct clk_ops;
 struct clk_rpmrs_data;
-extern struct clk_ops clk_ops_rpm;
-extern struct clk_ops clk_ops_rpm_branch;
+extern const struct clk_ops clk_ops_rpm;
+extern const struct clk_ops clk_ops_rpm_branch;
 
 struct rpm_clk {
 	int rpm_res_type;
@@ -110,7 +110,7 @@ extern struct clk_rpmrs_data clk_rpmrs_data_smd;
 			CLK_INIT(active.c), \
 			.depends = dep, \
 		}, \
-	};
+	} \
 
 #define __DEFINE_CLK_RPM_BRANCH(name, active, type, r_id, stat_id, r, \
 					key, rpmrsdata) \
@@ -151,7 +151,7 @@ extern struct clk_rpmrs_data clk_rpmrs_data_smd;
 			.rate = (r), \
 			CLK_INIT(active.c), \
 		}, \
-	};
+	} \
 
 #define DEFINE_CLK_RPM_SMD(name, active, type, r_id, dep) \
 	__DEFINE_CLK_RPM(name, active, type, r_id, 0, dep, \

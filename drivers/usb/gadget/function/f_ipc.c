@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,7 +21,7 @@
 #include <linux/workqueue.h>
 #include <linux/debugfs.h>
 #include <linux/usb/ipc_bridge.h>
-#include "f_ipc.h"
+#include <soc/qcom/sb_notification.h>
 
 #define MAX_INST_NAME_LEN	40
 
@@ -145,7 +145,7 @@ static struct usb_descriptor_header *ss_ipc_desc[] = {
 /* String descriptors */
 
 static struct usb_string ipc_string_defs[] = {
-	[0] = { .s = "IPC" },
+	[0].s = "IPC",
 	{  } /* end of list */
 };
 
@@ -271,23 +271,35 @@ retry_write:
 
 	reinit_completion(&ipc_dev->write_done);
 
+	/* Notify the GPIO driver to wakup the host if
+	 * host is in suspend mode
+	 */
 	if (usb_ep_queue(in, req, GFP_KERNEL)) {
+		sb_notifier_call_chain(EVT_WAKE_UP, NULL);
 		wait_event_interruptible(ipc_dev->state_wq, ipc_dev->online ||
 				ipc_dev->current_state == IPC_DISCONNECTED);
 		pr_debug("%s: Interface ready, Retry IN request\n", __func__);
 		goto retry_write;
 	}
 
+retry_write_done:
 	ret = wait_for_completion_interruptible_timeout(&ipc_dev->write_done,
 				msecs_to_jiffies(IPC_WRITE_WAIT_TIMEOUT));
 	if (ret < 0) {
 		pr_err("%s: Interruption triggered\n", __func__);
 		ret = -EINTR;
 		goto fail;
-	} else if (ret == 0) {
+	} else if (ret == 0 && ipc_dev->online) {
 		pr_err("%s: Request timed out\n", __func__);
 		ret = -ETIMEDOUT;
 		goto fail;
+	/* Notify the GPIO driver to wakeup the host and reintialize the
+	 * completion structure.
+	 */
+	} else if (!ipc_dev->online) {
+		sb_notifier_call_chain(EVT_WAKE_UP, NULL);
+		reinit_completion(&ipc_dev->write_done);
+		goto retry_write_done;
 	}
 
 	return !req->status ? req->actual : req->status;
@@ -655,7 +667,7 @@ static void ipc_resume(struct usb_function *f)
 
 static void ipc_free(struct usb_function *f) {}
 
-struct usb_function *ipc_bind_config(struct usb_function_instance *fi)
+static struct usb_function *ipc_bind_config(struct usb_function_instance *fi)
 {
 	struct ipc_opts *opts;
 	struct ipc_context *ctxt;
@@ -769,17 +781,31 @@ static inline void fipc_debugfs_init(void) {}
 static inline void fipc_debugfs_remove(void) {}
 #endif
 
-void *ipc_setup(void)
+static void ipc_opts_release(struct config_item *item)
 {
-	struct ipc_opts *opts;
+	struct ipc_opts *opts = to_ipc_opts(item);
 
-	opts = kzalloc(sizeof(*opts), GFP_KERNEL);
-	if (!opts)
-		goto err;
+	usb_put_function_instance(&opts->func_inst);
+}
 
-	ipc_dev = kzalloc(sizeof(*ipc_dev), GFP_KERNEL);
-	if (!ipc_dev)
-		goto dev_err;
+static struct configfs_item_operations ipc_item_ops = {
+	.release	= ipc_opts_release,
+};
+
+static struct config_item_type ipc_func_type = {
+	.ct_item_ops	= &ipc_item_ops,
+	.ct_owner	= THIS_MODULE,
+};
+
+static int ipc_set_inst_name(struct usb_function_instance *fi,
+	const char *name)
+{
+	struct ipc_opts *opts = container_of(fi, struct ipc_opts, func_inst);
+	int name_len;
+
+	name_len = strlen(name) + 1;
+	if (name_len > MAX_INST_NAME_LEN)
+		return -ENAMETOOLONG;
 
 	spin_lock_init(&ipc_dev->lock);
 	init_waitqueue_head(&ipc_dev->state_wq);
@@ -789,27 +815,70 @@ void *ipc_setup(void)
 
 	opts->ctxt = ipc_dev;
 
+	return 0;
+}
+
+static void ipc_free_inst(struct usb_function_instance *f)
+{
+	struct ipc_opts *opts = container_of(f, struct ipc_opts, func_inst);
+
+	kfree(opts);
+}
+
+static struct usb_function_instance *ipc_alloc_inst(void)
+{
+	struct ipc_opts *opts;
+
+	opts = kzalloc(sizeof(*opts), GFP_KERNEL);
+	if (!opts)
+		return ERR_PTR(-ENOMEM);
+
+	opts->func_inst.set_inst_name = ipc_set_inst_name;
+	opts->func_inst.free_func_inst = ipc_free_inst;
+	config_group_init_type_name(&opts->func_inst.group, "",
+				    &ipc_func_type);
+
+	return &opts->func_inst;
+}
+
+static struct usb_function *ipc_alloc(struct usb_function_instance *fi)
+{
+	return ipc_bind_config(fi);
+}
+
+DECLARE_USB_FUNCTION(ipc, ipc_alloc_inst, ipc_alloc);
+
+static int __init ipc_init(void)
+{
+	int ret;
+
+	ipc_dev = kzalloc(sizeof(*ipc_dev), GFP_KERNEL);
+	if (!ipc_dev)
+		return -ENOMEM;
+
+	ret = usb_function_register(&ipcusb_func);
+	if (ret) {
+		kfree(ipc_dev);
+		ipc_dev = NULL;
+		pr_err("%s: failed to register ipc %d\n", __func__, ret);
+		return ret;
+	}
+
 	fipc_debugfs_init();
 
-	return (void *)&opts->func_inst;
-
-dev_err:
-	kfree(opts);
-err:
-	return ERR_PTR(-ENOMEM);
+	return ret;
 }
 
-void ipc_cleanup(void *fi)
+static void __exit ipc_exit(void)
 {
-	struct usb_function_instance *f_inst =
-					(struct usb_function_instance *)fi;
-	struct ipc_opts *opts =
-			container_of(f_inst, struct ipc_opts, func_inst);
-
 	fipc_debugfs_remove();
-	kfree(opts->ctxt);
-	kfree(opts);
+	usb_function_unregister(&ipcusb_func);
+	kfree(ipc_dev);
+	ipc_dev = NULL;
 }
+
+module_init(ipc_init);
+module_exit(ipc_exit);
 
 MODULE_DESCRIPTION("IPC function driver");
 MODULE_LICENSE("GPL v2");

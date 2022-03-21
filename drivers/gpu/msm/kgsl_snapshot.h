@@ -58,6 +58,7 @@ struct kgsl_snapshot_section_header {
 #define KGSL_SNAPSHOT_SECTION_MEMLIST      0x0E01
 #define KGSL_SNAPSHOT_SECTION_MEMLIST_V2   0x0E02
 #define KGSL_SNAPSHOT_SECTION_SHADER       0x1201
+#define KGSL_SNAPSHOT_SECTION_MVC          0x1501
 
 #define KGSL_SNAPSHOT_SECTION_END          0xFFFF
 
@@ -196,6 +197,12 @@ struct kgsl_snapshot_indexed_regs {
 	int count;     /* Number of dwords in the data */
 } __packed;
 
+/* MVC register sub-section header */
+struct kgsl_snapshot_mvc_regs {
+	int ctxt_id;
+	int cluster_id;
+} __packed;
+
 /* Istore sub-section header */
 struct kgsl_snapshot_istore {
 	int count;   /* Number of instructions in the istore */
@@ -218,6 +225,7 @@ struct kgsl_snapshot_istore {
 #define SNAPSHOT_DEBUG_CP_ROQ     10
 #define SNAPSHOT_DEBUG_SHADER_MEMORY 11
 #define SNAPSHOT_DEBUG_CP_MERCIU 12
+#define SNAPSHOT_DEBUG_SQE_VERSION 14
 
 struct kgsl_snapshot_debug {
 	int type;    /* Type identifier for the attached tata */

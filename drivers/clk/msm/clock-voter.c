@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,6 +29,7 @@ static unsigned long voter_clk_aggregate_rate(const struct clk *parent)
 
 	list_for_each_entry(clk, &parent->children, siblings) {
 		struct clk_voter *v = to_clk_voter(clk);
+
 		if (v->enabled)
 			rate = max(clk->rate, rate);
 	}
@@ -139,6 +140,7 @@ out:
 static int voter_clk_is_enabled(struct clk *clk)
 {
 	struct clk_voter *v = to_clk_voter(clk);
+
 	return v->enabled;
 }
 
@@ -167,7 +169,7 @@ static enum handoff voter_clk_handoff(struct clk *clk)
 	return HANDOFF_ENABLED_CLK;
 }
 
-struct clk_ops clk_ops_voter = {
+const struct clk_ops clk_ops_voter = {
 	.prepare = voter_clk_prepare,
 	.unprepare = voter_clk_unprepare,
 	.set_rate = voter_clk_set_rate,
@@ -185,10 +187,8 @@ static void *sw_vote_clk_dt_parser(struct device *dev,
 	u32 temp;
 
 	v = devm_kzalloc(dev, sizeof(*v), GFP_KERNEL);
-	if (!v) {
-		dt_err(np, "failed to alloc memory\n");
+	if (!v)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	rc = of_property_read_u32(np, "qcom,config-rate", &temp);
 	if (rc) {

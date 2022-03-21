@@ -1,5 +1,4 @@
-/*
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,6 +17,7 @@
 #include <linux/rmnet_data.h>
 #include <linux/net_map.h>
 #include <net/pkt_sched.h>
+#include <net/rmnet_config.h>
 #include "rmnet_data_config.h"
 #include "rmnet_map.h"
 #include "rmnet_data_private.h"
@@ -27,11 +27,10 @@
 RMNET_LOG_MODULE(RMNET_DATA_LOGMASK_MAPC);
 
 unsigned long int rmnet_map_command_stats[RMNET_MAP_COMMAND_ENUM_LENGTH];
-module_param_array(rmnet_map_command_stats, ulong, 0, S_IRUGO);
+module_param_array(rmnet_map_command_stats, ulong, 0, 0444);
 MODULE_PARM_DESC(rmnet_map_command_stats, "MAP command statistics");
 
-/**
- * rmnet_map_do_flow_control() - Process MAP flow control command
+/* rmnet_map_do_flow_control() - Process MAP flow control command
  * @skb: Socket buffer containing the MAP flow control message
  * @config: Physical end-point configuration of ingress device
  * @enable: boolean for enable/disable
@@ -44,20 +43,20 @@ MODULE_PARM_DESC(rmnet_map_command_stats, "MAP command statistics");
  *      - RMNET_MAP_COMMAND_ACK on success
  */
 static uint8_t rmnet_map_do_flow_control(struct sk_buff *skb,
-					 struct rmnet_phys_ep_conf_s *config,
+					 struct rmnet_phys_ep_config *config,
 					 int enable)
 {
 	struct rmnet_map_control_command_s *cmd;
 	struct net_device *vnd;
 	struct rmnet_logical_ep_conf_s *ep;
-	uint8_t mux_id;
-	uint16_t  ip_family;
-	uint16_t  fc_seq;
-	uint32_t  qos_id;
+	u8 mux_id;
+	u16  ip_family;
+	u16  fc_seq;
+	u32  qos_id;
 	int r;
 
 	if (unlikely(!skb || !config))
-		BUG();
+		return RX_HANDLER_CONSUMED;
 
 	mux_id = RMNET_MAP_GET_MUX_ID(skb);
 	cmd = RMNET_MAP_GET_CMD_START(skb);
@@ -69,7 +68,7 @@ static uint8_t rmnet_map_do_flow_control(struct sk_buff *skb,
 		return RX_HANDLER_CONSUMED;
 	}
 
-	ep = &(config->muxed_ep[mux_id]);
+	ep = &config->muxed_ep[mux_id];
 
 	if (!ep->refcount) {
 		LOGD("Packet on %s:%d; has no logical endpoint config",
@@ -101,8 +100,7 @@ static uint8_t rmnet_map_do_flow_control(struct sk_buff *skb,
 	}
 }
 
-/**
- * rmnet_map_send_ack() - Send N/ACK message for MAP commands
+/* rmnet_map_send_ack() - Send N/ACK message for MAP commands
  * @skb: Socket buffer containing the MAP command message
  * @type: N/ACK message selector
  * @config: Physical end-point configuration of ingress device
@@ -116,14 +114,14 @@ static uint8_t rmnet_map_do_flow_control(struct sk_buff *skb,
  */
 static void rmnet_map_send_ack(struct sk_buff *skb,
 			       unsigned char type,
-			       struct rmnet_phys_ep_conf_s *config)
+			       struct rmnet_phys_ep_config *config)
 {
 	struct rmnet_map_control_command_s *cmd;
 	int xmit_status;
 	int rc;
 
 	if (unlikely(!skb))
-		BUG();
+		return;
 
 	skb->protocol = htons(ETH_P_MAP);
 
@@ -160,8 +158,7 @@ static void rmnet_map_send_ack(struct sk_buff *skb,
 
 }
 
-/**
- * rmnet_map_command() - Entry point for handling MAP commands
+/* rmnet_map_command() - Entry point for handling MAP commands
  * @skb: Socket buffer containing the MAP command message
  * @config: Physical end-point configuration of ingress device
  *
@@ -172,14 +169,14 @@ static void rmnet_map_send_ack(struct sk_buff *skb,
  *      - RX_HANDLER_CONSUMED. Command frames are always consumed.
  */
 rx_handler_result_t rmnet_map_command(struct sk_buff *skb,
-				      struct rmnet_phys_ep_conf_s *config)
+				      struct rmnet_phys_ep_config *config)
 {
 	struct rmnet_map_control_command_s *cmd;
 	unsigned char command_name;
 	unsigned char rc = 0;
 
 	if (unlikely(!skb))
-		BUG();
+		return RX_HANDLER_CONSUMED;
 
 	cmd = RMNET_MAP_GET_CMD_START(skb);
 	command_name = cmd->command_name;

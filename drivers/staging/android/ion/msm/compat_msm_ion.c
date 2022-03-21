@@ -1,4 +1,4 @@
-/* Copyright (c) 2014,2016 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014,2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -137,8 +137,6 @@ static int compat_get_ion_prefetch_data(
 	return err;
 }
 
-
-
 static unsigned int convert_cmd(unsigned int cmd)
 {
 	switch (cmd) {
@@ -158,7 +156,7 @@ static unsigned int convert_cmd(unsigned int cmd)
 }
 
 long compat_msm_ion_ioctl(struct ion_client *client, unsigned int cmd,
-				unsigned long arg)
+			  unsigned long arg)
 {
 	switch (cmd) {
 	case COMPAT_ION_IOC_CLEAN_CACHES:
@@ -171,7 +169,7 @@ long compat_msm_ion_ioctl(struct ion_client *client, unsigned int cmd,
 
 		data32 = compat_ptr(arg);
 		data = compat_alloc_user_space(sizeof(*data));
-		if (data == NULL)
+		if (!data)
 			return -EFAULT;
 
 		err = compat_get_ion_flush_data(data32, data);
@@ -190,7 +188,7 @@ long compat_msm_ion_ioctl(struct ion_client *client, unsigned int cmd,
 
 		data32 = compat_ptr(arg);
 		data = compat_alloc_user_space(sizeof(*data));
-		if (data == NULL)
+		if (!data)
 			return -EFAULT;
 
 		err = compat_get_ion_prefetch_data(data32, data, sizeof(*data));
@@ -199,7 +197,6 @@ long compat_msm_ion_ioctl(struct ion_client *client, unsigned int cmd,
 
 		return msm_ion_custom_ioctl(client, convert_cmd(cmd),
 						(unsigned long)data);
-
 	}
 	default:
 		if (is_compat_task())

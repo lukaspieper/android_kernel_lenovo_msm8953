@@ -163,7 +163,7 @@ struct dsi_pll_output {
 
 	u32 pll_postdiv;	/* vco */
 	u32 pll_n1div;		/* vco */
-	u32 pll_n2div;		/* hr_oclk3, pixel */
+	u32 pll_n2div;		/* hr_oclk3, pixel_clock */
 	u32 fcvo;
 };
 

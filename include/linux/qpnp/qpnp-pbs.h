@@ -17,8 +17,7 @@
 int qpnp_pbs_trigger_event(struct device_node *dev_node, u8 bitmap);
 #else
 static inline int qpnp_pbs_trigger_event(struct device_node *dev_node,
-						 u8 bitmap)
-{
+						 u8 bitmap) {
 	return -ENODEV;
 }
 #endif

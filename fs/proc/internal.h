@@ -24,10 +24,9 @@ struct mempolicy;
  * tree) of these proc_dir_entries, so that we can dynamically
  * add new files to /proc.
  *
- * The "next" pointer creates a linked list of one /proc directory,
- * while parent/subdir create the directory structure (every
- * /proc file has a parent, but "subdir" is NULL for all
- * non-directory entries).
+ * parent/subdir are used for the directory structure (every /proc file has a
+ * parent, but "subdir" is empty for all non-directory entries).
+ * subdir_node is used to build the rb tree "subdir" of the parent.
  */
 struct proc_dir_entry {
 	unsigned int low_ino;
@@ -38,7 +37,9 @@ struct proc_dir_entry {
 	loff_t size;
 	const struct inode_operations *proc_iops;
 	const struct file_operations *proc_fops;
-	struct proc_dir_entry *next, *parent, *subdir;
+	struct proc_dir_entry *parent;
+	struct rb_root subdir;
+	struct rb_node subdir_node;
 	void *data;
 	atomic_t count;		/* use count */
 	atomic_t in_use;	/* number of callers into module in progress; */
@@ -59,12 +60,13 @@ union proc_op {
 
 struct proc_inode {
 	struct pid *pid;
-	int fd;
+	unsigned int fd;
 	union proc_op op;
 	struct proc_dir_entry *pde;
 	struct ctl_table_header *sysctl;
 	struct ctl_table *sysctl_entry;
-	struct proc_ns ns;
+	struct hlist_node sysctl_inodes;
+	const struct proc_ns_operations *ns_ops;
 	struct inode vfs_inode;
 };
 
@@ -190,6 +192,12 @@ static inline struct proc_dir_entry *pde_get(struct proc_dir_entry *pde)
 }
 extern void pde_put(struct proc_dir_entry *);
 
+static inline bool is_empty_pde(const struct proc_dir_entry *pde)
+{
+	return S_ISDIR(pde->mode) && !pde->proc_iops;
+}
+struct proc_dir_entry *proc_create_mount_point(const char *name);
+
 /*
  * inode.c
  */
@@ -243,16 +251,22 @@ extern void proc_thread_self_init(void);
  */
 #ifdef CONFIG_PROC_SYSCTL
 extern int proc_sys_init(void);
-extern void sysctl_head_put(struct ctl_table_header *);
+extern void proc_sys_evict_inode(struct inode *inode,
+				 struct ctl_table_header *head);
 #else
 static inline void proc_sys_init(void) { }
-static inline void sysctl_head_put(struct ctl_table_header *head) { }
+static inline void proc_sys_evict_inode(struct  inode *inode,
+					struct ctl_table_header *head) { }
 #endif
 
 /*
  * uid.c
  */
+#ifdef CONFIG_PROC_UID
 extern int proc_uid_init(void);
+#else
+static inline void proc_uid_init(void) { }
+#endif
 
 /*
  * proc_tty.c
@@ -274,10 +288,12 @@ extern int proc_remount(struct super_block *, int *, char *);
 /*
  * task_[no]mmu.c
  */
+struct mem_size_stats;
 struct proc_maps_private {
 	struct inode *inode;
 	struct task_struct *task;
 	struct mm_struct *mm;
+	struct mem_size_stats *rollup;
 #ifdef CONFIG_MMU
 	struct vm_area_struct *tail_vma;
 #endif
@@ -293,6 +309,7 @@ extern const struct file_operations proc_tid_maps_operations;
 extern const struct file_operations proc_pid_numa_maps_operations;
 extern const struct file_operations proc_tid_numa_maps_operations;
 extern const struct file_operations proc_pid_smaps_operations;
+extern const struct file_operations proc_pid_smaps_rollup_operations;
 extern const struct file_operations proc_tid_smaps_operations;
 extern const struct file_operations proc_clear_refs_operations;
 extern const struct file_operations proc_pagemap_operations;

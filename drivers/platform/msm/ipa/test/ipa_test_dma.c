@@ -848,7 +848,7 @@ static void ipa_test_dma_wrapper_test_one_async(struct work_struct *work)
  *		2.4 queue async memcoy work
  *	3. In-loop
  *		3.1 flush and destroy wq sync
-  *		3.2 flush and destroy wq async
+ *		3.2 flush and destroy wq async
  *	3. dma disable
  */
 static int ipa_test_dma_mt_sync_async(void *priv)

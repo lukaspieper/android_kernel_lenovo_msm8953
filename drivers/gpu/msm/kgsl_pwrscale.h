@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -90,12 +90,18 @@ struct kgsl_pwr_history {
  * @history - History of power events with timestamps and durations
  * @popp_level - Current level of POPP mitigation
  * @popp_state - Control state for POPP, on/off, recently pushed, etc
+ * @cooling_dev - Thermal cooling device handle
+ * @ctxt_aware_enable - Whether or not ctxt aware DCVS feature is enabled
+ * @ctxt_aware_busy_penalty - The time in microseconds required to trigger
+ * ctxt aware power level jump
+ * @ctxt_aware_target_pwrlevel - pwrlevel to jump on in case of ctxt aware
+ * power level jump
  */
 struct kgsl_pwrscale {
 	struct devfreq *devfreqptr;
 	struct msm_adreno_extended_profile gpu_profile;
 	struct msm_busmon_extended_profile bus_profile;
-	unsigned int freq_table[KGSL_MAX_PWRLEVELS];
+	unsigned long freq_table[KGSL_MAX_PWRLEVELS];
 	char last_governor[DEVFREQ_NAME_LEN];
 	struct kgsl_power_stats accum_stats;
 	bool enabled;
@@ -111,6 +117,10 @@ struct kgsl_pwrscale {
 	struct kgsl_pwr_history history[KGSL_PWREVENT_MAX];
 	int popp_level;
 	unsigned long popp_state;
+	struct thermal_cooling_device *cooling_dev;
+	bool ctxt_aware_enable;
+	unsigned int ctxt_aware_target_pwrlevel;
+	unsigned int ctxt_aware_busy_penalty;
 };
 
 int kgsl_pwrscale_init(struct device *dev, const char *governor);
@@ -122,15 +132,20 @@ void kgsl_pwrscale_busy(struct kgsl_device *device);
 void kgsl_pwrscale_sleep(struct kgsl_device *device);
 void kgsl_pwrscale_wake(struct kgsl_device *device);
 
+void kgsl_pwrscale_midframe_timer_restart(struct kgsl_device *device);
+void kgsl_pwrscale_midframe_timer_cancel(struct kgsl_device *device);
+
 void kgsl_pwrscale_enable(struct kgsl_device *device);
 void kgsl_pwrscale_disable(struct kgsl_device *device, bool turbo);
 
 int kgsl_devfreq_target(struct device *dev, unsigned long *freq, u32 flags);
-int kgsl_devfreq_get_dev_status(struct device *, struct devfreq_dev_status *);
+int kgsl_devfreq_get_dev_status(struct device *dev,
+			struct devfreq_dev_status *stat);
 int kgsl_devfreq_get_cur_freq(struct device *dev, unsigned long *freq);
 
 int kgsl_busmon_target(struct device *dev, unsigned long *freq, u32 flags);
-int kgsl_busmon_get_dev_status(struct device *, struct devfreq_dev_status *);
+int kgsl_busmon_get_dev_status(struct device *dev,
+			struct devfreq_dev_status *stat);
 int kgsl_busmon_get_cur_freq(struct device *dev, unsigned long *freq);
 
 bool kgsl_popp_check(struct kgsl_device *device);

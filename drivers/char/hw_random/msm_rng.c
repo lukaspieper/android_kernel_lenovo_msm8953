@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2011-2013, 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2013, 2015, 2017 The Linux Foundation. All rights
+ * reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -52,6 +53,9 @@
 #define MAX_HW_FIFO_DEPTH 16                     /* FIFO is 16 words deep */
 #define MAX_HW_FIFO_SIZE (MAX_HW_FIFO_DEPTH * 4) /* FIFO is 32 bits wide  */
 
+#define RETRY_MAX_CNT		20	/* max retry times to read register */
+#define RETRY_DELAY_INTERVAL	440	/* retry delay interval in us */
+
 struct msm_rng_device {
 	struct platform_device *pdev;
 	void __iomem *base;
@@ -95,7 +99,7 @@ static int msm_rng_direct_read(struct msm_rng_device *msm_rng_dev,
 	struct platform_device *pdev;
 	void __iomem *base;
 	size_t currsize = 0;
-	u32 val;
+	u32 val = 0;
 	u32 *retdata = data;
 	int ret;
 	int failed = 0;
@@ -112,40 +116,40 @@ static int msm_rng_direct_read(struct msm_rng_device *msm_rng_dev,
 	if (msm_rng_dev->qrng_perf_client) {
 		ret = msm_bus_scale_client_update_request(
 				msm_rng_dev->qrng_perf_client, 1);
-		if (ret)
+		if (ret) {
 			pr_err("bus_scale_client_update_req failed!\n");
+			goto bus_err;
+		}
 	}
 	/* enable PRNG clock */
 	ret = clk_prepare_enable(msm_rng_dev->prng_clk);
 	if (ret) {
-		dev_err(&pdev->dev, "failed to enable clock in callback\n");
+		pr_err("failed to enable prng clock\n");
 		goto err;
 	}
 	/* read random data from h/w */
 	do {
 		/* check status bit if data is available */
-		while (!(readl_relaxed(base + PRNG_STATUS_OFFSET)
+		if (!(readl_relaxed(base + PRNG_STATUS_OFFSET)
 				& 0x00000001)) {
-			if (failed == 10) {
-				pr_err("Data not available after retry\n");
+			if (failed++ == RETRY_MAX_CNT) {
+				if (currsize == 0)
+					pr_err("Data not available\n");
 				break;
 			}
-			pr_err("msm_rng:Data not available!\n");
-			msleep_interruptible(10);
-			failed++;
+			udelay(RETRY_DELAY_INTERVAL);
+		} else {
+
+			/* read FIFO */
+			val = readl_relaxed(base + PRNG_DATA_OUT_OFFSET);
+
+			/* write data back to callers pointer */
+			*(retdata++) = val;
+			currsize += 4;
+			/* make sure we stay on 32bit boundary */
+			if ((max - currsize) < 4)
+				break;
 		}
-
-		/* read FIFO */
-		val = readl_relaxed(base + PRNG_DATA_OUT_OFFSET);
-		if (!val)
-			break;	/* no data to read so just bail */
-
-		/* write data back to callers pointer */
-		*(retdata++) = val;
-		currsize += 4;
-		/* make sure we stay on 32bit boundary */
-		if ((max - currsize) < 4)
-			break;
 
 	} while (currsize < max);
 
@@ -158,6 +162,7 @@ err:
 		if (ret)
 			pr_err("bus_scale_client_update_req failed!\n");
 	}
+bus_err:
 	mutex_unlock(&msm_rng_dev->rng_lock);
 
 	val = 0L;
@@ -220,8 +225,8 @@ static int msm_rng_enable_hw(struct msm_rng_device *msm_rng_dev)
 		writel_relaxed(reg_val, msm_rng_dev->base + PRNG_CONFIG_OFFSET);
 
 		/* The PRNG clk should be disabled only after we enable the
-		* PRNG h/w by writing to the PRNG CONFIG register.
-		*/
+		 * PRNG h/w by writing to the PRNG CONFIG register.
+		 */
 		mb();
 	}
 	clk_disable_unprepare(msm_rng_dev->prng_clk);
@@ -263,7 +268,6 @@ static int msm_rng_probe(struct platform_device *pdev)
 
 	msm_rng_dev = kzalloc(sizeof(struct msm_rng_device), GFP_KERNEL);
 	if (!msm_rng_dev) {
-		dev_err(&pdev->dev, "cannot allocate memory\n");
 		error = -ENOMEM;
 		goto err_exit;
 	}
@@ -375,7 +379,8 @@ static int msm_rng_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int qrng_get_random(struct crypto_rng *tfm, u8 *rdata,
+static int qrng_get_random(struct crypto_rng *tfm, const u8 *src,
+				unsigned int slen, u8 *rdata,
 				unsigned int dlen)
 {
 	int sizeread = 0;
@@ -410,29 +415,25 @@ err_exit:
 
 }
 
-static int qrng_reset(struct crypto_rng *tfm, u8 *seed, unsigned int slen)
+static int qrng_reset(struct crypto_rng *tfm, const u8 *seed, unsigned int slen)
 {
 	return 0;
 }
 
-static struct crypto_alg rng_alg = {
-	.cra_name               = "qrng",
-	.cra_driver_name        = "fips_hw_qrng",
-	.cra_priority           = 300,
-	.cra_flags              = CRYPTO_ALG_TYPE_RNG,
-	.cra_ctxsize            = 0,
-	.cra_type               = &crypto_rng_type,
-	.cra_module             = THIS_MODULE,
-	.cra_u                  = {
-		.rng = {
-			.rng_make_random    = qrng_get_random,
-			.rng_reset          = qrng_reset,
-			.seedsize           = 0,
-			}
-		}
-};
+static struct rng_alg rng_algs[] = { {
+	.generate	= qrng_get_random,
+	.seed		= qrng_reset,
+	.seedsize	= 0,
+	.base		= {
+		.cra_name		= "qrng",
+		.cra_driver_name	= "fips_hw_qrng",
+		.cra_priority		= 300,
+		.cra_ctxsize		= 0,
+		.cra_module		= THIS_MODULE,
+	}
+} };
 
-static struct of_device_id qrng_match[] = {
+static const struct of_device_id qrng_match[] = {
 	{	.compatible = "qcom,msm-rng",
 	},
 	{}
@@ -459,7 +460,7 @@ static int __init msm_rng_init(void)
 			__func__, ret);
 		goto err_exit;
 	}
-	ret = crypto_register_alg(&rng_alg);
+	ret = crypto_register_rngs(rng_algs, ARRAY_SIZE(rng_algs));
 	if (ret) {
 		pr_err("%s: crypto_register_algs error:%d\n",
 			__func__, ret);
@@ -474,12 +475,11 @@ module_init(msm_rng_init);
 
 static void __exit msm_rng_exit(void)
 {
-	crypto_unregister_alg(&rng_alg);
+	crypto_unregister_rngs(rng_algs, ARRAY_SIZE(rng_algs));
 	platform_driver_unregister(&rng_driver);
 }
 
 module_exit(msm_rng_exit);
 
-MODULE_AUTHOR("The Linux Foundation");
-MODULE_DESCRIPTION("Qualcomm MSM Random Number Driver");
+MODULE_DESCRIPTION("QTI MSM Random Number Driver");
 MODULE_LICENSE("GPL v2");

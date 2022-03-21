@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -26,8 +26,38 @@ enum {
 	RESET_LEVEL_MAX
 };
 
+enum crash_status {
+	CRASH_STATUS_NO_CRASH = 0,
+	CRASH_STATUS_ERR_FATAL,
+	CRASH_STATUS_WDOG_BITE,
+};
+
 struct device;
 struct module;
+
+enum ssr_comm {
+	SUBSYS_TO_SUBSYS_SYSMON,
+	SUBSYS_TO_HLOS,
+	HLOS_TO_SUBSYS_SYSMON_SHUTDOWN,
+	NUM_SSR_COMMS,
+};
+
+/**
+ * struct subsys_notif_timeout - timeout data used by notification timeout hdlr
+ * @comm_type: Specifies if the type of communication being tracked is
+ * through sysmon between two subsystems, subsystem notifier call chain, or
+ * sysmon shutdown.
+ * @dest_name: subsystem to which sysmon notification is being sent to
+ * @source_name: subsystem which generated event that notification is being sent
+ * for
+ * @timer: timer for scheduling timeout
+ */
+struct subsys_notif_timeout {
+	enum ssr_comm comm_type;
+	const char *dest_name;
+	const char *source_name;
+	struct timer_list timer;
+};
 
 /**
  * struct subsys_desc - subsystem descriptor
@@ -66,9 +96,9 @@ struct subsys_desc {
 	void (*crash_shutdown)(const struct subsys_desc *desc);
 	int (*ramdump)(int, const struct subsys_desc *desc);
 	void (*free_memory)(const struct subsys_desc *desc);
-	irqreturn_t (*err_fatal_handler) (int irq, void *dev_id);
-	irqreturn_t (*stop_ack_handler) (int irq, void *dev_id);
-	irqreturn_t (*wdog_bite_handler) (int irq, void *dev_id);
+	irqreturn_t (*err_fatal_handler)(int irq, void *dev_id);
+	irqreturn_t (*stop_ack_handler)(int irq, void *dev_id);
+	irqreturn_t (*wdog_bite_handler)(int irq, void *dev_id);
 	irqreturn_t (*generic_handler)(int irq, void *dev_id);
 	int is_not_loadable;
 	int err_fatal_gpio;
@@ -89,11 +119,14 @@ struct subsys_desc {
 	bool system_debug;
 	bool ignore_ssr_failure;
 	const char *edge;
+#ifdef CONFIG_SETUP_SSR_NOTIF_TIMEOUTS
+	struct subsys_notif_timeout timeout_data;
+#endif /* CONFIG_SETUP_SSR_NOTIF_TIMEOUTS */
 };
 
 /**
  * struct notif_data - additional notif information
- * @crashed: indicates if subsystem has crashed
+ * @crashed: indicates if subsystem has crashed due to wdog bite or err fatal
  * @enable_ramdump: ramdumps disabled if set to 0
  * @enable_mini_ramdumps: enable flag for minimized critical-memory-only
  * ramdumps
@@ -101,7 +134,7 @@ struct subsys_desc {
  * @pdev: subsystem platform device pointer
  */
 struct notif_data {
-	bool crashed;
+	enum crash_status crashed;
 	int enable_ramdump;
 	int enable_mini_ramdumps;
 	bool no_auth;
@@ -117,15 +150,16 @@ extern int subsystem_crashed(const char *name);
 
 extern void *subsystem_get(const char *name);
 extern void *subsystem_get_with_fwname(const char *name, const char *fw_name);
+extern int subsystem_set_fwname(const char *name, const char *fw_name);
 extern void subsystem_put(void *subsystem);
 
 extern struct subsys_device *subsys_register(struct subsys_desc *desc);
 extern void subsys_unregister(struct subsys_device *dev);
 
 extern void subsys_default_online(struct subsys_device *dev);
-extern void subsys_set_crash_status(struct subsys_device *dev, bool crashed);
-extern bool subsys_get_crash_status(struct subsys_device *dev);
-extern void subsys_set_error(struct subsys_device *dev, const char *error_msg);
+extern void subsys_set_crash_status(struct subsys_device *dev,
+					enum crash_status crashed);
+extern enum crash_status subsys_get_crash_status(struct subsys_device *dev);
 void notify_proxy_vote(struct device *device);
 void notify_proxy_unvote(struct device *device);
 void complete_err_ready(struct subsys_device *subsys);
@@ -162,6 +196,11 @@ static inline void *subsystem_get_with_fwname(const char *name,
 	return NULL;
 }
 
+static inline int subsystem_set_fwname(const char *name,
+				const char *fw_name) {
+	return 0;
+}
+
 static inline void subsystem_put(void *subsystem) { }
 
 static inline
@@ -173,9 +212,10 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 static inline void subsys_unregister(struct subsys_device *dev) { }
 
 static inline void subsys_default_online(struct subsys_device *dev) { }
+static inline void subsys_set_crash_status(struct subsys_device *dev,
+						enum crash_status crashed) { }
 static inline
-void subsys_set_crash_status(struct subsys_device *dev, bool crashed) { }
-static inline bool subsys_get_crash_status(struct subsys_device *dev)
+enum crash_status subsys_get_crash_status(struct subsys_device *dev)
 {
 	return false;
 }
@@ -183,7 +223,7 @@ static inline void notify_proxy_vote(struct device *device) { }
 static inline void notify_proxy_unvote(struct device *device) { }
 static inline int wait_for_shutdown_ack(struct subsys_desc *desc)
 {
-	return -ENOSYS;
+	return -EOPNOTSUPP;
 }
 #endif /* CONFIG_MSM_SUBSYSTEM_RESTART */
 

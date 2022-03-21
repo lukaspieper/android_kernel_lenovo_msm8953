@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009, 2012-2017, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -127,3 +127,4 @@ int msm_clk_notif_register(struct clk *clk, struct notifier_block *nb);
 int msm_clk_notif_unregister(struct clk *clk, struct notifier_block *nb);
 
 #endif
+

@@ -29,7 +29,7 @@
 #include <linux/kernel.h>
 #include <linux/kthread.h>
 #include <linux/list.h>
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/major.h>
 #include <linux/atomic.h>
 #include <linux/sysrq.h>
@@ -89,8 +89,6 @@ static LIST_HEAD(hvc_structs);
  */
 static DEFINE_SPINLOCK(hvc_structs_lock);
 
-/* Mutex to serialize hvc_open */
-static DEFINE_MUTEX(hvc_open_mutex);
 /*
  * This value is used to assign a tty->index value to a hvc_struct based
  * upon order of exposure via hvc_probe(), when we can not match it to
@@ -317,7 +315,8 @@ static int hvc_install(struct tty_driver *driver, struct tty_struct *tty)
 	int rc;
 
 	/* Auto increments kref reference if found. */
-	if (!(hp = hvc_get_by_index(tty->index)))
+	hp = hvc_get_by_index(tty->index);
+	if (!hp)
 		return -ENODEV;
 
 	tty->driver_data = hp;
@@ -334,24 +333,16 @@ static int hvc_install(struct tty_driver *driver, struct tty_struct *tty)
  */
 static int hvc_open(struct tty_struct *tty, struct file * filp)
 {
-	struct hvc_struct *hp;
+	struct hvc_struct *hp = tty->driver_data;
 	unsigned long flags;
 	int rc = 0;
-
-	mutex_lock(&hvc_open_mutex);
-
-	hp = tty->driver_data;
-	if (!hp) {
-		rc = -EIO;
-		goto out;
-	}
 
 	spin_lock_irqsave(&hp->port.lock, flags);
 	/* Check and then increment for fast path open. */
 	if (hp->port.count++ > 0) {
 		spin_unlock_irqrestore(&hp->port.lock, flags);
 		hvc_kick();
-		goto out;
+		return 0;
 	} /* else count == 0 */
 	spin_unlock_irqrestore(&hp->port.lock, flags);
 
@@ -367,41 +358,28 @@ static int hvc_open(struct tty_struct *tty, struct file * filp)
 	 * tty fields and return the kref reference.
 	 */
 	if (rc) {
-		tty_port_tty_set(&hp->port, NULL);
-		tty->driver_data = NULL;
-		tty_port_put(&hp->port);
 		printk(KERN_ERR "hvc_open: request_irq failed with rc %d.\n", rc);
-	} else
+	} else {
 		/* We are ready... raise DTR/RTS */
 		if (C_BAUD(tty))
 			if (hp->ops->dtr_rts)
 				hp->ops->dtr_rts(hp, 1);
+		tty_port_set_initialized(&hp->port, true);
+	}
 
 	/* Force wakeup of the polling thread */
 	hvc_kick();
 
-out:
-	mutex_unlock(&hvc_open_mutex);
 	return rc;
 }
 
 static void hvc_close(struct tty_struct *tty, struct file * filp)
 {
-	struct hvc_struct *hp;
+	struct hvc_struct *hp = tty->driver_data;
 	unsigned long flags;
 
 	if (tty_hung_up_p(filp))
 		return;
-
-	/*
-	 * No driver_data means that this close was issued after a failed
-	 * hvc_open by the tty layer's release_dev() function and we can just
-	 * exit cleanly because the kref reference wasn't made.
-	 */
-	if (!tty->driver_data)
-		return;
-
-	hp = tty->driver_data;
 
 	spin_lock_irqsave(&hp->port.lock, flags);
 
@@ -409,6 +387,9 @@ static void hvc_close(struct tty_struct *tty, struct file * filp)
 		spin_unlock_irqrestore(&hp->port.lock, flags);
 		/* We are done with the tty pointer now. */
 		tty_port_tty_set(&hp->port, NULL);
+
+		if (!tty_port_initialized(&hp->port))
+			return;
 
 		if (C_HUPCL(tty))
 			if (hp->ops->dtr_rts)
@@ -425,7 +406,8 @@ static void hvc_close(struct tty_struct *tty, struct file * filp)
 		 * there is no buffered data otherwise sleeps on a wait queue
 		 * waking periodically to check chars_in_buffer().
 		 */
-		tty_wait_until_sent_from_close(tty, HVC_CLOSE_WAIT);
+		tty_wait_until_sent(tty, HVC_CLOSE_WAIT);
+		tty_port_set_initialized(&hp->port, false);
 	} else {
 		if (hp->port.count < 0)
 			printk(KERN_ERR "hvc_close %X: oops, count is %d\n",
@@ -639,7 +621,7 @@ int hvc_poll(struct hvc_struct *hp)
 		goto bail;
 
 	/* Now check if we can get data (are we throttled ?) */
-	if (test_bit(TTY_THROTTLED, &tty->flags))
+	if (tty_throttled(tty))
 		goto throttled;
 
 	/* If we aren't notifier driven and aren't throttled, we always
@@ -821,7 +803,7 @@ static int hvc_poll_get_char(struct tty_driver *driver, int line)
 
 	n = hp->ops->get_chars(hp->vtermno, &ch, 1);
 
-	if (n == 0)
+	if (n <= 0)
 		return NO_POLL_CHAR;
 
 	return ch;
@@ -1021,19 +1003,3 @@ put_tty:
 out:
 	return err;
 }
-
-/* This isn't particularly necessary due to this being a console driver
- * but it is nice to be thorough.
- */
-static void __exit hvc_exit(void)
-{
-	if (hvc_driver) {
-		kthread_stop(hvc_task);
-
-		tty_unregister_driver(hvc_driver);
-		/* return tty_struct instances allocated in hvc_init(). */
-		put_tty_driver(hvc_driver);
-		unregister_console(&hvc_console);
-	}
-}
-module_exit(hvc_exit);

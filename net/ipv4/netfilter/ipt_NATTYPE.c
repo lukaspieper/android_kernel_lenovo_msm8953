@@ -81,8 +81,8 @@ static void nattype_nte_debug_print(const struct ipt_nattype *nte,
 	DEBUGP("%p:%s-proto[%d],src[%pI4:%d],nat[%d],dest[%pI4:%d]\n",
 	       nte, s, nte->proto,
 	       &nte->range.min_addr.ip, ntohs(nte->range.min_proto.all),
-	       ntohs(nte->nat_port),
-	       &nte->dest_addr, ntohs(nte->dest_port));
+		ntohs(nte->nat_port),
+		&nte->dest_addr, ntohs(nte->dest_port));
 	DEBUGP("Timeout[%lx], Expires[%lx]\n", nte->timeout_value,
 	       nte->timeout.expires);
 }
@@ -98,7 +98,8 @@ static void nattype_free(struct ipt_nattype *nte)
 /* netfilter NATTYPE nattype_refresh_timer()
  * Refresh the timer for this object.
  */
-bool nattype_refresh_timer(unsigned long nat_type, unsigned long timeout_value)
+bool nattype_refresh_timer_impl(unsigned long nat_type,
+				unsigned long timeout_value)
 {
 	struct ipt_nattype *nte = (struct ipt_nattype *)nat_type;
 
@@ -148,7 +149,7 @@ static bool nattype_packet_in_match(const struct ipt_nattype *nte,
 				    const struct ipt_nattype_info *info)
 {
 	const struct iphdr *iph = ip_hdr(skb);
-	uint16_t dst_port = 0;
+	u16 dst_port = 0;
 
 	/* If the protocols are not the same, no sense in looking
 	 * further.
@@ -228,9 +229,9 @@ static bool nattype_compare(struct ipt_nattype *n1, struct ipt_nattype *n2,
 	}
 
 	 /* netfilter NATTYPE LAN Source compare.
-	 * Since we always keep min/max values the same,
-	 * just compare the min values.
-	 */
+	  * Since we always keep min/max values the same,
+	  * just compare the min values.
+	  */
 	if (n1->range.min_addr.ip != n2->range.min_addr.ip) {
 		DEBUGP("nattype_compare: r.min_addr.ip mismatch: %pI4:%pI4\n",
 		       &n1->range.min_addr.ip, &n2->range.min_addr.ip);
@@ -266,10 +267,11 @@ static bool nattype_compare(struct ipt_nattype *n1, struct ipt_nattype *n2,
 	return true;
 }
 
- /* netfilter NATTYPE nattype_nat()
+ /**
+  *  netfilter NATTYPE nattype_nat()
   * Ingress packet on PRE_ROUTING hook, find match, update conntrack
   * to allow
- */
+  **/
 static unsigned int nattype_nat(struct sk_buff *skb,
 				const struct xt_action_param *par)
 {
@@ -339,7 +341,7 @@ static unsigned int nattype_forward(struct sk_buff *skb,
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
 	const struct ipt_nattype_info *info = par->targinfo;
-	uint16_t nat_port;
+	u16 nat_port;
 	enum ip_conntrack_dir dir;
 
 
@@ -374,7 +376,7 @@ static unsigned int nattype_forward(struct sk_buff *skb,
 			 * found the entry.
 			 */
 			if (!nattype_refresh_timer((unsigned long)nte,
-						   ct->timeout.expires))
+						   ct->timeout))
 				break;
 
 			/* netfilter NATTYPE
@@ -453,8 +455,9 @@ static unsigned int nattype_forward(struct sk_buff *skb,
 		 * entry as this one is timed out and will be removed
 		 * from the list shortly.
 		 */
-		if (!nattype_refresh_timer((unsigned long)nte2,
-				jiffies + nte2->timeout_value))
+		if (!nattype_refresh_timer(
+			(unsigned long)nte2,
+			jiffies + nte2->timeout_value))
 			break;
 
 		/* netfilter NATTYPE
@@ -471,8 +474,8 @@ static unsigned int nattype_forward(struct sk_buff *skb,
 	/* netfilter NATTYPE
 	 * Add the new entry to the list.
 	 */
-	nte->timeout_value = ct->timeout.expires;
-	nte->timeout.expires = ct->timeout.expires + jiffies;
+	nte->timeout_value = ct->timeout;
+	nte->timeout.expires = ct->timeout + jiffies;
 	add_timer(&nte->timeout);
 	list_add(&nte->list, &nattype_list);
 	ct->nattype_entry = (unsigned long)nte;
@@ -613,6 +616,8 @@ static struct xt_target nattype = {
 
 static int __init init(void)
 {
+	WARN_ON(nattype_refresh_timer);
+	RCU_INIT_POINTER(nattype_refresh_timer, nattype_refresh_timer_impl);
 	return xt_register_target(&nattype);
 }
 

@@ -1,5 +1,4 @@
-/*
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, 2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -28,20 +27,20 @@ extern unsigned int rmnet_data_log_module_mask;
 #define RMNET_INIT_OK     0
 #define RMNET_INIT_ERROR  1
 
-#define RMNET_LOG_LVL_DBG (1<<4)
-#define RMNET_LOG_LVL_LOW (1<<3)
-#define RMNET_LOG_LVL_MED (1<<2)
-#define RMNET_LOG_LVL_HI  (1<<1)
-#define RMNET_LOG_LVL_ERR (1<<0)
+#define RMNET_LOG_LVL_DBG BIT(4)
+#define RMNET_LOG_LVL_LOW BIT(3)
+#define RMNET_LOG_LVL_MED BIT(2)
+#define RMNET_LOG_LVL_HI  BIT(1)
+#define RMNET_LOG_LVL_ERR BIT(0)
 
 #define RMNET_LOG_MODULE(X) \
-	static uint32_t rmnet_mod_mask = X
+	static u32 rmnet_mod_mask = X
 
-#define RMNET_DATA_LOGMASK_CONFIG  (1<<0)
-#define RMNET_DATA_LOGMASK_HANDLER (1<<1)
-#define RMNET_DATA_LOGMASK_VND     (1<<2)
-#define RMNET_DATA_LOGMASK_MAPD    (1<<3)
-#define RMNET_DATA_LOGMASK_MAPC    (1<<4)
+#define RMNET_DATA_LOGMASK_CONFIG  BIT(0)
+#define RMNET_DATA_LOGMASK_HANDLER BIT(1)
+#define RMNET_DATA_LOGMASK_VND     BIT(2)
+#define RMNET_DATA_LOGMASK_MAPD    BIT(3)
+#define RMNET_DATA_LOGMASK_MAPC    BIT(4)
 
 #define LOGE(fmt, ...) do { if (rmnet_data_log_level & RMNET_LOG_LVL_ERR) \
 			pr_err("[RMNET:ERR] %s(): " fmt "\n", __func__, \
@@ -49,7 +48,7 @@ extern unsigned int rmnet_data_log_module_mask;
 			} while (0)
 
 #define LOGH(fmt, ...) do { if (rmnet_data_log_level & RMNET_LOG_LVL_HI) \
-			pr_err("[RMNET:HI] %s(): " fmt "\n" , __func__, \
+			pr_err("[RMNET:HI] %s(): " fmt "\n", __func__, \
 				##__VA_ARGS__); \
 			} while (0)
 
@@ -68,8 +67,8 @@ extern unsigned int rmnet_data_log_module_mask;
  * minimal impact as LOGD is not enabled by default.
  */
 #define LOGD(fmt, ...) do { if (unlikely( \
-			    (rmnet_data_log_level & RMNET_LOG_LVL_DBG) \
-			    && (rmnet_data_log_module_mask & rmnet_mod_mask))) \
+			    (rmnet_data_log_level & RMNET_LOG_LVL_DBG) && \
+			    (rmnet_data_log_module_mask & rmnet_mod_mask))) \
 			pr_notice("[RMNET:DBG] %s(): " fmt "\n", __func__, \
 				  ##__VA_ARGS__); \
 			} while (0)

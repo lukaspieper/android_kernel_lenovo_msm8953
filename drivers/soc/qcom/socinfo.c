@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -36,6 +36,7 @@
 #include <soc/qcom/boot_stats.h>
 
 #define BUILD_ID_LENGTH 32
+#define CHIP_ID_LENGTH 32
 #define SMEM_IMAGE_VERSION_BLOCKS_COUNT 32
 #define SMEM_IMAGE_VERSION_SINGLE_BLOCK_SIZE 128
 #define SMEM_IMAGE_VERSION_SIZE 4096
@@ -67,6 +68,7 @@ enum {
 	HW_PLATFORM_SBC = 24,
 	HW_PLATFORM_ADP = 25,
 	HW_PLATFORM_TTP = 30,
+	HW_PLATFORM_HDK = 31,
 	HW_PLATFORM_INVALID
 };
 
@@ -89,6 +91,7 @@ const char *hw_platform[] = {
 	[HW_PLATFORM_SBC] = "SBC",
 	[HW_PLATFORM_ADP] = "ADP",
 	[HW_PLATFORM_TTP] = "TTP",
+	[HW_PLATFORM_HDK] = "HDK",
 };
 
 enum {
@@ -112,22 +115,6 @@ const char *qrd_hw_platform_subtype[] = {
 	[PLATFORM_SUBTYPE_SKUAB] = "SKUAB",
 	[PLATFORM_SUBTYPE_SKUG] = "SKUG",
 	[PLATFORM_SUBTYPE_QRD_INVALID] = "INVALID",
-};
-
-enum {
-	PLATFORM_SUBTYPE_MOJAVE_V1 = 0x0,
-	PLATFORM_SUBTYPE_MMX = 0x1,
-	PLATFORM_SUBTYPE_MOJAVE_FULL_V2 = 0x2,
-	PLATFORM_SUBTYPE_MOJAVE_BARE_V2 = 0x3,
-	PLATFORM_SUBTYPE_ADP_INVALID,
-};
-
-const char *adp_hw_platform_subtype[] = {
-	[PLATFORM_SUBTYPE_MOJAVE_V1] = "MOJAVE_V1",
-	[PLATFORM_SUBTYPE_MMX] = "MMX",
-	[PLATFORM_SUBTYPE_MOJAVE_FULL_V2] = "_MOJAVE_V2_FULL",
-	[PLATFORM_SUBTYPE_MOJAVE_BARE_V2] = "_MOJAVE_V2_BARE",
-	[PLATFORM_SUBTYPE_ADP_INVALID] = "INVALID",
 };
 
 enum {
@@ -217,6 +204,25 @@ struct socinfo_v0_12 {
 	uint32_t raw_device_number;
 };
 
+struct socinfo_v0_13 {
+	struct socinfo_v0_12 v0_12;
+	uint32_t nproduct_id;
+	char chip_name[CHIP_ID_LENGTH];
+};
+
+struct socinfo_v0_14 {
+	struct socinfo_v0_13 v0_13;
+	uint32_t num_clusters;
+	uint32_t ncluster_array_offset;
+	uint32_t num_defective_parts;
+	uint32_t ndefective_parts_array_offset;
+};
+
+struct socinfo_v0_15 {
+	struct socinfo_v0_14 v0_14;
+	uint32_t nmodem_supported;
+};
+
 static union {
 	struct socinfo_v0_1 v0_1;
 	struct socinfo_v0_2 v0_2;
@@ -230,10 +236,13 @@ static union {
 	struct socinfo_v0_10 v0_10;
 	struct socinfo_v0_11 v0_11;
 	struct socinfo_v0_12 v0_12;
+	struct socinfo_v0_13 v0_13;
+	struct socinfo_v0_14 v0_14;
+	struct socinfo_v0_15 v0_15;
 } *socinfo;
 
 /* max socinfo format version supported */
-#define MAX_SOCINFO_FORMAT SOCINFO_VERSION(0, 12)
+#define MAX_SOCINFO_FORMAT SOCINFO_VERSION(0, 15)
 
 static struct msm_soc_info cpu_of_id[] = {
 
@@ -529,19 +538,16 @@ static struct msm_soc_info cpu_of_id[] = {
 	[256] = {FSM_CPU_9010, "FSM9010"},
 	[257] = {FSM_CPU_9010, "FSM9010"},
 
-	/* 8952 ID */
-	[264] = {MSM_CPU_8952, "MSM8952"},
-	[289] = {MSM_CPU_8952, "APQ8952"},
+	/* Tellurium ID */
+	[264] = {MSM_CPU_TELLURIUM, "MSMTELLURIUM"},
 
 	/* 8996 IDs */
 	[246] = {MSM_CPU_8996, "MSM8996"},
-	[291] = {MSM_CPU_8996, "APQ8096"},
-	[305] = {MSM_CPU_8996, "MSM8996pro"},
 	[310] = {MSM_CPU_8996, "MSM8996"},
 	[311] = {MSM_CPU_8996, "APQ8096"},
+	[291] = {MSM_CPU_8996, "APQ8096"},
+	[305] = {MSM_CPU_8996, "MSM8996pro"},
 	[312] = {MSM_CPU_8996, "APQ8096pro"},
-	[315] = {MSM_CPU_8996, "MSM8996pro"},
-	[316] = {MSM_CPU_8996, "APQ8096pro"},
 
 	/* 8976 ID */
 	[266] = {MSM_CPU_8976, "MSM8976"},
@@ -552,17 +558,31 @@ static struct msm_soc_info cpu_of_id[] = {
 	[270] = {MSM_CPU_8929, "MSM8229"},
 	[271] = {MSM_CPU_8929, "APQ8029"},
 
-	/* Cobalt ID */
+	/* Cobalt IDs */
 	[292] = {MSM_CPU_COBALT, "MSMCOBALT"},
+	[319] = {MSM_CPU_COBALT, "APQCOBALT"},
 
-	/* 8953 ID */
-	[293] = {MSM_CPU_8953, "MSM8953"},
-	[304] = {MSM_CPU_8953, "APQ8053"},
+	/* Hamster ID */
+	[306] = {MSM_CPU_HAMSTER, "MSMHAMSTER"},
 
-	/* SDM450 ID */
-	[338] = {MSM_CPU_SDM450, "SDM450"},
-	[351] = {MSM_CPU_SDM450, "SDA450"},
+	/* falcon ID */
+	[317] = {MSM_CPU_FALCON, "MSMFALCON"},
 
+	/* sdm845 ID */
+	[321] = {MSM_CPU_SDM845, "SDM845"},
+	[341] = {MSM_CPU_SDM845, "SDA845"},
+
+	/* sdxpoorwills ID */
+	[334] = {SDX_CPU_SDXPOORWILLS, "SDXPOORWILLS"},
+	[335] = {SDX_CPU_SDXPOORWILLS, "SDXPOORWILLS"},
+	[408] = {SDX_CPU_SDXPOORWILLS, "SDXPOORWILLS"},
+
+	/* 9650 IDs */
+	[279] = {MSM_CPU_9650, "MDM9650"},
+	[283] = {MSM_CPU_9650, "MDM9650"},
+	[284] = {MSM_CPU_9650, "MDM9650"},
+	[285] = {MSM_CPU_9650, "MDM9650"},
+	[286] = {MSM_CPU_9650, "MDM9650"},
 
 	/* 9607 IDs */
 	[290] = {MSM_CPU_9607, "MDM9607"},
@@ -572,16 +592,38 @@ static struct msm_soc_info cpu_of_id[] = {
 	[299] = {MSM_CPU_9607, "MDM9628"},
 	[322] = {MSM_CPU_9607, "MDM9206"},
 
-	/* 9650 IDs */
-	[279] = {MSM_CPU_9650, "MDM9650"},
-	[283] = {MSM_CPU_9650, "MDM9650"},
-	[284] = {MSM_CPU_9650, "MDM9650"},
-	[285] = {MSM_CPU_9650, "MDM9650"},
-	[286] = {MSM_CPU_9650, "MDM9650"},
+	/* SDM670 ID */
+	[336] = {MSM_CPU_SDM670, "SDM670"},
 
-	/* SDX20 IDs */
-	[314] = {SDX_CPU_20, "SDX20"},
-	[333] = {SDX_CPU_20, "SDX20"},
+	/* QCS605 ID */
+	[347] = {MSM_CPU_QCS605, "QCS605"},
+
+	/* SXR1130 ID */
+	[371] = {MSM_CPU_SXR1130, "SXR1130"},
+
+	/* SDA670 ID */
+	[337] = {MSM_CPU_SDA670, "SDA670"},
+
+	/* SDM710 ID */
+	[360] = {MSM_CPU_SDM710, "SDM710"},
+
+	/* SDM712 ID */
+	[393] = {MSM_CPU_SDM712, "SDM712"},
+
+	/* SXR1120 ID */
+	[370] = {MSM_CPU_SXR1120, "SXR1120"},
+
+	/* 8953 ID */
+	[293] = {MSM_CPU_8953, "MSM8953"},
+	[304] = {MSM_CPU_8953, "APQ8053"},
+
+	/* SDM450 ID */
+	[338] = {MSM_CPU_SDM450, "SDM450"},
+	[351] = {MSM_CPU_SDM450, "SDA450"},
+
+	/* SDM632 ID */
+	[349] = {MSM_CPU_SDM632, "SDM632"},
+	[350] = {MSM_CPU_SDA632, "SDA632"},
 
 	/*MSM8937 ID  */
 	[294] = {MSM_CPU_8937, "MSM8937"},
@@ -593,18 +635,28 @@ static struct msm_soc_info cpu_of_id[] = {
 	[308] = {MSM_CPU_8917, "MSM8217"},
 	[309] = {MSM_CPU_8917, "MSM8617"},
 
-	/* MSM8920 IDs */
-	[320] = {MSM_CPU_8920, "MSM8920"},
-
 	/* MSM8940 IDs */
 	[313] = {MSM_CPU_8940, "MSM8940"},
 
-	/* MDM9150 IDs */
-	[359] = {MSM_CPU_9150, "MDM9150"},
+	/* SDM429 and SDM439 ID*/
+	[353] = {MSM_CPU_SDM439, "SDM439"},
+	[354] = {MSM_CPU_SDM429, "SDM429"},
+	[363] = {MSM_CPU_SDA439, "SDA439"},
+	[364] = {MSM_CPU_SDA429, "SDA429"},
 
+	/* QM215 ID */
+	[386] = {MSM_CPU_QM215, "QM215"},
+
+	/* QCM2150 ID */
+	[436] = {MSM_CPU_QCM2150, "QCM2150"},
+
+	/* SDM429W IDs*/
+	[416] = {MSM_CPU_SDM429W, "SDM429W"},
+	[437] = {MSM_CPU_SDA429W, "SDA429W"},
 	/* Uninitialized IDs are not known to run Linux.
-	   MSM_CPU_UNKNOWN is set to 0 to ensure these IDs are
-	   considered as unknown CPU. */
+	 * MSM_CPU_UNKNOWN is set to 0 to ensure these IDs are
+	 * considered as unknown CPU.
+	 */
 };
 
 static enum msm_cpu cur_cpu;
@@ -622,10 +674,11 @@ uint32_t socinfo_get_id(void)
 }
 EXPORT_SYMBOL_GPL(socinfo_get_id);
 
-static char *socinfo_get_id_string(void)
+char *socinfo_get_id_string(void)
 {
 	return (socinfo) ? cpu_of_id[socinfo->v0_1.id].soc_id_string : NULL;
 }
+EXPORT_SYMBOL(socinfo_get_id_string);
 
 uint32_t socinfo_get_version(void)
 {
@@ -659,6 +712,55 @@ static char *msm_read_hardware_id(void)
 	return msm_soc_str;
 err_path:
 	return "UNKNOWN SOC TYPE";
+}
+
+const char * __init arch_read_machine_name(void)
+{
+	static char msm_machine_name[256] = "Qualcomm Technologies, Inc. ";
+	static bool string_generated;
+	u32 len = 0;
+	const char *name;
+
+	if (string_generated)
+		return msm_machine_name;
+
+	len = strlen(msm_machine_name);
+	name = of_get_flat_dt_prop(of_get_flat_dt_root(),
+				"qcom,msm-name", NULL);
+	if (name)
+		len += snprintf(msm_machine_name + len,
+					sizeof(msm_machine_name) - len,
+					"%s", name);
+	else
+		goto no_prop_path;
+
+	name = of_get_flat_dt_prop(of_get_flat_dt_root(),
+				"qcom,pmic-name", NULL);
+	if (name) {
+		len += snprintf(msm_machine_name + len,
+					sizeof(msm_machine_name) - len,
+					"%s", " ");
+		len += snprintf(msm_machine_name + len,
+					sizeof(msm_machine_name) - len,
+					"%s", name);
+	} else
+		goto no_prop_path;
+
+	name = of_flat_dt_get_machine_name();
+	if (name) {
+		len += snprintf(msm_machine_name + len,
+					sizeof(msm_machine_name) - len,
+					"%s", " ");
+		len += snprintf(msm_machine_name + len,
+					sizeof(msm_machine_name) - len,
+					"%s", name);
+	} else
+		goto no_prop_path;
+
+	string_generated = true;
+	return msm_machine_name;
+no_prop_path:
+	return of_flat_dt_get_machine_name();
 }
 
 uint32_t socinfo_get_raw_id(void)
@@ -753,6 +855,62 @@ static uint32_t socinfo_get_raw_device_number(void)
 		: 0;
 }
 
+static char *socinfo_get_chip_name(void)
+{
+	return socinfo ?
+		(socinfo_format >= SOCINFO_VERSION(0, 13) ?
+			socinfo->v0_13.chip_name : "N/A")
+		: "N/A";
+}
+
+static uint32_t socinfo_get_nproduct_id(void)
+{
+	return socinfo ?
+		(socinfo_format >= SOCINFO_VERSION(0, 13) ?
+			socinfo->v0_13.nproduct_id : 0)
+		: 0;
+}
+
+static uint32_t socinfo_get_num_clusters(void)
+{
+	return socinfo ?
+		(socinfo_format >= SOCINFO_VERSION(0, 14) ?
+			socinfo->v0_14.num_clusters : 0)
+		: 0;
+}
+
+static uint32_t socinfo_get_ncluster_array_offset(void)
+{
+	return socinfo ?
+		(socinfo_format >= SOCINFO_VERSION(0, 14) ?
+			socinfo->v0_14.ncluster_array_offset : 0)
+		: 0;
+}
+
+static uint32_t socinfo_get_num_defective_parts(void)
+{
+	return socinfo ?
+		(socinfo_format >= SOCINFO_VERSION(0, 14) ?
+			socinfo->v0_14.num_defective_parts : 0)
+		: 0;
+}
+
+static uint32_t socinfo_get_ndefective_parts_array_offset(void)
+{
+	return socinfo ?
+		(socinfo_format >= SOCINFO_VERSION(0, 14) ?
+			socinfo->v0_14.ndefective_parts_array_offset : 0)
+		: 0;
+}
+
+static uint32_t socinfo_get_nmodem_supported(void)
+{
+	return socinfo ?
+		(socinfo_format >= SOCINFO_VERSION(0, 15) ?
+			socinfo->v0_15.nmodem_supported : 0)
+		: 0;
+}
+
 enum pmic_model socinfo_get_pmic_model(void)
 {
 	return socinfo ?
@@ -822,6 +980,7 @@ msm_get_hw_platform(struct device *dev,
 			char *buf)
 {
 	uint32_t hw_type;
+
 	hw_type = socinfo_get_platform_type();
 
 	return snprintf(buf, PAGE_SIZE, "%-.32s\n",
@@ -852,6 +1011,7 @@ msm_get_platform_subtype(struct device *dev,
 			char *buf)
 {
 	uint32_t hw_subtype;
+
 	hw_subtype = socinfo_get_platform_subtype();
 	if (HW_PLATFORM_QRD == socinfo_get_platform_type()) {
 		if (hw_subtype >= PLATFORM_SUBTYPE_QRD_INVALID) {
@@ -860,14 +1020,6 @@ msm_get_platform_subtype(struct device *dev,
 		}
 		return snprintf(buf, PAGE_SIZE, "%-.32s\n",
 					qrd_hw_platform_subtype[hw_subtype]);
-	}
-	if (HW_PLATFORM_ADP == socinfo_get_platform_type()) {
-		if (hw_subtype >= PLATFORM_SUBTYPE_ADP_INVALID) {
-			pr_err("Invalid hardware platform sub type for adp found\n");
-			hw_subtype = PLATFORM_SUBTYPE_ADP_INVALID;
-		}
-		return snprintf(buf, PAGE_SIZE, "%-.32s\n",
-					adp_hw_platform_subtype[hw_subtype]);
 	} else {
 		if (hw_subtype >= PLATFORM_SUBTYPE_INVALID) {
 			pr_err("Invalid hardware platform subtype\n");
@@ -884,6 +1036,7 @@ msm_get_platform_subtype_id(struct device *dev,
 			char *buf)
 {
 	uint32_t hw_subtype;
+
 	hw_subtype = socinfo_get_platform_subtype();
 	return snprintf(buf, PAGE_SIZE, "%u\n",
 		hw_subtype);
@@ -932,6 +1085,69 @@ msm_get_raw_device_number(struct device *dev,
 {
 	return snprintf(buf, PAGE_SIZE, "0x%x\n",
 		socinfo_get_raw_device_number());
+}
+
+static ssize_t
+msm_get_chip_name(struct device *dev,
+		   struct device_attribute *attr,
+		   char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%-.32s\n",
+			socinfo_get_chip_name());
+}
+
+static ssize_t
+msm_get_nproduct_id(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "0x%x\n",
+		socinfo_get_nproduct_id());
+}
+
+static ssize_t
+msm_get_num_clusters(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "0x%x\n",
+		socinfo_get_num_clusters());
+}
+
+static ssize_t
+msm_get_ncluster_array_offset(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "0x%x\n",
+		socinfo_get_ncluster_array_offset());
+}
+
+static ssize_t
+msm_get_num_defective_parts(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "0x%x\n",
+		socinfo_get_num_defective_parts());
+}
+
+static ssize_t
+msm_get_ndefective_parts_array_offset(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "0x%x\n",
+		socinfo_get_ndefective_parts_array_offset());
+}
+
+static ssize_t
+msm_get_nmodem_supported(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "0x%x\n",
+		socinfo_get_nmodem_supported());
 }
 
 static ssize_t
@@ -1114,7 +1330,7 @@ msm_select_image(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 	down_write(&current_image_rwsem);
-	if (0 <= digit && digit < SMEM_IMAGE_VERSION_BLOCKS_COUNT)
+	if (digit >= 0 && digit < SMEM_IMAGE_VERSION_BLOCKS_COUNT)
 		current_image = digit;
 	else
 		current_image = 0;
@@ -1143,8 +1359,8 @@ msm_get_images(struct device *dev,
 
 		pos += snprintf(buf + pos, PAGE_SIZE - pos, "%d:\n",
 				image);
-		pos += snprintf(buf + pos, PAGE_SIZE - pos, "\tCRM:\t\t%-.75s\n",
-				image_address);
+		pos += snprintf(buf + pos, PAGE_SIZE - pos,
+				"\tCRM:\t\t%-.75s\n", image_address);
 		pos += snprintf(buf + pos, PAGE_SIZE - pos, "\tVariant:\t%-.20s\n",
 				image_address + SMEM_IMAGE_VERSION_VARIANT_OFFSET);
 		pos += snprintf(buf + pos, PAGE_SIZE - pos, "\tVersion:\t%-.32s\n\n",
@@ -1211,6 +1427,34 @@ static struct device_attribute msm_soc_attr_raw_device_number =
 	__ATTR(raw_device_number, S_IRUGO,
 			msm_get_raw_device_number, NULL);
 
+static struct device_attribute msm_soc_attr_chip_name =
+	__ATTR(chip_name, 0444,
+			msm_get_chip_name, NULL);
+
+static struct device_attribute msm_soc_attr_nproduct_id =
+	__ATTR(nproduct_id, 0444,
+			msm_get_nproduct_id, NULL);
+
+static struct device_attribute msm_soc_attr_num_clusters =
+	__ATTR(num_clusters, 0444,
+			msm_get_num_clusters, NULL);
+
+static struct device_attribute msm_soc_attr_ncluster_array_offset =
+	__ATTR(ncluster_array_offset, 0444,
+			msm_get_ncluster_array_offset, NULL);
+
+static struct device_attribute msm_soc_attr_num_defective_parts =
+	__ATTR(num_defective_parts, 0444,
+			msm_get_num_defective_parts, NULL);
+
+static struct device_attribute msm_soc_attr_ndefective_parts_array_offset =
+	__ATTR(ndefective_parts_array_offset, 0444,
+			msm_get_ndefective_parts_array_offset, NULL);
+
+static struct device_attribute msm_soc_attr_nmodem_supported =
+	__ATTR(nmodem_supported, 0444,
+			msm_get_nmodem_supported, NULL);
+
 static struct device_attribute msm_soc_attr_pmic_model =
 	__ATTR(pmic_model, S_IRUGO,
 			msm_get_pmic_model, NULL);
@@ -1264,17 +1508,9 @@ static void * __init setup_dummy_socinfo(void)
 		dummy_socinfo.id = 233;
 		strlcpy(dummy_socinfo.build_id, "msm8936 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_mdm9640()) {
+	} else if (early_machine_is_msmzirc()) {
 		dummy_socinfo.id = 238;
-		strlcpy(dummy_socinfo.build_id, "mdm9640 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_mdm9650()) {
-		dummy_socinfo.id = 286;
-		strlcpy(dummy_socinfo.build_id, "mdm9650 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_sdx20()) {
-		dummy_socinfo.id = 314;
-		strlcpy(dummy_socinfo.build_id, "sdx20 - ",
+		strlcpy(dummy_socinfo.build_id, "msmzirc - ",
 			sizeof(dummy_socinfo.build_id));
 	} else if (early_machine_is_msm8994()) {
 		dummy_socinfo.id = 207;
@@ -1288,37 +1524,81 @@ static void * __init setup_dummy_socinfo(void)
 		dummy_socinfo.id = 266;
 		strlcpy(dummy_socinfo.build_id, "msm8976 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msm8952()) {
+	} else if (early_machine_is_msmtellurium()) {
 		dummy_socinfo.id = 264;
-		strlcpy(dummy_socinfo.build_id, "msm8952 - ",
+		strlcpy(dummy_socinfo.build_id, "msmtellurium - ",
 			sizeof(dummy_socinfo.build_id));
 	} else if (early_machine_is_msm8996()) {
 		dummy_socinfo.id = 246;
 		strlcpy(dummy_socinfo.build_id, "msm8996 - ",
 			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_msm8996_auto()) {
+		dummy_socinfo.id = 310;
+		strlcpy(dummy_socinfo.build_id, "msm8996-auto - ",
+		sizeof(dummy_socinfo.build_id));
 	} else if (early_machine_is_msm8929()) {
 		dummy_socinfo.id = 268;
 		strlcpy(dummy_socinfo.build_id, "msm8929 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msm8953()) {
-		dummy_socinfo.id = 293;
-		strlcpy(dummy_socinfo.build_id, "msm8953 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_sdm450()) {
-		dummy_socinfo.id = 338;
-		strlcpy(dummy_socinfo.build_id, "sdm450 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_sda450()) {
-		dummy_socinfo.id = 351;
-		strlcpy(dummy_socinfo.build_id, "sda450 - ",
-			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_mdm9607()) {
-		dummy_socinfo.id = 290;
-		strlcpy(dummy_socinfo.build_id, "mdm9607 - ",
-			sizeof(dummy_socinfo.build_id));
 	} else if (early_machine_is_msmcobalt()) {
 		dummy_socinfo.id = 292;
 		strlcpy(dummy_socinfo.build_id, "msmcobalt - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_msmhamster()) {
+		dummy_socinfo.id = 306;
+		strlcpy(dummy_socinfo.build_id, "msmhamster - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_msmfalcon()) {
+		dummy_socinfo.id = 317;
+		strlcpy(dummy_socinfo.build_id, "msmfalcon - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_apqcobalt()) {
+		dummy_socinfo.id = 319;
+		strlcpy(dummy_socinfo.build_id, "apqcobalt - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm845()) {
+		dummy_socinfo.id = 321;
+		strlcpy(dummy_socinfo.build_id, "sdm845 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm670()) {
+		dummy_socinfo.id = 336;
+		strlcpy(dummy_socinfo.build_id, "sdm670 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sxr1130()) {
+		dummy_socinfo.id = 371;
+		strlcpy(dummy_socinfo.build_id, "sxr1130 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm710()) {
+		dummy_socinfo.id = 360;
+		strlcpy(dummy_socinfo.build_id, "sdm710 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm712()) {
+		dummy_socinfo.id = 393;
+		strlcpy(dummy_socinfo.build_id, "sdm712 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sda670()) {
+		dummy_socinfo.id = 337;
+		strlcpy(dummy_socinfo.build_id, "sda670 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_qcs605()) {
+		dummy_socinfo.id = 347;
+		strlcpy(dummy_socinfo.build_id, "qcs605 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sxr1120()) {
+		dummy_socinfo.id = 370;
+		strlcpy(dummy_socinfo.build_id, "sxr1120 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_mdm9650()) {
+		dummy_socinfo.id = 286;
+		strlcpy(dummy_socinfo.build_id, "mdm9650 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdxpoorwills()) {
+		dummy_socinfo.id = 334;
+		strlcpy(dummy_socinfo.build_id, "sdxpoorwills - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_msm8953()) {
+		dummy_socinfo.id = 293;
+		strlcpy(dummy_socinfo.build_id, "msm8953 - ",
 			sizeof(dummy_socinfo.build_id));
 	} else if (early_machine_is_msm8937()) {
 		dummy_socinfo.id = 294;
@@ -1328,14 +1608,58 @@ static void * __init setup_dummy_socinfo(void)
 		dummy_socinfo.id = 303;
 		strlcpy(dummy_socinfo.build_id, "msm8917 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msm8920()) {
-		dummy_socinfo.id = 320;
-		strlcpy(dummy_socinfo.build_id, "msm8920 - ",
-			sizeof(dummy_socinfo.build_id));
 	} else if (early_machine_is_msm8940()) {
 		dummy_socinfo.id = 313;
 		strlcpy(dummy_socinfo.build_id, "msm8940 - ",
 			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm450()) {
+		dummy_socinfo.id = 338;
+		strlcpy(dummy_socinfo.build_id, "sdm450 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sda450()) {
+		dummy_socinfo.id = 351;
+		strlcpy(dummy_socinfo.build_id, "sda450 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm632()) {
+		dummy_socinfo.id = 349;
+		strlcpy(dummy_socinfo.build_id, "sdm632 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm439()) {
+		dummy_socinfo.id = 353;
+		strlcpy(dummy_socinfo.build_id, "sdm439 - ",
+				sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm429()) {
+		dummy_socinfo.id = 354;
+		strlcpy(dummy_socinfo.build_id, "sdm429 - ",
+				sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sda439()) {
+		dummy_socinfo.id = 363;
+		strlcpy(dummy_socinfo.build_id, "sda439 - ",
+				sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sda429()) {
+		dummy_socinfo.id = 364;
+		strlcpy(dummy_socinfo.build_id, "sda429 - ",
+				sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sdm429w()) {
+		dummy_socinfo.id = 416;
+		strlcpy(dummy_socinfo.build_id, "sdm429w - ",
+				sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_sda429w()) {
+		dummy_socinfo.id = 437;
+		strlcpy(dummy_socinfo.build_id, "sda429w - ",
+				sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_mdm9607()) {
+		dummy_socinfo.id = 290;
+		strlcpy(dummy_socinfo.build_id, "mdm9607 - ",
+				sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_qm215()) {
+		dummy_socinfo.id = 386;
+		strlcpy(dummy_socinfo.build_id, "qm215 - ",
+				sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_qcm2150()) {
+		dummy_socinfo.id = 436;
+		strlcpy(dummy_socinfo.build_id, "qcm2150 - ",
+				sizeof(dummy_socinfo.build_id));
 	}
 
 	strlcat(dummy_socinfo.build_id, "Dummy socinfo",
@@ -1353,6 +1677,23 @@ static void __init populate_soc_sysfs_files(struct device *msm_soc_device)
 	device_create_file(msm_soc_device, &images);
 
 	switch (socinfo_format) {
+	case SOCINFO_VERSION(0, 15):
+		device_create_file(msm_soc_device,
+					&msm_soc_attr_nmodem_supported);
+	case SOCINFO_VERSION(0, 14):
+		device_create_file(msm_soc_device,
+					&msm_soc_attr_num_clusters);
+		device_create_file(msm_soc_device,
+					&msm_soc_attr_ncluster_array_offset);
+		device_create_file(msm_soc_device,
+					&msm_soc_attr_num_defective_parts);
+		device_create_file(msm_soc_device,
+				&msm_soc_attr_ndefective_parts_array_offset);
+	case SOCINFO_VERSION(0, 13):
+		 device_create_file(msm_soc_device,
+					&msm_soc_attr_nproduct_id);
+		 device_create_file(msm_soc_device,
+					&msm_soc_attr_chip_name);
 	case SOCINFO_VERSION(0, 12):
 		device_create_file(msm_soc_device,
 					&msm_soc_attr_chip_family);
@@ -1403,7 +1744,6 @@ static void __init populate_soc_sysfs_files(struct device *msm_soc_device)
 		break;
 	}
 
-	return;
 }
 
 static void  __init soc_info_populate(struct soc_device_attribute *soc_dev_attr)
@@ -1574,6 +1914,71 @@ static void socinfo_print(void)
 			socinfo->v0_12.raw_device_family,
 			socinfo->v0_12.raw_device_number);
 		break;
+	case SOCINFO_VERSION(0, 13):
+		pr_info("v%u.%u, id=%u, ver=%u.%u, raw_id=%u, raw_ver=%u, hw_plat=%u, hw_plat_ver=%u\n accessory_chip=%u, hw_plat_subtype=%u, pmic_model=%u, pmic_die_revision=%u foundry_id=%u serial_number=%u num_pmics=%u chip_family=0x%x raw_device_family=0x%x raw_device_number=0x%x nproduct_id=0x%x\n",
+			f_maj, f_min, socinfo->v0_1.id, v_maj, v_min,
+			socinfo->v0_2.raw_id, socinfo->v0_2.raw_version,
+			socinfo->v0_3.hw_platform,
+			socinfo->v0_4.platform_version,
+			socinfo->v0_5.accessory_chip,
+			socinfo->v0_6.hw_platform_subtype,
+			socinfo->v0_7.pmic_model,
+			socinfo->v0_7.pmic_die_revision,
+			socinfo->v0_9.foundry_id,
+			socinfo->v0_10.serial_number,
+			socinfo->v0_11.num_pmics,
+			socinfo->v0_12.chip_family,
+			socinfo->v0_12.raw_device_family,
+			socinfo->v0_12.raw_device_number,
+			socinfo->v0_13.nproduct_id);
+		break;
+
+	case SOCINFO_VERSION(0, 14):
+		pr_info("v%u.%u, id=%u, ver=%u.%u, raw_id=%u, raw_ver=%u, hw_plat=%u, hw_plat_ver=%u\n accessory_chip=%u, hw_plat_subtype=%u, pmic_model=%u, pmic_die_revision=%u foundry_id=%u serial_number=%u num_pmics=%u chip_family=0x%x raw_device_family=0x%x raw_device_number=0x%x nproduct_id=0x%x num_clusters=0x%x ncluster_array_offset=0x%x num_defective_parts=0x%x ndefective_parts_array_offset=0x%x\n",
+			f_maj, f_min, socinfo->v0_1.id, v_maj, v_min,
+			socinfo->v0_2.raw_id, socinfo->v0_2.raw_version,
+			socinfo->v0_3.hw_platform,
+			socinfo->v0_4.platform_version,
+			socinfo->v0_5.accessory_chip,
+			socinfo->v0_6.hw_platform_subtype,
+			socinfo->v0_7.pmic_model,
+			socinfo->v0_7.pmic_die_revision,
+			socinfo->v0_9.foundry_id,
+			socinfo->v0_10.serial_number,
+			socinfo->v0_11.num_pmics,
+			socinfo->v0_12.chip_family,
+			socinfo->v0_12.raw_device_family,
+			socinfo->v0_12.raw_device_number,
+			socinfo->v0_13.nproduct_id,
+			socinfo->v0_14.num_clusters,
+			socinfo->v0_14.ncluster_array_offset,
+			socinfo->v0_14.num_defective_parts,
+			socinfo->v0_14.ndefective_parts_array_offset);
+		break;
+
+	case SOCINFO_VERSION(0, 15):
+		pr_info("v%u.%u, id=%u, ver=%u.%u, raw_id=%u, raw_ver=%u, hw_plat=%u, hw_plat_ver=%u\n accessory_chip=%u, hw_plat_subtype=%u, pmic_model=%u, pmic_die_revision=%u foundry_id=%u serial_number=%u num_pmics=%u chip_family=0x%x raw_device_family=0x%x raw_device_number=0x%x nproduct_id=0x%x num_clusters=0x%x ncluster_array_offset=0x%x num_defective_parts=0x%x ndefective_parts_array_offset=0x%x nmodem_supported=0x%x\n",
+			f_maj, f_min, socinfo->v0_1.id, v_maj, v_min,
+			socinfo->v0_2.raw_id, socinfo->v0_2.raw_version,
+			socinfo->v0_3.hw_platform,
+			socinfo->v0_4.platform_version,
+			socinfo->v0_5.accessory_chip,
+			socinfo->v0_6.hw_platform_subtype,
+			socinfo->v0_7.pmic_model,
+			socinfo->v0_7.pmic_die_revision,
+			socinfo->v0_9.foundry_id,
+			socinfo->v0_10.serial_number,
+			socinfo->v0_11.num_pmics,
+			socinfo->v0_12.chip_family,
+			socinfo->v0_12.raw_device_family,
+			socinfo->v0_12.raw_device_number,
+			socinfo->v0_13.nproduct_id,
+			socinfo->v0_14.num_clusters,
+			socinfo->v0_14.ncluster_array_offset,
+			socinfo->v0_14.num_defective_parts,
+			socinfo->v0_14.ndefective_parts_array_offset,
+			socinfo->v0_15.nmodem_supported);
+		break;
 
 	default:
 		pr_err("Unknown format found: v%u.%u\n", f_maj, f_min);
@@ -1605,7 +2010,7 @@ static void socinfo_select_format(void)
 int __init socinfo_init(void)
 {
 	static bool socinfo_init_done;
-	unsigned size;
+	unsigned int size;
 
 	if (socinfo_init_done)
 		return 0;

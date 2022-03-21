@@ -173,7 +173,7 @@ struct	qcedev_pmem_info {
 * by adding the offsets to the kernel virtual addr.
 *
 * If use of hardware key is supported in the target, user can configure the
-* key paramters (encklen, enckey) to use the hardware key.
+* key parameters (encklen, enckey) to use the hardware key.
 * In order to use the hardware key, set encklen to 0 and set the enckey
 * data array to 0.
 */
@@ -224,13 +224,38 @@ struct	qcedev_sha_op_req {
 * @kernel       (IN):		pointer to buffer containing the kernel Image
 */
 struct qfips_verify_t {
-	unsigned kernel_size;
+	unsigned int kernel_size;
 	void *kernel;
 };
 
+/**
+ * struct qcedev_map_buf_req - Holds the mapping request information
+ * fd (IN):            Array of fds.
+ * num_fds (IN):       Number of fds in fd[].
+ * fd_size (IN):       Array of sizes corresponding to each fd in fd[].
+ * fd_offset (IN):     Array of offset corresponding to each fd in fd[].
+ * vaddr (OUT):        Array of mapped virtual address corresponding to
+ *			each fd in fd[].
+ */
+struct qcedev_map_buf_req {
+	int32_t         fd[QCEDEV_MAX_BUFFERS];
+	uint32_t        num_fds;
+	uint32_t        fd_size[QCEDEV_MAX_BUFFERS];
+	uint32_t        fd_offset[QCEDEV_MAX_BUFFERS];
+	uint64_t        buf_vaddr[QCEDEV_MAX_BUFFERS];
+};
+
+/**
+ * struct qcedev_unmap_buf_req - Holds the hashing request information
+ * fd (IN):            Array of fds to unmap
+ * num_fds (IN):       Number of fds in fd[].
+ */
+struct  qcedev_unmap_buf_req {
+	int32_t         fd[QCEDEV_MAX_BUFFERS];
+	uint32_t        num_fds;
+};
+
 struct file;
-extern long qcedev_ioctl(struct file *file,
-			unsigned cmd, unsigned long arg);
 
 #define QCEDEV_IOC_MAGIC	0x87
 
@@ -252,8 +277,8 @@ extern long qcedev_ioctl(struct file *file,
 	_IO(QCEDEV_IOC_MAGIC, 8)
 #define QCEDEV_IOCTL_GET_CMAC_REQ	\
 	_IOWR(QCEDEV_IOC_MAGIC, 9, struct qcedev_sha_op_req)
-#define QCEDEV_IOCTL_UPDATE_FIPS_STATUS		\
-	_IOWR(QCEDEV_IOC_MAGIC, 10, enum fips_status)
-#define QCEDEV_IOCTL_QUERY_FIPS_STATUS	\
-	_IOR(QCEDEV_IOC_MAGIC, 11, enum fips_status)
+#define QCEDEV_IOCTL_MAP_BUF_REQ	\
+	_IOWR(QCEDEV_IOC_MAGIC, 10, struct qcedev_map_buf_req)
+#define QCEDEV_IOCTL_UNMAP_BUF_REQ	\
+	_IOWR(QCEDEV_IOC_MAGIC, 11, struct qcedev_unmap_buf_req)
 #endif /* _UAPI_QCEDEV__H */

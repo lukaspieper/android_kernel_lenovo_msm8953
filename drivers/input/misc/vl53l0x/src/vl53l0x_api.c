@@ -1,6 +1,6 @@
 /*
- *  vl53l0x_api.c - Linux kernel modules for STM VL53L0 FlightSense TOF
- *						 sensor
+ *  vl53l0x_api.c - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,7 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
 
 #include "vl53l0x_api.h"
 #include "vl53l0x_tuning.h"
@@ -381,8 +380,8 @@ int8_t VL_DataInit(struct vl_data *Dev)
 
 	LOG_FUNCTION_START("");
 
-	/* by default the I2C is running at 1V8 if you want to change it you
-	 * need to include this define at compilation level. */
+	/* by default the I2C is running at 1V8 if you want to change it you */
+	/* need to include this define at compilation level. */
 #ifdef USE_I2C_2V8
 	Status = VL_UpdateByte(Dev,
 		VL_REG_VHV_CONFIG_PAD_SCL_SDA__EXTSUP_HV,
@@ -409,8 +408,8 @@ int8_t VL_DataInit(struct vl_data *Dev)
 	PALDevDataSet(Dev, DmaxCalSignalRateRtnMegaCps,
 		(unsigned int)((0x00016B85))); /* 1.42 No Cover Glass*/
 
-	/* Set Default static parameters
-	 *set first temporary values 9.44MHz * 65536 = 618660 */
+	/* Set Default static parameters */
+	/* *set first temporary values 9.44MHz * 65536 = 618660 */
 	VL_SETDEVICESPECIFICPARAMETER(Dev, OscFrequencyMHz, 618660);
 
 	/* Set Default XTalkCompensationRateMegaCps to 0  */
@@ -420,9 +419,9 @@ int8_t VL_DataInit(struct vl_data *Dev)
 	Status = VL_GetDeviceParameters(Dev, &CurrentParameters);
 	if (Status == VL_ERROR_NONE) {
 		/* initialize PAL values */
-	    CurrentParameters.DeviceMode = VL_DEVICEMODE_SINGLE_RANGING;
-	    CurrentParameters.HistogramMode = VL_HISTOGRAMMODE_DISABLED;
-	    PALDevDataSet(Dev, CurrentParameters, CurrentParameters);
+		CurrentParameters.DeviceMode = VL_DEVICEMODE_SINGLE_RANGING;
+		CurrentParameters.HistogramMode = VL_HISTOGRAMMODE_DISABLED;
+		PALDevDataSet(Dev, CurrentParameters, CurrentParameters);
 	}
 
 	/* Sigma estimator variable */
@@ -500,8 +499,8 @@ int8_t VL_DataInit(struct vl_data *Dev)
 		Status = VL_WrByte(Dev, VL_REG_SYSTEM_SEQUENCE_CONFIG,
 			0xFF);
 
-		/* Set PAL state to tell that we are waiting for call to
-		 * VL_StaticInit */
+		/* Set PAL state to tell that we are waiting for call to */
+		/* * VL_StaticInit */
 		PALDevDataSet(Dev, PalState, VL_STATE_WAIT_STATICINIT);
 	}
 
@@ -628,8 +627,8 @@ int8_t VL_StaticInit(struct vl_data *Dev)
 			VL_FIXPOINT412TOFIXPOINT1616(tempword));
 	}
 
-	/* After static init, some device parameters may be changed,
-	 * so update them */
+	/* After static init, some device parameters may be changed, */
+	/* * so update them */
 	if (Status == VL_ERROR_NONE)
 		Status = VL_GetDeviceParameters(Dev, &CurrentParameters);
 
@@ -680,10 +679,9 @@ int8_t VL_StaticInit(struct vl_data *Dev)
 	}
 
 	if (Status == VL_ERROR_NONE) {
-			VL_SETDEVICESPECIFICPARAMETER(
-				Dev,
-				PreRangeVcselPulsePeriod,
-				vcselPulsePeriodPCLK);
+		VL_SETDEVICESPECIFICPARAMETER(
+		Dev, PreRangeVcselPulsePeriod,
+		vcselPulsePeriodPCLK);
 	}
 
 	/* Store final-range vcsel period */
@@ -695,10 +693,9 @@ int8_t VL_StaticInit(struct vl_data *Dev)
 	}
 
 	if (Status == VL_ERROR_NONE) {
-			VL_SETDEVICESPECIFICPARAMETER(
-				Dev,
-				FinalRangeVcselPulsePeriod,
-				vcselPulsePeriodPCLK);
+		VL_SETDEVICESPECIFICPARAMETER(
+		Dev, FinalRangeVcselPulsePeriod,
+		vcselPulsePeriodPCLK);
 	}
 
 	/* Store pre-range timeout */
@@ -1300,10 +1297,10 @@ int8_t VL_SetSequenceStepTimeout(struct vl_data *Dev,
 			MeasurementTimingBudgetMicroSeconds,
 			MeasurementTimingBudgetMicroSeconds);
 
-		/* At this point we don't know if the requested value is valid,
-		 therefore proceed to update the entire timing budget and
-		 if this fails, revert back to the previous value.
-		 */
+		/* At this point we don't know if the requested */
+		/* value is valid, */
+		/* therefore proceed to update the entire timing budget and */
+		/* if this fails, revert back to the previous value. */
 		Status = VL_SetMeasurementTimingBudgetMicroSeconds(Dev,
 			MeasurementTimingBudgetMicroSeconds);
 
@@ -2051,13 +2048,13 @@ int8_t VL_SetDmaxCalParameters(struct vl_data *Dev,
 
 	LOG_FUNCTION_START("");
 
-	/* Check if one of input parameter is zero, in that case the
-	 * value are get from NVM */
+	/* Check if one of input parameter is zero, in that case the */
+	/* value are get from NVM */
 	if ((RangeMilliMeter == 0) || (SignalRateRtnMegaCps == 0)) {
 		/* NVM parameters */
-		/* Run VL_get_info_from_device wit option 4 to get
-		 * signal rate at 400 mm if the value have been already
-		 * get this function will return with no access to device */
+		/* Run VL_get_info_from_device wit option 4 to get */
+		/* signal rate at 400 mm if the value have been already */
+		/* get this function will return with no access to device */
 		VL_get_info_from_device(Dev, 4);
 
 		SignalRateRtnMegaCpsTemp = VL_GETDEVICESPECIFICPARAMETER(
@@ -2105,8 +2102,8 @@ int8_t VL_PerformSingleMeasurement(struct vl_data *Dev)
 	/* Get Current DeviceMode */
 	Status = VL_GetDeviceMode(Dev, &DeviceMode);
 
-	/* Start immediately to run a single ranging measurement in case of
-	 * single ranging or single histogram */
+	/* Start immediately to run a single ranging measurement in case of */
+	/* single ranging or single histogram */
 	if (Status == VL_ERROR_NONE
 		&& DeviceMode == VL_DEVICEMODE_SINGLE_RANGING)
 		Status = VL_StartMeasurement(Dev);
@@ -2599,8 +2596,8 @@ int8_t VL_PerformSingleRangingMeasurement(struct vl_data *Dev,
 
 	LOG_FUNCTION_START("");
 
-	/* This function will do a complete single ranging
-	 * Here we fix the mode! */
+	/* This function will do a complete single ranging */
+	/* Here we fix the mode! */
 	Status = VL_SetDeviceMode(Dev, VL_DEVICEMODE_SINGLE_RANGING);
 
 	if (Status == VL_ERROR_NONE)

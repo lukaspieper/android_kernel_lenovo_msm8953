@@ -2,6 +2,7 @@
 #define _SCSI_GENERIC_H
 
 #include <linux/compiler.h>
+#include <linux/param.h>
 
 /*
  * History:
@@ -164,12 +165,15 @@ typedef struct sg_req_info { /* used by SG_GET_REQUEST_TABLE ioctl() */
 
 /* Returns -EBUSY if occupied. 3rd argument pointer to int (see next) */
 #define SG_SCSI_RESET 0x2284
-/* Associated values that can be given to SG_SCSI_RESET follow */
+/* Associated values that can be given to SG_SCSI_RESET follow.
+ * SG_SCSI_RESET_NO_ESCALATE may be OR-ed to the _DEVICE, _TARGET, _BUS
+ * or _HOST reset value so only that action is attempted. */
 #define		SG_SCSI_RESET_NOTHING	0
 #define		SG_SCSI_RESET_DEVICE	1
 #define		SG_SCSI_RESET_BUS	2
 #define		SG_SCSI_RESET_HOST	3
 #define		SG_SCSI_RESET_TARGET	4
+#define		SG_SCSI_RESET_NO_ESCALATE	0x100
 
 /* synchronous SCSI command ioctl, (only in version 3 interface) */
 #define SG_IO 0x2285   /* similar effect as write() followed by read() */
@@ -205,7 +209,6 @@ typedef struct sg_req_info { /* used by SG_GET_REQUEST_TABLE ioctl() */
 
 /* Alternate style type names, "..._t" variants preferred */
 typedef struct sg_io_hdr Sg_io_hdr;
-typedef struct sg_io_vec Sg_io_vec;
 typedef struct sg_scsi_id Sg_scsi_id;
 typedef struct sg_req_info Sg_req_info;
 

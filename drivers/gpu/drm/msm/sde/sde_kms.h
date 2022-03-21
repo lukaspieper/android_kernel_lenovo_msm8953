@@ -1,30 +1,46 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/*
+ * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2013 Red Hat
+ * Author: Rob Clark <robdclark@gmail.com>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef __SDE_KMS_H__
 #define __SDE_KMS_H__
 
+#include <linux/msm_ion.h>
+#include <linux/pm_domain.h>
+#include <linux/pm_qos.h>
+
 #include "msm_drv.h"
 #include "msm_kms.h"
 #include "msm_mmu.h"
-#include "mdp/mdp_kms.h"
+#include "msm_gem.h"
+#include "sde_dbg.h"
 #include "sde_hw_catalog.h"
 #include "sde_hw_ctl.h"
 #include "sde_hw_lm.h"
+#include "sde_hw_pingpong.h"
 #include "sde_hw_interrupts.h"
 #include "sde_hw_wb.h"
 #include "sde_hw_top.h"
-#include "sde_connector.h"
 #include "sde_rm.h"
+#include "sde_power_handle.h"
+#include "sde_irq.h"
+#include "sde_core_perf.h"
+
+#define DRMID(x) ((x) ? (x)->base.id : -1)
 
 /**
  * SDE_DEBUG - macro for kms/plane/crtc/encoder/connector logs
@@ -33,7 +49,7 @@
 #define SDE_DEBUG(fmt, ...)                                                \
 	do {                                                               \
 		if (unlikely(drm_debug & DRM_UT_KMS))                      \
-			drm_ut_debug_printk(__func__, fmt, ##__VA_ARGS__); \
+			DRM_DEBUG(fmt, ##__VA_ARGS__); \
 		else                                                       \
 			pr_debug(fmt, ##__VA_ARGS__);                      \
 	} while (0)
@@ -45,12 +61,12 @@
 #define SDE_DEBUG_DRIVER(fmt, ...)                                         \
 	do {                                                               \
 		if (unlikely(drm_debug & DRM_UT_DRIVER))                   \
-			drm_ut_debug_printk(__func__, fmt, ##__VA_ARGS__); \
+			DRM_ERROR(fmt, ##__VA_ARGS__); \
 		else                                                       \
 			pr_debug(fmt, ##__VA_ARGS__);                      \
 	} while (0)
 
-#define SDE_ERROR(fmt, ...) pr_err(fmt, ##__VA_ARGS__)
+#define SDE_ERROR(fmt, ...) pr_err("[sde error]" fmt, ##__VA_ARGS__)
 
 #define POPULATE_RECT(rect, a, b, c, d, Q16_flag) \
 	do {						\
@@ -63,12 +79,105 @@
 #define CHECK_LAYER_BOUNDS(offset, size, max_size) \
 	(((size) > (max_size)) || ((offset) > ((max_size) - (size))))
 
+/**
+ * ktime_compare_safe - compare two ktime structures
+ *	This macro is similar to the standard ktime_compare() function, but
+ *	attempts to also handle ktime overflows.
+ * @A: First ktime value
+ * @B: Second ktime value
+ * Returns: -1 if A < B, 0 if A == B, 1 if A > B
+ */
+#define ktime_compare_safe(A, B) \
+	ktime_compare(ktime_sub((A), (B)), ktime_set(0, 0))
+
+#define SDE_NAME_SIZE  12
+
+/* timeout in frames waiting for frame done */
+#define SDE_FRAME_DONE_TIMEOUT	60
+
+/* max active secure client counts allowed */
+#define MAX_ALLOWED_SECURE_CLIENT_CNT	1
+
+/* max active crtc when secure client is active */
+#define MAX_ALLOWED_CRTC_CNT_DURING_SECURE	1
+
+/* max virtual encoders per secure crtc */
+#define MAX_ALLOWED_ENCODER_CNT_PER_SECURE_CRTC	1
+
+/* defines the operations required for secure state transition */
+#define SDE_KMS_OPS_SECURE_STATE_CHANGE		BIT(0)
+#define SDE_KMS_OPS_WAIT_FOR_TX_DONE		BIT(1)
+#define SDE_KMS_OPS_CLEANUP_PLANE_FB		BIT(2)
+#define SDE_KMS_OPS_PREPARE_PLANE_FB		BIT(3)
+
+/* ESD status check interval in miliseconds */
+#define STATUS_CHECK_INTERVAL_MS 5000
+
+/**
+ * enum sde_kms_smmu_state:	smmu state
+ * @ATTACHED:	 all the context banks are attached.
+ * @DETACHED:	 all the context banks are detached.
+ * @DETACHED_SEC:	 secure context bank is detached.
+ * @ATTACH_ALL_REQ:	 transient state of attaching context banks.
+ * @DETACH_ALL_REQ:	 transient state of detaching context banks.
+ * @DETACH_SEC_REQ:	 tranisent state of secure context bank is detached
+ * @ATTACH_SEC_REQ:	 transient state of attaching secure context bank.
+ */
+enum sde_kms_smmu_state {
+	ATTACHED = 0,
+	DETACHED,
+	DETACHED_SEC,
+	ATTACH_ALL_REQ,
+	DETACH_ALL_REQ,
+	DETACH_SEC_REQ,
+	ATTACH_SEC_REQ,
+};
+
+/**
+ * enum sde_kms_smmu_state_transition_type: state transition type
+ * @NONE: no pending state transitions
+ * @PRE_COMMIT: state transitions should be done before processing the commit
+ * @POST_COMMIT: state transitions to be done after processing the commit.
+ */
+enum sde_kms_smmu_state_transition_type {
+	NONE,
+	PRE_COMMIT,
+	POST_COMMIT
+};
+
+/**
+ * enum sde_kms_sui_misr_state: state request for enabling/disabling MISR
+ * @NONE: no request
+ * @ENABLE_SUI_MISR_REQ: request to enable sui MISR
+ * @DISABLE_SUI_MISR_REQ: request to disable sui MISR
+ */
+enum sde_kms_sui_misr_state {
+	SUI_MISR_NONE,
+	SUI_MISR_ENABLE_REQ,
+	SUI_MISR_DISABLE_REQ
+};
+
+/**
+ * struct sde_kms_smmu_state_data: stores the smmu state and transition type
+ * @state: current state of smmu context banks
+ * @transition_type: transition request type
+ * @transition_error: whether there is error while transitioning the state
+ */
+struct sde_kms_smmu_state_data {
+	uint32_t state;
+	uint32_t transition_type;
+	uint32_t transition_error;
+	uint32_t sui_misr_state;
+};
+
 /*
  * struct sde_irq_callback - IRQ callback handlers
+ * @list: list to callback
  * @func: intr handler
  * @arg: argument for the handler
  */
 struct sde_irq_callback {
+	struct list_head list;
 	void (*func)(void *arg, int irq_idx);
 	void *arg;
 };
@@ -77,66 +186,111 @@ struct sde_irq_callback {
  * struct sde_irq: IRQ structure contains callback registration info
  * @total_irq:    total number of irq_idx obtained from HW interrupts mapping
  * @irq_cb_tbl:   array of IRQ callbacks setting
+ * @enable_counts array of IRQ enable counts
  * @cb_lock:      callback lock
+ * @debugfs_file: debugfs file for irq statistics
  */
 struct sde_irq {
 	u32 total_irqs;
-	struct sde_irq_callback *irq_cb_tbl;
+	struct list_head *irq_cb_tbl;
+	atomic_t *enable_counts;
+	atomic_t *irq_counts;
 	spinlock_t cb_lock;
+	struct dentry *debugfs_file;
 };
 
 /**
- * Encoder functions and data types
- * @intfs:	Interfaces this encoder is using, INTF_MODE_NONE if unused
- * @wbs:	Writebacks this encoder is using, INTF_MODE_NONE if unused
- * @needs_cdm:	Encoder requests a CDM based on pixel format conversion needs
- * @display_num_of_h_tiles:
+ * struct sde_kms_fbo - framebuffer memory object
+ * @refcount: reference/usage count of this object
+ * @dev: Pointer to containing drm device
+ * @width: width of the framebuffer
+ * @height: height of the framebuffer
+ * @flags: drm framebuffer flags
+ * @modifier: pixel format modifier of the framebuffer
+ * @fmt: Pointer to sde format descriptor
+ * @layout: sde format layout descriptor
+ * @ihandle: framebuffer object ion handle
+ * @dma_buf: framebuffer object dma buffer
+ * @bo: per plane buffer object
+ * @fb_list: llist of fb created from this buffer object
  */
-struct sde_encoder_hw_resources {
-	enum sde_intf_mode intfs[INTF_MAX];
-	enum sde_intf_mode wbs[WB_MAX];
-	bool needs_cdm;
-	u32 display_num_of_h_tiles;
+struct sde_kms_fbo {
+	atomic_t refcount;
+	struct drm_device *dev;
+	u32 width, height;
+	u32 pixel_format;
+	u32 flags;
+	u64 modifier[4];
+	int nplane;
+	const struct sde_format *fmt;
+	struct sde_hw_fmt_layout layout;
+	struct ion_handle *ihandle;
+	struct dma_buf *dma_buf;
+	struct drm_gem_object *bo[4];
+	struct list_head fb_list;
 };
 
 struct sde_kms {
 	struct msm_kms base;
 	struct drm_device *dev;
-	int rev;
+	int core_rev;
 	struct sde_mdss_cfg *catalog;
 
-	struct msm_mmu *mmu[MSM_SMMU_DOMAIN_MAX];
-	int mmu_id[MSM_SMMU_DOMAIN_MAX];
+	struct generic_pm_domain genpd;
+	bool genpd_init;
+
+	struct msm_gem_address_space *aspace[MSM_SMMU_DOMAIN_MAX];
+	struct sde_power_client *core_client;
+	struct pm_qos_request pm_qos_cpu_req;
+
+	struct ion_client *iclient;
+	struct sde_power_event *power_event;
 
 	/* directory entry for debugfs */
-	void *debugfs_root;
+	struct dentry *debugfs_danger;
+	struct dentry *debugfs_vbif;
 
 	/* io/register spaces: */
-	void __iomem *mmio, *vbif[VBIF_MAX];
+	void __iomem *mmio, *vbif[VBIF_MAX], *reg_dma;
+	unsigned long mmio_len, vbif_len[VBIF_MAX], reg_dma_len;
 
 	struct regulator *vdd;
 	struct regulator *mmagic;
 	struct regulator *venus;
 
-	struct clk *axi_clk;
-	struct clk *ahb_clk;
-	struct clk *src_clk;
-	struct clk *core_clk;
-	struct clk *lut_clk;
-	struct clk *mmagic_clk;
-	struct clk *iommu_axi_clk[MSM_SMMU_DOMAIN_MAX];
-	struct clk *iommu_ahb_clk[MSM_SMMU_DOMAIN_MAX];
-	struct clk *vsync_clk;
-
-	struct {
-		unsigned long enabled_mask;
-		struct irq_domain *domain;
-	} irqcontroller;
+	struct sde_irq_controller irq_controller;
 
 	struct sde_hw_intr *hw_intr;
 	struct sde_irq irq_obj;
+	int irq_num;	/* mdss irq number */
+
+	struct sde_core_perf perf;
+
+	/* saved atomic state during system suspend */
+	struct drm_atomic_state *suspend_state;
+	bool suspend_block;
 
 	struct sde_rm rm;
+	bool rm_init;
+	struct sde_splash_data splash_data;
+	struct sde_hw_vbif *hw_vbif[VBIF_MAX];
+	struct sde_hw_mdp *hw_mdp;
+	int dsi_display_count;
+	void **dsi_displays;
+	int wb_display_count;
+	void **wb_displays;
+	int dp_display_count;
+	void **dp_displays;
+
+	bool has_danger_ctrl;
+
+	struct sde_kms_smmu_state_data smmu_state;
+	atomic_t detach_sec_cb;
+	atomic_t detach_all_cb;
+	struct mutex secure_transition_lock;
+	struct mutex vblank_ctl_global_lock;
+
+	bool first_kickoff;
 };
 
 struct vsync_info {
@@ -146,57 +300,90 @@ struct vsync_info {
 
 #define to_sde_kms(x) container_of(x, struct sde_kms, base)
 
-struct sde_plane_state {
-	struct drm_plane_state base;
-
-	/* aligned with property */
-	uint64_t property_values[PLANE_PROP_COUNT];
-
-	/* blob properties */
-	struct drm_property_blob *property_blobs[PLANE_PROP_BLOBCOUNT];
-
-	/* dereferenced input fence pointer */
-	void *input_fence;
-
-	/* assigned by crtc blender */
-	enum sde_stage stage;
-
-	/* some additional transactional status to help us know in the
-	 * apply path whether we need to update SMP allocation, and
-	 * whether current update is still pending:
-	 */
-	bool mode_changed : 1;
-	bool pending : 1;
-};
-
-#define to_sde_plane_state(x) \
-	container_of(x, struct sde_plane_state, base)
+/**
+ * sde_is_custom_client - whether or not to enable non-standard customizations
+ *
+ * Return: Whether or not the 'sdeclient' module parameter was set on boot up
+ */
+bool sde_is_custom_client(void);
 
 /**
- * sde_plane_get_property - Query integer value of plane property
+ * sde_kms_is_vbif_operation_allowed - resticts the VBIF programming
+ * during secure-ui, if the sec_ui_misr feature is enabled
  *
- * @S: Pointer to plane state
- * @X: Property index, from enum msm_mdp_plane_property
+ * @sde_kms: Pointer to sde_kms
  *
- * Return: Integer value of requested property
+ * return: false if secure-session is in progress; true otherwise
  */
-#define sde_plane_get_property(S, X) \
-	((S) && ((X) < PLANE_PROP_COUNT) ? ((S)->property_values[(X)]) : 0)
+bool sde_kms_is_vbif_operation_allowed(struct sde_kms *sde_kms);
 
 /**
- * sde_plane_get_property32 - Query 32-bit representation of plane property
- *
- * @S: Pointer to plane state
- * @X: Property index, from enum msm_mdp_plane_property
- *
- * Return: 32-bit value of requested property
+ * sde_kms_power_resource_is_enabled - whether or not power resource is enabled
+ * @dev: Pointer to drm device
+ * Return: true if power resource is enabled; false otherwise
  */
-#define sde_plane_get_property32(S, X) \
-	((S) && ((X) < PLANE_PROP_COUNT) ? \
-	 (uint32_t)((S)->property_values[(X)]) : 0)
+static inline bool sde_kms_power_resource_is_enabled(struct drm_device *dev)
+{
+	struct msm_drm_private *priv;
 
-int sde_disable(struct sde_kms *sde_kms);
-int sde_enable(struct sde_kms *sde_kms);
+	if (!dev || !dev->dev_private)
+		return false;
+
+	priv = dev->dev_private;
+
+	return sde_power_resource_is_enabled(&priv->phandle);
+}
+
+/**
+ * sde_kms_is_suspend_state - whether or not the system is pm suspended
+ * @dev: Pointer to drm device
+ * Return: Suspend status
+ */
+static inline bool sde_kms_is_suspend_state(struct drm_device *dev)
+{
+	if (!ddev_to_msm_kms(dev))
+		return false;
+
+	return to_sde_kms(ddev_to_msm_kms(dev))->suspend_state != NULL;
+}
+
+/**
+ * sde_kms_is_suspend_blocked - whether or not commits are blocked due to pm
+ *				suspend status
+ * @dev: Pointer to drm device
+ * Return: True if commits should be rejected due to pm suspend
+ */
+static inline bool sde_kms_is_suspend_blocked(struct drm_device *dev)
+{
+	if (!sde_kms_is_suspend_state(dev))
+		return false;
+
+	return to_sde_kms(ddev_to_msm_kms(dev))->suspend_block;
+}
+
+/**
+ * sde_kms_is_secure_session_inprogress - to indicate if secure-session is in
+ * currently in-progress based on the current smmu_state
+ *
+ * @sde_kms: Pointer to sde_kms
+ *
+ * return: true if secure-session is in progress; false otherwise
+ */
+static inline bool sde_kms_is_secure_session_inprogress(struct sde_kms *sde_kms)
+{
+	bool ret = false;
+
+	if (!sde_kms)
+		return false;
+
+	mutex_lock(&sde_kms->secure_transition_lock);
+	if ((sde_kms->smmu_state.state == DETACHED)
+		|| (sde_kms->smmu_state.state == DETACH_ALL_REQ))
+		ret = true;
+	mutex_unlock(&sde_kms->secure_transition_lock);
+
+	return ret;
+}
 
 /**
  * Debugfs functions - extra helper functions for debugfs support
@@ -217,7 +404,7 @@ int sde_enable(struct sde_kms *sde_kms);
 struct sde_debugfs_regset32 {
 	uint32_t offset;
 	uint32_t blk_len;
-	void __iomem *base;
+	struct sde_kms *sde_kms;
 };
 
 /**
@@ -227,10 +414,10 @@ struct sde_debugfs_regset32 {
  * @regset: opaque register definition structure
  * @offset: sub-block offset
  * @length: sub-block length, in bytes
- * @base: base IOMEM address
+ * @sde_kms: pointer to sde kms structure
  */
 void sde_debugfs_setup_regset32(struct sde_debugfs_regset32 *regset,
-		uint32_t offset, uint32_t length, void __iomem *base);
+		uint32_t offset, uint32_t length, struct sde_kms *sde_kms);
 
 /**
  * sde_debugfs_create_regset32 - Create register read back file for debugfs
@@ -260,7 +447,7 @@ void *sde_debugfs_create_regset32(const char *name, umode_t mode,
 		void *parent, struct sde_debugfs_regset32 *regset);
 
 /**
- * sde_debugfs_get_root - Return root directory entry for SDE's debugfs
+ * sde_debugfs_get_root - Return root directory entry for KMS's debugfs
  *
  * The return value should be passed as the 'parent' argument to subsequent
  * debugfs create calls.
@@ -298,11 +485,12 @@ struct sde_kms_info {
  * @S: Pointer to sde_kms_info structure
  * Returns: Pointer to byte data
  */
-#define SDE_KMS_INFO_DATA(S)    ((S) ? ((struct sde_kms_info *)(S))->data : 0)
+#define SDE_KMS_INFO_DATA(S)    ((S) ? ((struct sde_kms_info *)(S))->data \
+							: NULL)
 
 /**
  * SDE_KMS_INFO_DATALEN - Macro for accessing sde_kms_info data length
- *			it adds an extra character length to count null
+ *			it adds an extra character length to count null.
  * @S: Pointer to sde_kms_info structure
  * Returns: Size of available byte data
  */
@@ -319,11 +507,11 @@ void sde_kms_info_reset(struct sde_kms_info *info);
  * sde_kms_info_add_keyint - add integer value to 'sde_kms_info'
  * @info: Pointer to sde_kms_info structure
  * @key: Pointer to key string
- * @value: Signed 32-bit integer value
+ * @value: Signed 64-bit integer value
  */
 void sde_kms_info_add_keyint(struct sde_kms_info *info,
 		const char *key,
-		int32_t value);
+		int64_t value);
 
 /**
  * sde_kms_info_add_keystr - add string value to 'sde_kms_info'
@@ -391,102 +579,55 @@ void sde_kms_info_append_format(struct sde_kms_info *info,
 void sde_kms_info_stop(struct sde_kms_info *info);
 
 /**
- * IRQ functions
+ * sde_kms_rect_intersect - intersect two rectangles
+ * @r1: first rectangle
+ * @r2: scissor rectangle
+ * @result: result rectangle, all 0's on no intersection found
  */
-int sde_irq_domain_init(struct sde_kms *sde_kms);
-int sde_irq_domain_fini(struct sde_kms *sde_kms);
-void sde_irq_preinstall(struct msm_kms *kms);
-int sde_irq_postinstall(struct msm_kms *kms);
-void sde_irq_uninstall(struct msm_kms *kms);
-irqreturn_t sde_irq(struct msm_kms *kms);
+void sde_kms_rect_intersect(const struct sde_rect *r1,
+		const struct sde_rect *r2,
+		struct sde_rect *result);
 
 /**
- * sde_set_irqmask - IRQ helper function for writing IRQ mask
- *                   to SDE HW interrupt register.
- * @sde_kms:		SDE handle
- * @reg_off:		SDE HW interrupt register offset
- * @irqmask:		IRQ mask
+ * sde_kms_rect_merge_rectangles - merge a rectangle list into one rect
+ * @rois: pointer to the list of rois
+ * @result: output rectangle, all 0 on error
  */
-void sde_set_irqmask(
-		struct sde_kms *sde_kms,
-		uint32_t reg_off,
-		uint32_t irqmask);
+void sde_kms_rect_merge_rectangles(const struct msm_roi_list *rois,
+		struct sde_rect *result);
 
 /**
- * sde_irq_idx_lookup - IRQ helper function for lookup irq_idx from HW
- *                      interrupt mapping table.
- * @sde_kms:		SDE handle
- * @intr_type:		SDE HW interrupt type for lookup
- * @instance_idx:	SDE HW block instance defined in sde_hw_mdss.h
- * @return:		irq_idx or -EINVAL when fail to lookup
+ * sde_kms_rect_is_equal - compares two rects
+ * @r1: rect value to compare
+ * @r2: rect value to compare
+ *
+ * Returns 1 if the rects are same, 0 otherwise.
  */
-int sde_irq_idx_lookup(
-		struct sde_kms *sde_kms,
-		enum sde_intr_type intr_type,
-		uint32_t instance_idx);
+static inline bool sde_kms_rect_is_equal(struct sde_rect *r1,
+		struct sde_rect *r2)
+{
+	if ((!r1 && r2) || (r1 && !r2))
+		return false;
+
+	if (!r1 && !r2)
+		return true;
+
+	return r1->x == r2->x && r1->y == r2->y && r1->w == r2->w &&
+			r1->h == r2->h;
+}
 
 /**
- * sde_enable_irq - IRQ helper function for enabling one or more IRQs
- * @sde_kms:		SDE handle
- * @irq_idxs:		Array of irq index
- * @irq_count:		Number of irq_idx provided in the array
- * @return:		0 for success enabling IRQ, otherwise failure
+ * sde_kms_rect_is_null - returns true if the width or height of a rect is 0
+ * @rect: rectangle to check for zero size
+ * @Return: True if width or height of rectangle is 0
  */
-int sde_enable_irq(
-		struct sde_kms *sde_kms,
-		int *irq_idxs,
-		uint32_t irq_count);
+static inline bool sde_kms_rect_is_null(const struct sde_rect *r)
+{
+	if (!r)
+		return true;
 
-/**
- * sde_disable_irq - IRQ helper function for diabling one of more IRQs
- * @sde_kms:		SDE handle
- * @irq_idxs:		Array of irq index
- * @irq_count:		Number of irq_idx provided in the array
- * @return:		0 for success disabling IRQ, otherwise failure
- */
-int sde_disable_irq(
-		struct sde_kms *sde_kms,
-		int *irq_idxs,
-		uint32_t irq_count);
-
-/**
- * sde_read_irq - IRQ helper function for reading IRQ status
- * @sde_kms:		SDE handle
- * @irq_idx:		irq index
- * @clear:		True to clear the irq after read
- * @return:		non-zero if irq detected; otherwise no irq detected
- */
-u32 sde_read_irq(
-		struct sde_kms *sde_kms,
-		int irq_idx,
-		bool clear);
-
-/**
- * sde_register_irq_callback - For registering callback function on IRQ
- *                             interrupt
- * @sde_kms:		SDE handle
- * @irq_idx:		irq index
- * @irq_cb:		IRQ callback structure, containing callback function
- *			and argument. Passing NULL for irq_cb will unregister
- *			the callback for the given irq_idx
- * @return:		0 for success registering callback, otherwise failure
- */
-int sde_register_irq_callback(
-		struct sde_kms *sde_kms,
-		int irq_idx,
-		struct sde_irq_callback *irq_cb);
-
-/**
- * sde_clear_all_irqs - Clearing all SDE IRQ interrupt status
- * @sde_kms:		SDE handle
- */
-void sde_clear_all_irqs(struct sde_kms *sde_kms);
-
-/**
- * sde_disable_all_irqs - Diabling all SDE IRQ interrupt
- * @sde_kms:		SDE handle
- */
-void sde_disable_all_irqs(struct sde_kms *sde_kms);
+	return (!r->w || !r->h);
+}
 
 /**
  * Vblank enable/disable functions
@@ -495,133 +636,63 @@ int sde_enable_vblank(struct msm_kms *kms, struct drm_crtc *crtc);
 void sde_disable_vblank(struct msm_kms *kms, struct drm_crtc *crtc);
 
 /**
- * Plane functions
+ * sde_kms_fbo_create_fb - create framebuffer from given framebuffer object
+ * @dev: Pointer to drm device
+ * @fbo: Pointer to framebuffer object
+ * return: Pointer to drm framebuffer on success; NULL on error
  */
-enum sde_sspp sde_plane_pipe(struct drm_plane *plane, uint32_t index);
-u32 sde_plane_num_of_phy_pipe(struct drm_plane *plane);
-void sde_plane_flush(struct drm_plane *plane);
-struct drm_plane *sde_plane_init(struct drm_device *dev,
-		uint32_t pipe, bool primary_plane,
-		unsigned long possible_crtcs, bool vp_enabled);
+struct drm_framebuffer *sde_kms_fbo_create_fb(struct drm_device *dev,
+		struct sde_kms_fbo *fbo);
 
 /**
- * sde_plane_wait_input_fence - wait for input fence object
- * @plane:   Pointer to DRM plane object
- * @wait_ms: Wait timeout value
- * Returns: Zero on success
+ * sde_kms_fbo_alloc - create framebuffer object with given format parameters
+ * @dev: pointer to drm device
+ * @width: width of framebuffer
+ * @height: height of framebuffer
+ * @pixel_format: pixel format of framebuffer
+ * @modifier: pixel format modifier
+ * @flags: DRM_MODE_FB flags
+ * return: Pointer to framebuffer memory object on success; NULL on error
  */
-int sde_plane_wait_input_fence(struct drm_plane *plane, uint32_t wait_ms);
+struct sde_kms_fbo *sde_kms_fbo_alloc(struct drm_device *dev,
+		u32 width, u32 height, u32 pixel_format,
+		u64 modifiers[4], u32 flags);
 
 /**
- * sde_plane_color_fill - Enables color fill on plane
- * @plane:  Pointer to DRM plane object
- * @color:  RGB fill color value, [23..16] Blue, [15..8] Green, [7..0] Red
- * @alpha:  8-bit fill alpha value, 255 selects 100% alpha
- *
- * Returns: 0 on success
+ * sde_kms_fbo_reference - increment reference count of given framebuffer object
+ * @fbo: Pointer to framebuffer memory object
+ * return: 0 on success; error code otherwise
  */
-int sde_plane_color_fill(struct drm_plane *plane,
-		uint32_t color, uint32_t alpha);
+int sde_kms_fbo_reference(struct sde_kms_fbo *fbo);
 
 /**
- * CRTC functions
+ * sde_kms_fbo_unreference - decrement reference count of given framebuffer
+ *	object
+ * @fbo: Pointer to framebuffer memory object
+ * return: 0 on success; error code otherwise
  */
-int sde_crtc_vblank(struct drm_crtc *crtc, bool en);
-void sde_crtc_cancel_pending_flip(struct drm_crtc *crtc, struct drm_file *file);
-void sde_crtc_commit_kickoff(struct drm_crtc *crtc);
+void sde_kms_fbo_unreference(struct sde_kms_fbo *fbo);
 
 /**
- * sde_crtc_prepare_fence - callback to prepare for output fences
- * @crtc: Pointer to drm crtc object
+ * smmu attach/detach functions
+ * @sde_kms: poiner to sde_kms structure
+ * @secure_only: if true only secure contexts are attached/detached, else
+ * all contexts are attached/detached/
  */
-void sde_crtc_prepare_fence(struct drm_crtc *crtc);
+int sde_kms_mmu_attach(struct sde_kms *sde_kms, bool secure_only);
+int sde_kms_mmu_detach(struct sde_kms *sde_kms, bool secure_only);
 
 /**
- * sde_crtc_init - create a new crtc object
- * @dev: sde device
- * @primary_plane: base plane
- * @cursor_plane: cursor plane
- * @vblank_id: Id for reporting vblank. Id in range from 0..dev->num_crtcs.
- * @Return: new crtc object or error
+ * sde_kms_timeline_status - provides current timeline status
+ * @dev: Pointer to drm device
  */
-struct drm_crtc *sde_crtc_init(struct drm_device *dev,
-		struct drm_plane *primary_plane,
-		struct drm_plane *cursor_plane,
-		int vblank_id);
+void sde_kms_timeline_status(struct drm_device *dev);
 
 /**
- * sde_crtc_complete_commit - callback signalling completion of current commit
- * @crtc: Pointer to drm crtc object
+ * sde_kms_handle_recovery - handler function for FIFO overflow issue
+ * @encoder: pointer to drm encoder structure
+ * return: 0 on success; error code otherwise
  */
-void sde_crtc_complete_commit(struct drm_crtc *crtc);
-
-/**
- * sde_encoder_get_hw_resources - Populate table of required hardware resources
- * @encoder:	encoder pointer
- * @hw_res:	resource table to populate with encoder required resources
- * @conn_state:	report hw reqs based on this proposed connector state
- */
-void sde_encoder_get_hw_resources(struct drm_encoder *encoder,
-		struct sde_encoder_hw_resources *hw_res,
-		struct drm_connector_state *conn_state);
-
-/**
- * sde_encoder_needs_ctl_start - Get whether encoder type requires ctl_start
- *	CMD and WB encoders need ctl_start, video encs do not.
- * @encoder:	encoder pointer
- * @Return: true if the encoder type requires ctl_start issued
- */
-bool sde_encoder_needs_ctl_start(struct drm_encoder *encoder);
-
-/**
- * sde_encoder_register_vblank_callback - provide callback to encoder that
- *	will be called on the next vblank.
- * @encoder:	encoder pointer
- * @cb:		callback pointer, provide NULL to deregister and disable IRQs
- * @data:	user data provided to callback
- */
-void sde_encoder_register_vblank_callback(struct drm_encoder *encoder,
-		void (*cb)(void *), void *data);
-
-/**
- * sde_encoder_schedule_kickoff - Register a callback with the encoder to
- *	trigger a double buffer flip of the ctl path (i.e. ctl flush and start)
- *	at the appropriate time.
- *	Immediately: if no previous commit is outstanding.
- *	Delayed: Save the callback, and return. Does not block. Callback will
- *	be triggered later. E.g. cmd encoder will trigger at pp_done irq
- *	irq if it outstanding.
- *	Callback registered is expected to flush _all_ ctl paths of the crtc
- * @encoder:	encoder pointer
- * @cb:		callback pointer, provide NULL to deregister
- * @data:	user data provided to callback
- */
-void sde_encoder_schedule_kickoff(struct drm_encoder *encoder,
-		void (*cb)(void *), void *data);
-
-/**
- * sde_encoder_wait_nxt_committed - Wait for hardware to have flushed the
- *	current pending frames to hardware at a vblank or ctl_start
- *	Encoders will map this differently depending on irqs
- *	vid mode -> vsync_irq
- * @encoder:	encoder pointer
- *
- * Return: 0 on success, -EWOULDBLOCK if already signaled, error otherwise
- */
-int sde_encoder_wait_for_commit_done(struct drm_encoder *drm_encoder);
-
-/**
- * sde_encoder_get_intf_mode - returns current underlying interface mode
- * @encoder:	encoder pointer
- * Returns:	Interface mode of underlying physical master encoder
- */
-enum sde_intf_mode sde_encoder_get_intf_mode(struct drm_encoder *encoder);
-
-/**
- * sde_encoders_init - query platform, create all encoders and bridges,
- *	and register them with the drm_device
- * @dev:	drm device pointer
- */
-void sde_encoders_init(struct drm_device *dev);
+int sde_kms_handle_recovery(struct drm_encoder *encoder);
 
 #endif /* __sde_kms_H__ */

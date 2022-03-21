@@ -14,8 +14,8 @@ enum sknetlink_groups {
 #define SOCKEV_STR_MAX 32
 
 /********************************************************************
-*		Socket operation messages
-****/
+ *		Socket operation messages
+ ****/
 
 struct sknlsockevmsg {
 	__u8 event[SOCKEV_STR_MAX];

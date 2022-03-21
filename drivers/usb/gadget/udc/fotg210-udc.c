@@ -384,25 +384,15 @@ static void fotg210_ep0_queue(struct fotg210_ep *ep,
 		return;
 	}
 	if (ep->dir_in) { /* if IN */
-		if (req->req.length) {
-			fotg210_start_dma(ep, req);
-		} else {
-			pr_err("%s : req->req.length = 0x%x\n",
-			       __func__, req->req.length);
-		}
+		fotg210_start_dma(ep, req);
 		if ((req->req.length == req->req.actual) ||
 		    (req->req.actual < ep->ep.maxpacket))
 			fotg210_done(ep, req, 0);
 	} else { /* OUT */
-		if (!req->req.length) {
-			fotg210_done(ep, req, 0);
-		} else {
-			u32 value = ioread32(ep->fotg210->reg +
-						FOTG210_DMISGR0);
+		u32 value = ioread32(ep->fotg210->reg + FOTG210_DMISGR0);
 
-			value &= ~DMISGR0_MCX_OUT_INT;
-			iowrite32(value, ep->fotg210->reg + FOTG210_DMISGR0);
-		}
+		value &= ~DMISGR0_MCX_OUT_INT;
+		iowrite32(value, ep->fotg210->reg + FOTG210_DMISGR0);
 	}
 }
 
@@ -1053,8 +1043,7 @@ static void fotg210_init(struct fotg210_udc *fotg210)
 	iowrite32(value, fotg210->reg + FOTG210_DMISGR0);
 }
 
-static int fotg210_udc_stop(struct usb_gadget *g,
-		struct usb_gadget_driver *driver)
+static int fotg210_udc_stop(struct usb_gadget *g)
 {
 	struct fotg210_udc *fotg210 = gadget_to_fotg210(g);
 	unsigned long	flags;
@@ -1077,12 +1066,15 @@ static struct usb_gadget_ops fotg210_gadget_ops = {
 static int fotg210_udc_remove(struct platform_device *pdev)
 {
 	struct fotg210_udc *fotg210 = platform_get_drvdata(pdev);
+	int i;
 
 	usb_del_gadget_udc(&fotg210->gadget);
 	iounmap(fotg210->reg);
 	free_irq(platform_get_irq(pdev, 0), fotg210);
 
 	fotg210_ep_free_request(&fotg210->ep[0]->ep, fotg210->ep0_req);
+	for (i = 0; i < FOTG210_MAX_NUM_EP; i++)
+		kfree(fotg210->ep[i]);
 	kfree(fotg210);
 
 	return 0;
@@ -1113,7 +1105,7 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 	/* initialize udc */
 	fotg210 = kzalloc(sizeof(struct fotg210_udc), GFP_KERNEL);
 	if (fotg210 == NULL)
-		goto err_alloc;
+		goto err;
 
 	for (i = 0; i < FOTG210_MAX_NUM_EP; i++) {
 		_ep[i] = kzalloc(sizeof(struct fotg210_ep), GFP_KERNEL);
@@ -1125,7 +1117,7 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 	fotg210->reg = ioremap(res->start, resource_size(res));
 	if (fotg210->reg == NULL) {
 		pr_err("ioremap error.\n");
-		goto err_map;
+		goto err_alloc;
 	}
 
 	spin_lock_init(&fotg210->lock);
@@ -1154,6 +1146,17 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 		ep->ep.name = fotg210_ep_name[i];
 		ep->ep.ops = &fotg210_ep_ops;
 		usb_ep_set_maxpacket_limit(&ep->ep, (unsigned short) ~0);
+
+		if (i == 0) {
+			ep->ep.caps.type_control = true;
+		} else {
+			ep->ep.caps.type_iso = true;
+			ep->ep.caps.type_bulk = true;
+			ep->ep.caps.type_int = true;
+		}
+
+		ep->ep.caps.dir_in = true;
+		ep->ep.caps.dir_out = true;
 	}
 	usb_ep_set_maxpacket_limit(&fotg210->ep[0]->ep, 0x40);
 	fotg210->gadget.ep0 = &fotg210->ep[0]->ep;
@@ -1162,7 +1165,7 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 	fotg210->ep0_req = fotg210_ep_alloc_request(&fotg210->ep[0]->ep,
 				GFP_KERNEL);
 	if (fotg210->ep0_req == NULL)
-		goto err_req;
+		goto err_map;
 
 	fotg210_init(fotg210);
 
@@ -1172,7 +1175,7 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 			  udc_name, fotg210);
 	if (ret < 0) {
 		pr_err("request_irq error (%d)\n", ret);
-		goto err_irq;
+		goto err_req;
 	}
 
 	ret = usb_add_gadget_udc(&pdev->dev, &fotg210->gadget);
@@ -1184,26 +1187,26 @@ static int fotg210_udc_probe(struct platform_device *pdev)
 	return 0;
 
 err_add_udc:
-err_irq:
 	free_irq(ires->start, fotg210);
 
 err_req:
 	fotg210_ep_free_request(&fotg210->ep[0]->ep, fotg210->ep0_req);
 
 err_map:
-	if (fotg210->reg)
-		iounmap(fotg210->reg);
+	iounmap(fotg210->reg);
 
 err_alloc:
+	for (i = 0; i < FOTG210_MAX_NUM_EP; i++)
+		kfree(fotg210->ep[i]);
 	kfree(fotg210);
 
+err:
 	return ret;
 }
 
 static struct platform_driver fotg210_driver = {
 	.driver		= {
 		.name =	(char *)udc_name,
-		.owner	= THIS_MODULE,
 	},
 	.probe		= fotg210_udc_probe,
 	.remove		= fotg210_udc_remove,

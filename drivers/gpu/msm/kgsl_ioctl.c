@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -48,10 +48,6 @@ static const struct kgsl_ioctl kgsl_ioctl_funcs[] = {
 			kgsl_ioctl_sharedmem_flush_cache),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUMEM_ALLOC,
 			kgsl_ioctl_gpumem_alloc),
-	KGSL_IOCTL_FUNC(IOCTL_KGSL_CFF_SYNCMEM,
-			kgsl_ioctl_cff_syncmem),
-	KGSL_IOCTL_FUNC(IOCTL_KGSL_CFF_USER_EVENT,
-			kgsl_ioctl_cff_user_event),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_TIMESTAMP_EVENT,
 			kgsl_ioctl_timestamp_event),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_SETPROPERTY,
@@ -74,8 +70,6 @@ static const struct kgsl_ioctl kgsl_ioctl_funcs[] = {
 			kgsl_ioctl_syncsource_create_fence),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_SYNCSOURCE_SIGNAL_FENCE,
 			kgsl_ioctl_syncsource_signal_fence),
-	KGSL_IOCTL_FUNC(IOCTL_KGSL_CFF_SYNC_GPUOBJ,
-			kgsl_ioctl_cff_sync_gpuobj),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUOBJ_ALLOC,
 			kgsl_ioctl_gpuobj_alloc),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUOBJ_FREE,
@@ -90,6 +84,18 @@ static const struct kgsl_ioctl kgsl_ioctl_funcs[] = {
 			kgsl_ioctl_gpu_command),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUOBJ_SET_INFO,
 			kgsl_ioctl_gpuobj_set_info),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_SPARSE_PHYS_ALLOC,
+			kgsl_ioctl_sparse_phys_alloc),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_SPARSE_PHYS_FREE,
+			kgsl_ioctl_sparse_phys_free),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_SPARSE_VIRT_ALLOC,
+			kgsl_ioctl_sparse_virt_alloc),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_SPARSE_VIRT_FREE,
+			kgsl_ioctl_sparse_virt_free),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_SPARSE_BIND,
+			kgsl_ioctl_sparse_bind),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPU_SPARSE_COMMAND,
+			kgsl_ioctl_gpu_sparse_command),
 };
 
 long kgsl_ioctl_copy_in(unsigned int kernel_cmd, unsigned int user_cmd,
@@ -130,10 +136,19 @@ long kgsl_ioctl_helper(struct file *filep, unsigned int cmd, unsigned long arg,
 	unsigned int nr = _IOC_NR(cmd);
 	long ret;
 
+	static DEFINE_RATELIMIT_STATE(_rs,
+			DEFAULT_RATELIMIT_INTERVAL,
+			DEFAULT_RATELIMIT_BURST);
+
 	if (nr >= len || cmds[nr].func == NULL)
 		return -ENOIOCTLCMD;
 
-	BUG_ON(_IOC_SIZE(cmds[nr].cmd) > sizeof(data));
+	if (_IOC_SIZE(cmds[nr].cmd) > sizeof(data)) {
+		if (__ratelimit(&_rs))
+			WARN(1, "data too big for ioctl 0x%08X: %d/%zu\n",
+				cmd, _IOC_SIZE(cmds[nr].cmd), sizeof(data));
+		return -EINVAL;
+	}
 
 	if (_IOC_SIZE(cmds[nr].cmd)) {
 		ret = kgsl_ioctl_copy_in(cmds[nr].cmd, cmd, arg, data);

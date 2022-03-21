@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,32 +19,33 @@
 
 static const char *resource_name_to_str[IPA_RM_RESOURCE_MAX] = {
 	__stringify(IPA_RM_RESOURCE_Q6_PROD),
-	__stringify(IPA_RM_RESOURCE_USB_PROD),
-	__stringify(IPA_RM_RESOURCE_USB_DPL_DUMMY_PROD),
-	__stringify(IPA_RM_RESOURCE_HSIC_PROD),
-	__stringify(IPA_RM_RESOURCE_STD_ECM_PROD),
-	__stringify(IPA_RM_RESOURCE_RNDIS_PROD),
-	__stringify(IPA_RM_RESOURCE_WWAN_0_PROD),
-	__stringify(IPA_RM_RESOURCE_WLAN_PROD),
-	__stringify(IPA_RM_RESOURCE_ODU_ADAPT_PROD),
-	__stringify(IPA_RM_RESOURCE_MHI_PROD),
-	__stringify(IPA_RM_RESOURCE_ETHERNET_PROD),
 	__stringify(IPA_RM_RESOURCE_Q6_CONS),
+	__stringify(IPA_RM_RESOURCE_USB_PROD),
 	__stringify(IPA_RM_RESOURCE_USB_CONS),
+	__stringify(IPA_RM_RESOURCE_USB_DPL_DUMMY_PROD),
 	__stringify(IPA_RM_RESOURCE_USB_DPL_CONS),
+	__stringify(IPA_RM_RESOURCE_HSIC_PROD),
 	__stringify(IPA_RM_RESOURCE_HSIC_CONS),
-	__stringify(IPA_RM_RESOURCE_WLAN_CONS),
+	__stringify(IPA_RM_RESOURCE_STD_ECM_PROD),
 	__stringify(IPA_RM_RESOURCE_APPS_CONS),
+	__stringify(IPA_RM_RESOURCE_RNDIS_PROD),
+	__stringify(RESERVED_CONS_11),
+	__stringify(IPA_RM_RESOURCE_WWAN_0_PROD),
+	__stringify(RESERVED_CONS_13),
+	__stringify(IPA_RM_RESOURCE_WLAN_PROD),
+	__stringify(IPA_RM_RESOURCE_WLAN_CONS),
+	__stringify(IPA_RM_RESOURCE_ODU_ADAPT_PROD),
 	__stringify(IPA_RM_RESOURCE_ODU_ADAPT_CONS),
+	__stringify(IPA_RM_RESOURCE_MHI_PROD),
 	__stringify(IPA_RM_RESOURCE_MHI_CONS),
+	__stringify(IPA_RM_RESOURCE_ETHERNET_PROD),
 	__stringify(IPA_RM_RESOURCE_ETHERNET_CONS),
 };
 
 struct ipa_rm_profile_vote_type {
 	enum ipa_voltage_level volt[IPA_RM_RESOURCE_MAX];
 	enum ipa_voltage_level curr_volt;
-	u32 bw_prods[IPA_RM_RESOURCE_PROD_MAX];
-	u32 bw_cons[IPA_RM_RESOURCE_CONS_MAX];
+	u32 bw_resources[IPA_RM_RESOURCE_MAX];
 	u32 curr_bw;
 };
 
@@ -155,21 +156,6 @@ int ipa_rm_delete_resource(enum ipa_rm_resource_name resource_name)
 		result = -EINVAL;
 		goto bail;
 	}
-
-	if (resource->state == IPA_RM_GRANTED) {
-		/* There might pending timer work to
-		 * release release the resource
-		 */
-		if (resource->release_work != NULL) {
-			if (flush_delayed_work(&resource->release_work->work)
-				== true) {
-				IPA_RM_DBG("Flushed the pending work\n");
-			} else {
-				IPA_RM_DBG("Work was already idle\n");
-			}
-		}
-	}
-
 	result = ipa_rm_resource_delete(resource);
 	if (result) {
 		IPA_RM_ERR("ipa_rm_resource_delete() failed\n");
@@ -479,8 +465,6 @@ void delayed_release_work_func(struct work_struct *work)
 bail:
 	spin_unlock_irqrestore(&ipa_rm_ctx->ipa_rm_lock, flags);
 	kfree(rwork);
-	if (resource)
-		resource->release_work = NULL;
 
 }
 
@@ -495,6 +479,7 @@ int ipa_rm_request_resource_with_timer(enum ipa_rm_resource_name resource_name)
 {
 	unsigned long flags;
 	struct ipa_rm_resource *resource;
+	struct ipa_rm_delayed_release_work_type *release_work;
 	int result;
 
 	if (!IPA_RM_RESORCE_IS_CONS(resource_name)) {
@@ -518,18 +503,16 @@ int ipa_rm_request_resource_with_timer(enum ipa_rm_resource_name resource_name)
 		goto bail;
 	}
 
-	resource->release_work =
-		kzalloc(sizeof(*resource->release_work), GFP_ATOMIC);
-	if (!resource->release_work) {
+	release_work = kzalloc(sizeof(*release_work), GFP_ATOMIC);
+	if (!release_work) {
 		result = -ENOMEM;
 		goto bail;
 	}
-	resource->release_work->resource_name = resource->name;
-	resource->release_work->needed_bw = 0;
-	resource->release_work->dec_usage_count = false;
-	INIT_DELAYED_WORK(&resource->release_work->work,
-		delayed_release_work_func);
-	schedule_delayed_work(&resource->release_work->work,
+	release_work->resource_name = resource->name;
+	release_work->needed_bw = 0;
+	release_work->dec_usage_count = false;
+	INIT_DELAYED_WORK(&release_work->work, delayed_release_work_func);
+	schedule_delayed_work(&release_work->work,
 			msecs_to_jiffies(IPA_RM_RELEASE_DELAY_IN_MSEC));
 	result = 0;
 bail:
@@ -1017,7 +1000,9 @@ int ipa_rm_stat(char *buf, int size)
 		return result;
 
 	spin_lock_irqsave(&ipa_rm_ctx->ipa_rm_lock, flags);
-	for (i = 0; i < IPA_RM_RESOURCE_PROD_MAX; ++i) {
+	for (i = 0; i < IPA_RM_RESOURCE_MAX; ++i) {
+		if (!IPA_RM_RESORCE_IS_PROD(i))
+			continue;
 		result = ipa_rm_dep_graph_get_resource(
 				ipa_rm_ctx->dep_graph,
 				i,
@@ -1032,11 +1017,12 @@ int ipa_rm_stat(char *buf, int size)
 		}
 	}
 
-	for (i = 0; i < IPA_RM_RESOURCE_PROD_MAX; i++)
-		sum_bw_prod += ipa_rm_ctx->prof_vote.bw_prods[i];
-
-	for (i = 0; i < IPA_RM_RESOURCE_CONS_MAX; i++)
-		sum_bw_cons += ipa_rm_ctx->prof_vote.bw_cons[i];
+	for (i = 0; i < IPA_RM_RESOURCE_MAX; i++) {
+		if (IPA_RM_RESORCE_IS_PROD(i))
+			sum_bw_prod += ipa_rm_ctx->prof_vote.bw_resources[i];
+		else
+			sum_bw_cons += ipa_rm_ctx->prof_vote.bw_resources[i];
+	}
 
 	result = scnprintf(buf + cnt, size - cnt,
 		"All prod bandwidth: %d, All cons bandwidth: %d\n",
@@ -1128,23 +1114,15 @@ void ipa_rm_perf_profile_change(enum ipa_rm_resource_name resource_name)
 	if (ipa_rm_dep_graph_get_resource(ipa_rm_ctx->dep_graph,
 					  resource_name,
 					  &resource) != 0) {
-			IPA_RM_ERR("resource does not exists\n");
-			WARN_ON(1);
-			return;
+		IPA_RM_ERR("resource does not exists\n");
+		WARN_ON(1);
+		return;
 	}
 
 	old_volt = ipa_rm_ctx->prof_vote.curr_volt;
 	old_bw = ipa_rm_ctx->prof_vote.curr_bw;
 
-	if (IPA_RM_RESORCE_IS_PROD(resource_name)) {
-		bw_ptr = &ipa_rm_ctx->prof_vote.bw_prods[resource_name];
-	} else if (IPA_RM_RESORCE_IS_CONS(resource_name)) {
-		bw_ptr = &ipa_rm_ctx->prof_vote.bw_cons[
-				resource_name - IPA_RM_RESOURCE_PROD_MAX];
-	} else {
-		IPA_RM_ERR("Invalid resource_name\n");
-		return;
-	}
+	bw_ptr = &ipa_rm_ctx->prof_vote.bw_resources[resource_name];
 
 	switch (resource->state) {
 	case IPA_RM_GRANTED:
@@ -1165,7 +1143,7 @@ void ipa_rm_perf_profile_change(enum ipa_rm_resource_name resource_name)
 	default:
 		IPA_RM_ERR("unknown state %d\n", resource->state);
 		WARN_ON(1);
-		return;
+	return;
 	}
 	IPA_RM_DBG_LOW("resource bandwidth: %d voltage: %d\n", *bw_ptr,
 					resource->floor_voltage);
@@ -1179,11 +1157,12 @@ void ipa_rm_perf_profile_change(enum ipa_rm_resource_name resource_name)
 		}
 	}
 
-	for (i = 0; i < IPA_RM_RESOURCE_PROD_MAX; i++)
-		sum_bw_prod += ipa_rm_ctx->prof_vote.bw_prods[i];
-
-	for (i = 0; i < IPA_RM_RESOURCE_CONS_MAX; i++)
-		sum_bw_cons += ipa_rm_ctx->prof_vote.bw_cons[i];
+	for (i = 0; i < IPA_RM_RESOURCE_MAX; i++) {
+		if (IPA_RM_RESORCE_IS_PROD(i))
+			sum_bw_prod += ipa_rm_ctx->prof_vote.bw_resources[i];
+		else
+			sum_bw_cons += ipa_rm_ctx->prof_vote.bw_resources[i];
+	}
 
 	IPA_RM_DBG_LOW("all prod bandwidth: %d all cons bandwidth: %d\n",
 		sum_bw_prod, sum_bw_cons);
@@ -1204,7 +1183,6 @@ void ipa_rm_perf_profile_change(enum ipa_rm_resource_name resource_name)
 
 	return;
 };
-
 /**
  * ipa_rm_exit() - free all IPA RM resources
  */

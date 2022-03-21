@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2015, 2017-2018, The Linux Foundation.
+ * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -97,12 +98,13 @@ struct pll_vote_clk {
 	u32 status_mask;
 
 	struct clk c;
+
 	void *const __iomem *base;
 };
 
-extern struct clk_ops clk_ops_pll_vote;
-extern struct clk_ops clk_ops_pll_acpu_vote;
-extern struct clk_ops clk_ops_pll_sleep_vote;
+extern const struct clk_ops clk_ops_pll_vote;
+extern const struct clk_ops clk_ops_pll_acpu_vote;
+extern const struct clk_ops clk_ops_pll_sleep_vote;
 
 /* Soft voting values */
 #define PLL_SOFT_VOTE_PRIMARY   BIT(0)
@@ -167,13 +169,15 @@ struct pll_clk {
 
 	struct pll_spm_ctrl spm_ctrl;
 	struct clk c;
+
 	void *const __iomem *base;
 };
 
-extern struct clk_ops clk_ops_local_pll;
-extern struct clk_ops clk_ops_sr2_pll;
-extern struct clk_ops clk_ops_variable_rate_pll;
-extern struct clk_ops clk_ops_variable_rate_pll_hwfsm;
+extern const struct clk_ops clk_ops_local_pll;
+extern const struct clk_ops clk_ops_sr2_pll;
+extern const struct clk_ops clk_ops_acpu_pll;
+extern const struct clk_ops clk_ops_variable_rate_pll;
+extern const struct clk_ops clk_ops_variable_rate_pll_hwfsm;
 
 void __variable_rate_pll_init(struct clk *c);
 
@@ -221,11 +225,12 @@ struct pll_config_regs {
 	void __iomem *config_alt_reg;
 	void __iomem *config_ctl_reg;
 	void __iomem *mode_reg;
+
 	void *const __iomem *base;
 };
 
 void configure_sr_pll(struct pll_config *config, struct pll_config_regs *regs,
 				u32 ena_fsm_mode);
 void configure_sr_hpm_lp_pll(struct pll_config *config,
-				struct pll_config_regs *, u32 ena_fsm_mode);
+				struct pll_config_regs *regs, u32 ena_fsm_mode);
 #endif

@@ -88,6 +88,12 @@ do {									\
 #define ASC(x)		((u8) ((x) >> 8))
 #define ASCQ(x)		((u8) (x))
 
+/*
+ * Vendor (8 chars), product (16 chars), release (4 hexadecimal digits) and NUL
+ * byte
+ */
+#define INQUIRY_STRING_LEN ((size_t) (8 + 16 + 4 + 1))
+
 struct fsg_lun {
 	struct file	*filp;
 	loff_t		file_length;
@@ -110,15 +116,9 @@ struct fsg_lun {
 						       of bound block device */
 	unsigned int	blksize; /* logical block size of bound block device */
 	struct device	dev;
-	struct {
-		unsigned long rbytes;
-		unsigned long wbytes;
-		ktime_t rtime;
-		ktime_t wtime;
-	} perf;
-
 	const char	*name;		/* "lun.name" */
 	const char	**name_pfx;	/* "function.name" */
+	char		inquiry_string[INQUIRY_STRING_LEN];
 };
 
 static inline bool fsg_lun_is_open(struct fsg_lun *curlun)
@@ -128,15 +128,10 @@ static inline bool fsg_lun_is_open(struct fsg_lun *curlun)
 
 /* Default size of buffer length. */
 #define FSG_BUFLEN	((u32)16384)
+#define EXTRA_ALLOCATION_SIZE	((u32)256)
 
 /* Maximal number of LUNs supported in mass storage function */
-#define FSG_MAX_LUNS	8
-/*
- * Vendor (8 chars), product (16 chars), release (4 hexadecimal
- * digits) and NULL byte
- */
-#define INQUIRY_MAX_LEN	29
-#define LUN_NAME_LEN	8
+#define FSG_MAX_LUNS	16
 
 enum fsg_buffer_state {
 	BUF_STATE_EMPTY = 0,
@@ -223,6 +218,7 @@ ssize_t fsg_show_ro(struct fsg_lun *curlun, char *buf);
 ssize_t fsg_show_nofua(struct fsg_lun *curlun, char *buf);
 ssize_t fsg_show_file(struct fsg_lun *curlun, struct rw_semaphore *filesem,
 		      char *buf);
+ssize_t fsg_show_inquiry_string(struct fsg_lun *curlun, char *buf);
 ssize_t fsg_show_cdrom(struct fsg_lun *curlun, char *buf);
 ssize_t fsg_show_removable(struct fsg_lun *curlun, char *buf);
 ssize_t fsg_store_ro(struct fsg_lun *curlun, struct rw_semaphore *filesem,
@@ -234,9 +230,7 @@ ssize_t fsg_store_cdrom(struct fsg_lun *curlun, struct rw_semaphore *filesem,
 			const char *buf, size_t count);
 ssize_t fsg_store_removable(struct fsg_lun *curlun, const char *buf,
 			    size_t count);
-ssize_t fsg_show_perf(struct device *dev, struct device_attribute *attr,
-				char *buf);
-ssize_t fsg_store_perf(struct device *dev, struct device_attribute *attr,
-				const char *buf, size_t count);
+ssize_t fsg_store_inquiry_string(struct fsg_lun *curlun, const char *buf,
+				 size_t count);
 
 #endif /* USB_STORAGE_COMMON_H */

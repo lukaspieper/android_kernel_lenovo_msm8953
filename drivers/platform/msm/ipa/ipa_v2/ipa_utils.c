@@ -49,10 +49,6 @@
 #define UPPER_CUTOFF 50
 #define LOWER_CUTOFF 10
 
-#define MAX_RETRY_ALLOC 10
-#define ALLOC_MIN_SLEEP_RX 100000
-#define ALLOC_MAX_SLEEP_RX 200000
-
 #define IPA_DEFAULT_SYS_YELLOW_WM 32
 
 #define IPA_AGGR_BYTE_LIMIT (\
@@ -76,211 +72,129 @@ static const int ipa_ihl_ofst_meq32[] = { IPA_IHL_OFFSET_MEQ32_0,
 
 #define INVALID_EP_MAPPING_INDEX (-1)
 
-static const int ep_mapping[3][IPA_CLIENT_MAX] = {
-	[IPA_1_1][IPA_CLIENT_HSIC1_PROD]         = 19,
-	[IPA_1_1][IPA_CLIENT_WLAN1_PROD]         = -1,
-	[IPA_1_1][IPA_CLIENT_HSIC2_PROD]         = 12,
-	[IPA_1_1][IPA_CLIENT_USB2_PROD]          = 12,
-	[IPA_1_1][IPA_CLIENT_HSIC3_PROD]         = 13,
-	[IPA_1_1][IPA_CLIENT_USB3_PROD]          = 13,
-	[IPA_1_1][IPA_CLIENT_HSIC4_PROD]         =  0,
-	[IPA_1_1][IPA_CLIENT_USB4_PROD]          =  0,
-	[IPA_1_1][IPA_CLIENT_HSIC5_PROD]         = -1,
-	[IPA_1_1][IPA_CLIENT_USB_PROD]           = 11,
-	[IPA_1_1][IPA_CLIENT_A5_WLAN_AMPDU_PROD] = 15,
-	[IPA_1_1][IPA_CLIENT_A2_EMBEDDED_PROD]   =  8,
-	[IPA_1_1][IPA_CLIENT_A2_TETHERED_PROD]   =  6,
-	[IPA_1_1][IPA_CLIENT_APPS_LAN_PROD]      = -1,
-	[IPA_1_1][IPA_CLIENT_APPS_LAN_WAN_PROD]  =  2,
-	[IPA_1_1][IPA_CLIENT_APPS_CMD_PROD]      =  1,
-	[IPA_1_1][IPA_CLIENT_ODU_PROD]           = -1,
-	[IPA_1_1][IPA_CLIENT_MHI_PROD]           = -1,
-	[IPA_1_1][IPA_CLIENT_Q6_LAN_PROD]        =  5,
-	[IPA_1_1][IPA_CLIENT_Q6_WAN_PROD]        = -1,
-	[IPA_1_1][IPA_CLIENT_Q6_CMD_PROD]        = -1,
-	[IPA_1_1][IPA_CLIENT_ETHERNET_PROD]      = -1,
+#define IPA_IS_RAN_OUT_OF_EQ(__eq_array, __eq_index) \
+		(ARRAY_SIZE(__eq_array) <= (__eq_index))
 
-	[IPA_1_1][IPA_CLIENT_HSIC1_CONS]         = 14,
-	[IPA_1_1][IPA_CLIENT_WLAN1_CONS]         = -1,
-	[IPA_1_1][IPA_CLIENT_HSIC2_CONS]         = 16,
-	[IPA_1_1][IPA_CLIENT_USB2_CONS]          = 16,
-	[IPA_1_1][IPA_CLIENT_WLAN2_CONS]         = -1,
-	[IPA_1_1][IPA_CLIENT_HSIC3_CONS]         = 17,
-	[IPA_1_1][IPA_CLIENT_USB3_CONS]          = 17,
-	[IPA_1_1][IPA_CLIENT_WLAN3_CONS]         = -1,
-	[IPA_1_1][IPA_CLIENT_HSIC4_CONS]         = 18,
-	[IPA_1_1][IPA_CLIENT_USB4_CONS]          = 18,
-	[IPA_1_1][IPA_CLIENT_WLAN4_CONS]         = -1,
-	[IPA_1_1][IPA_CLIENT_HSIC5_CONS]         = -1,
-	[IPA_1_1][IPA_CLIENT_USB_CONS]           = 10,
-	[IPA_1_1][IPA_CLIENT_USB_DPL_CONS]       = -1,
-	[IPA_1_1][IPA_CLIENT_A2_EMBEDDED_CONS]   =  9,
-	[IPA_1_1][IPA_CLIENT_A2_TETHERED_CONS]   =  7,
-	[IPA_1_1][IPA_CLIENT_A5_LAN_WAN_CONS]    =  3,
-	[IPA_1_1][IPA_CLIENT_APPS_LAN_CONS]      = -1,
-	[IPA_1_1][IPA_CLIENT_APPS_WAN_CONS]      = -1,
-	[IPA_1_1][IPA_CLIENT_ODU_EMB_CONS]       = -1,
-	[IPA_1_1][IPA_CLIENT_ODU_TETH_CONS]      = -1,
-	[IPA_1_1][IPA_CLIENT_MHI_CONS]           = -1,
-	[IPA_1_1][IPA_CLIENT_Q6_LAN_CONS]        =  4,
-	[IPA_1_1][IPA_CLIENT_Q6_WAN_CONS]        = -1,
-	[IPA_1_1][IPA_CLIENT_ETHERNET_CONS]      = -1,
+struct ipa_ep_confing {
+	bool valid;
+	int pipe_num;
+};
+
+static const struct ipa_ep_confing ep_mapping[3][IPA_CLIENT_MAX] = {
+	[IPA_1_1][IPA_CLIENT_HSIC1_PROD]         = {true, 19},
+	[IPA_1_1][IPA_CLIENT_HSIC2_PROD]         = {true, 12},
+	[IPA_1_1][IPA_CLIENT_USB2_PROD]          = {true, 12},
+	[IPA_1_1][IPA_CLIENT_HSIC3_PROD]         = {true, 13},
+	[IPA_1_1][IPA_CLIENT_USB3_PROD]          = {true, 13},
+	[IPA_1_1][IPA_CLIENT_HSIC4_PROD]         = {true,  0},
+	[IPA_1_1][IPA_CLIENT_USB4_PROD]          = {true,  0},
+	[IPA_1_1][IPA_CLIENT_USB_PROD]           = {true, 11},
+	[IPA_1_1][IPA_CLIENT_A5_WLAN_AMPDU_PROD] = {true, 15},
+	[IPA_1_1][IPA_CLIENT_A2_EMBEDDED_PROD]   = {true,  8},
+	[IPA_1_1][IPA_CLIENT_A2_TETHERED_PROD]   = {true,  6},
+	[IPA_1_1][IPA_CLIENT_APPS_LAN_WAN_PROD]  = {true,  2},
+	[IPA_1_1][IPA_CLIENT_APPS_CMD_PROD]      = {true,  1},
+	[IPA_1_1][IPA_CLIENT_Q6_LAN_PROD]        = {true,  5},
+
+	[IPA_1_1][IPA_CLIENT_HSIC1_CONS]         = {true, 14},
+	[IPA_1_1][IPA_CLIENT_HSIC2_CONS]         = {true, 16},
+	[IPA_1_1][IPA_CLIENT_USB2_CONS]          = {true, 16},
+	[IPA_1_1][IPA_CLIENT_HSIC3_CONS]         = {true, 17},
+	[IPA_1_1][IPA_CLIENT_USB3_CONS]          = {true, 17},
+	[IPA_1_1][IPA_CLIENT_HSIC4_CONS]         = {true, 18},
+	[IPA_1_1][IPA_CLIENT_USB4_CONS]          = {true, 18},
+	[IPA_1_1][IPA_CLIENT_USB_CONS]           = {true, 10},
+	[IPA_1_1][IPA_CLIENT_A2_EMBEDDED_CONS]   = {true,  9},
+	[IPA_1_1][IPA_CLIENT_A2_TETHERED_CONS]   = {true,  7},
+	[IPA_1_1][IPA_CLIENT_A5_LAN_WAN_CONS]    = {true,  3},
+	[IPA_1_1][IPA_CLIENT_Q6_LAN_CONS]        = {true,  4},
 
 
-	[IPA_2_0][IPA_CLIENT_HSIC1_PROD]         = 12,
-	[IPA_2_0][IPA_CLIENT_WLAN1_PROD]         = 18,
-	[IPA_2_0][IPA_CLIENT_HSIC2_PROD]         = -1,
-	[IPA_2_0][IPA_CLIENT_USB2_PROD]          = 12,
-	[IPA_2_0][IPA_CLIENT_HSIC3_PROD]         = -1,
-	[IPA_2_0][IPA_CLIENT_USB3_PROD]          = 13,
-	[IPA_2_0][IPA_CLIENT_HSIC4_PROD]         = -1,
-	[IPA_2_0][IPA_CLIENT_USB4_PROD]          =  0,
-	[IPA_2_0][IPA_CLIENT_HSIC5_PROD]         = -1,
-	[IPA_2_0][IPA_CLIENT_USB_PROD]           = 11,
-	[IPA_2_0][IPA_CLIENT_A5_WLAN_AMPDU_PROD] = -1,
-	[IPA_2_0][IPA_CLIENT_A2_EMBEDDED_PROD]   = -1,
-	[IPA_2_0][IPA_CLIENT_A2_TETHERED_PROD]   = -1,
-	[IPA_2_0][IPA_CLIENT_APPS_LAN_PROD]      = -1,
-	[IPA_2_0][IPA_CLIENT_APPS_LAN_WAN_PROD]  =  4,
-	[IPA_2_0][IPA_CLIENT_APPS_CMD_PROD]      =  3,
-	[IPA_2_0][IPA_CLIENT_ODU_PROD]           = 12,
-	[IPA_2_0][IPA_CLIENT_MHI_PROD]           = 18,
-	[IPA_2_0][IPA_CLIENT_Q6_LAN_PROD]        =  6,
-	[IPA_2_0][IPA_CLIENT_Q6_WAN_PROD]	 = -1,
-	[IPA_2_0][IPA_CLIENT_Q6_CMD_PROD]        =  7,
-	[IPA_2_0][IPA_CLIENT_Q6_DECOMP_PROD]     = -1,
-	[IPA_2_0][IPA_CLIENT_Q6_DECOMP2_PROD]    = -1,
+	[IPA_2_0][IPA_CLIENT_HSIC1_PROD]         = {true, 12},
+	[IPA_2_0][IPA_CLIENT_WLAN1_PROD]         = {true, 18},
+	[IPA_2_0][IPA_CLIENT_USB2_PROD]          = {true, 12},
+	[IPA_2_0][IPA_CLIENT_USB3_PROD]          = {true, 13},
+	[IPA_2_0][IPA_CLIENT_USB4_PROD]          = {true,  0},
+	[IPA_2_0][IPA_CLIENT_USB_PROD]           = {true, 11},
+	[IPA_2_0][IPA_CLIENT_APPS_LAN_WAN_PROD]  = {true,  4},
+	[IPA_2_0][IPA_CLIENT_APPS_CMD_PROD]      = {true,  3},
+	[IPA_2_0][IPA_CLIENT_ODU_PROD]           = {true, 12},
+	[IPA_2_0][IPA_CLIENT_MHI_PROD]           = {true, 18},
+	[IPA_2_0][IPA_CLIENT_Q6_LAN_PROD]        = {true,  6},
+	[IPA_2_0][IPA_CLIENT_Q6_CMD_PROD]        = {true,  7},
+
 	[IPA_2_0][IPA_CLIENT_MEMCPY_DMA_SYNC_PROD]
-						 =  12,
+						 = {true, 12},
 	[IPA_2_0][IPA_CLIENT_MEMCPY_DMA_ASYNC_PROD]
-						 =  19,
-	[IPA_2_0][IPA_CLIENT_ETHERNET_PROD]      = 12,
+						 = {true, 19},
+	[IPA_2_0][IPA_CLIENT_ETHERNET_PROD]      = {true, 12},
 	/* Only for test purpose */
-	[IPA_2_0][IPA_CLIENT_TEST_PROD]          = 19,
-	[IPA_2_0][IPA_CLIENT_TEST1_PROD]         = 19,
-	[IPA_2_0][IPA_CLIENT_TEST2_PROD]         = 12,
-	[IPA_2_0][IPA_CLIENT_TEST3_PROD]         = 11,
-	[IPA_2_0][IPA_CLIENT_TEST4_PROD]         =  0,
+	[IPA_2_0][IPA_CLIENT_TEST_PROD]          = {true, 19},
+	[IPA_2_0][IPA_CLIENT_TEST1_PROD]         = {true, 19},
+	[IPA_2_0][IPA_CLIENT_TEST2_PROD]         = {true, 12},
+	[IPA_2_0][IPA_CLIENT_TEST3_PROD]         = {true, 11},
+	[IPA_2_0][IPA_CLIENT_TEST4_PROD]         = {true,  0},
 
-	[IPA_2_0][IPA_CLIENT_HSIC1_CONS]         = 13,
-	[IPA_2_0][IPA_CLIENT_WLAN1_CONS]         = 17,
-	[IPA_2_0][IPA_CLIENT_HSIC2_CONS]         = -1,
-	[IPA_2_0][IPA_CLIENT_USB2_CONS]          = -1,
-	[IPA_2_0][IPA_CLIENT_WLAN2_CONS]         = 16,
-	[IPA_2_0][IPA_CLIENT_HSIC3_CONS]         = -1,
-	[IPA_2_0][IPA_CLIENT_USB3_CONS]          = -1,
-	[IPA_2_0][IPA_CLIENT_WLAN3_CONS]         = 14,
-	[IPA_2_0][IPA_CLIENT_HSIC4_CONS]         = -1,
-	[IPA_2_0][IPA_CLIENT_USB4_CONS]          = -1,
-	[IPA_2_0][IPA_CLIENT_WLAN4_CONS]         = 19,
-	[IPA_2_0][IPA_CLIENT_HSIC5_CONS]         = -1,
-	[IPA_2_0][IPA_CLIENT_USB_CONS]           = 15,
-	[IPA_2_0][IPA_CLIENT_USB_DPL_CONS]       =  0,
-	[IPA_2_0][IPA_CLIENT_A2_EMBEDDED_CONS]   = -1,
-	[IPA_2_0][IPA_CLIENT_A2_TETHERED_CONS]   = -1,
-	[IPA_2_0][IPA_CLIENT_A5_LAN_WAN_CONS]    = -1,
-	[IPA_2_0][IPA_CLIENT_APPS_LAN_CONS]      =  2,
-	[IPA_2_0][IPA_CLIENT_APPS_WAN_CONS]      =  5,
-	[IPA_2_0][IPA_CLIENT_ODU_EMB_CONS]       = 13,
-	[IPA_2_0][IPA_CLIENT_ODU_TETH_CONS]      = 1,
-	[IPA_2_0][IPA_CLIENT_MHI_CONS]           = 17,
-	[IPA_2_0][IPA_CLIENT_Q6_LAN_CONS]        =  8,
-	[IPA_2_0][IPA_CLIENT_Q6_WAN_CONS]        =  9,
-	[IPA_2_0][IPA_CLIENT_Q6_DUN_CONS]        = -1,
-	[IPA_2_0][IPA_CLIENT_Q6_DECOMP_CONS]     = -1,
-	[IPA_2_0][IPA_CLIENT_Q6_DECOMP2_CONS]    = -1,
+	[IPA_2_0][IPA_CLIENT_HSIC1_CONS]         = {true, 13},
+	[IPA_2_0][IPA_CLIENT_WLAN1_CONS]         = {true, 17},
+	[IPA_2_0][IPA_CLIENT_WLAN2_CONS]         = {true, 16},
+	[IPA_2_0][IPA_CLIENT_WLAN3_CONS]         = {true, 14},
+	[IPA_2_0][IPA_CLIENT_WLAN4_CONS]         = {true, 19},
+	[IPA_2_0][IPA_CLIENT_USB_CONS]           = {true, 15},
+	[IPA_2_0][IPA_CLIENT_USB_DPL_CONS]       = {true,  0},
+	[IPA_2_0][IPA_CLIENT_APPS_LAN_CONS]      = {true,  2},
+	[IPA_2_0][IPA_CLIENT_APPS_WAN_CONS]      = {true,  5},
+	[IPA_2_0][IPA_CLIENT_ODU_EMB_CONS]       = {true, 13},
+	[IPA_2_0][IPA_CLIENT_ODU_TETH_CONS]      = {true,  1},
+	[IPA_2_0][IPA_CLIENT_MHI_CONS]           = {true, 17},
+	[IPA_2_0][IPA_CLIENT_Q6_LAN_CONS]        = {true,  8},
+	[IPA_2_0][IPA_CLIENT_Q6_WAN_CONS]        = {true,  9},
 	[IPA_2_0][IPA_CLIENT_MEMCPY_DMA_SYNC_CONS]
-						 =  13,
+						 = {true, 13},
 	[IPA_2_0][IPA_CLIENT_MEMCPY_DMA_ASYNC_CONS]
-						 =  16,
+						 = {true, 16},
 	[IPA_2_0][IPA_CLIENT_Q6_LTE_WIFI_AGGR_CONS]
-						 =  10,
-	[IPA_2_0][IPA_CLIENT_ETHERNET_CONS]      = 1,
+						 = {true, 10},
+	[IPA_2_0][IPA_CLIENT_ETHERNET_CONS]      = {true,  1},
+
 	/* Only for test purpose */
-	[IPA_2_0][IPA_CLIENT_TEST_CONS]          = 1,
-	[IPA_2_0][IPA_CLIENT_TEST1_CONS]         = 1,
-	[IPA_2_0][IPA_CLIENT_TEST2_CONS]         = 16,
-	[IPA_2_0][IPA_CLIENT_TEST3_CONS]         = 13,
-	[IPA_2_0][IPA_CLIENT_TEST4_CONS]         = 15,
-	[IPA_2_0][IPA_CLIENT_DUMMY_CONS]         = -1,
+	[IPA_2_0][IPA_CLIENT_TEST_CONS]          = {true,  1},
+	[IPA_2_0][IPA_CLIENT_TEST1_CONS]         = {true,  1},
+	[IPA_2_0][IPA_CLIENT_TEST2_CONS]         = {true, 16},
+	[IPA_2_0][IPA_CLIENT_TEST3_CONS]         = {true, 13},
+	[IPA_2_0][IPA_CLIENT_TEST4_CONS]         = {true, 15},
 
 
-	[IPA_2_6L][IPA_CLIENT_HSIC1_PROD]         = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN1_PROD]         = -1,
-	[IPA_2_6L][IPA_CLIENT_HSIC2_PROD]         = -1,
-	[IPA_2_6L][IPA_CLIENT_USB2_PROD]          = -1,
-	[IPA_2_6L][IPA_CLIENT_HSIC3_PROD]         = -1,
-	[IPA_2_6L][IPA_CLIENT_USB3_PROD]          = -1,
-	[IPA_2_6L][IPA_CLIENT_HSIC4_PROD]         = -1,
-	[IPA_2_6L][IPA_CLIENT_USB4_PROD]          = -1,
-	[IPA_2_6L][IPA_CLIENT_HSIC5_PROD]         = -1,
-	[IPA_2_6L][IPA_CLIENT_USB_PROD]           =  1,
-	[IPA_2_6L][IPA_CLIENT_A5_WLAN_AMPDU_PROD] = -1,
-	[IPA_2_6L][IPA_CLIENT_A2_EMBEDDED_PROD]   = -1,
-	[IPA_2_6L][IPA_CLIENT_A2_TETHERED_PROD]   = -1,
-	[IPA_2_6L][IPA_CLIENT_APPS_LAN_PROD]      = -1,
-	[IPA_2_6L][IPA_CLIENT_APPS_LAN_WAN_PROD]  =  4,
-	[IPA_2_6L][IPA_CLIENT_APPS_CMD_PROD]      =  3,
-	[IPA_2_6L][IPA_CLIENT_ODU_PROD]           = -1,
-	[IPA_2_6L][IPA_CLIENT_MHI_PROD]           = -1,
-	[IPA_2_6L][IPA_CLIENT_Q6_LAN_PROD]        =  6,
-	[IPA_2_6L][IPA_CLIENT_Q6_WAN_PROD]	  = -1,
-	[IPA_2_6L][IPA_CLIENT_Q6_CMD_PROD]        =  7,
-	[IPA_2_6L][IPA_CLIENT_Q6_DECOMP_PROD]     = 11,
-	[IPA_2_6L][IPA_CLIENT_Q6_DECOMP2_PROD]    = 13,
-	[IPA_2_6L][IPA_CLIENT_MEMCPY_DMA_SYNC_PROD]
-						 =  -1,
-	[IPA_2_6L][IPA_CLIENT_MEMCPY_DMA_ASYNC_PROD]
-						 =  -1,
-	[IPA_2_6L][IPA_CLIENT_ETHERNET_PROD]      = -1,
-	/* Only for test purpose */
-	[IPA_2_6L][IPA_CLIENT_TEST_PROD]          = 11,
-	[IPA_2_6L][IPA_CLIENT_TEST1_PROD]         = 11,
-	[IPA_2_6L][IPA_CLIENT_TEST2_PROD]         = 12,
-	[IPA_2_6L][IPA_CLIENT_TEST3_PROD]         = 13,
-	[IPA_2_6L][IPA_CLIENT_TEST4_PROD]         = 14,
+	[IPA_2_6L][IPA_CLIENT_USB_PROD]          =  {true,  1},
+	[IPA_2_6L][IPA_CLIENT_APPS_LAN_WAN_PROD]  = {true,  4},
+	[IPA_2_6L][IPA_CLIENT_APPS_CMD_PROD]      = {true,  3},
+	[IPA_2_6L][IPA_CLIENT_Q6_LAN_PROD]        = {true,  6},
+	[IPA_2_6L][IPA_CLIENT_Q6_CMD_PROD]        = {true,  7},
+	[IPA_2_6L][IPA_CLIENT_Q6_DECOMP_PROD]     = {true, 11},
+	[IPA_2_6L][IPA_CLIENT_Q6_DECOMP2_PROD]    = {true, 13},
 
-	[IPA_2_6L][IPA_CLIENT_HSIC1_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN1_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_HSIC2_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_USB2_CONS]          = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN2_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_HSIC3_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_USB3_CONS]          = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN3_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_HSIC4_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_USB4_CONS]          = -1,
-	[IPA_2_6L][IPA_CLIENT_WLAN4_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_HSIC5_CONS]         = -1,
-	[IPA_2_6L][IPA_CLIENT_USB_CONS]           =  0,
-	[IPA_2_6L][IPA_CLIENT_USB_DPL_CONS]       = 10,
-	[IPA_2_6L][IPA_CLIENT_A2_EMBEDDED_CONS]   = -1,
-	[IPA_2_6L][IPA_CLIENT_A2_TETHERED_CONS]   = -1,
-	[IPA_2_6L][IPA_CLIENT_A5_LAN_WAN_CONS]    = -1,
-	[IPA_2_6L][IPA_CLIENT_APPS_LAN_CONS]      =  2,
-	[IPA_2_6L][IPA_CLIENT_APPS_WAN_CONS]      =  5,
-	[IPA_2_6L][IPA_CLIENT_ODU_EMB_CONS]       = -1,
-	[IPA_2_6L][IPA_CLIENT_ODU_TETH_CONS]      = -1,
-	[IPA_2_6L][IPA_CLIENT_MHI_CONS]           = -1,
-	[IPA_2_6L][IPA_CLIENT_Q6_LAN_CONS]        =  8,
-	[IPA_2_6L][IPA_CLIENT_Q6_WAN_CONS]        =  9,
-	[IPA_2_6L][IPA_CLIENT_Q6_DUN_CONS]        = -1,
-	[IPA_2_6L][IPA_CLIENT_Q6_DECOMP_CONS]     = 12,
-	[IPA_2_6L][IPA_CLIENT_Q6_DECOMP2_CONS]    = 14,
-	[IPA_2_6L][IPA_CLIENT_MEMCPY_DMA_SYNC_CONS]
-						 =  -1,
-	[IPA_2_6L][IPA_CLIENT_MEMCPY_DMA_ASYNC_CONS]
-						 =  -1,
-	[IPA_2_6L][IPA_CLIENT_Q6_LTE_WIFI_AGGR_CONS]
-						 =  -1,
-	[IPA_2_6L][IPA_CLIENT_ETHERNET_CONS]      = -1,
 	/* Only for test purpose */
-	[IPA_2_6L][IPA_CLIENT_TEST_CONS]          = 15,
-	[IPA_2_6L][IPA_CLIENT_TEST1_CONS]         = 15,
-	[IPA_2_6L][IPA_CLIENT_TEST2_CONS]         = 0,
-	[IPA_2_6L][IPA_CLIENT_TEST3_CONS]         = 1,
-	[IPA_2_6L][IPA_CLIENT_TEST4_CONS]         = 10,
-	[IPA_2_6L][IPA_CLIENT_DUMMY_CONS]         = -1,
+	[IPA_2_6L][IPA_CLIENT_TEST_PROD]          = {true, 11},
+	[IPA_2_6L][IPA_CLIENT_TEST1_PROD]         = {true, 11},
+	[IPA_2_6L][IPA_CLIENT_TEST2_PROD]         = {true, 12},
+	[IPA_2_6L][IPA_CLIENT_TEST3_PROD]         = {true, 13},
+	[IPA_2_6L][IPA_CLIENT_TEST4_PROD]         = {true, 14},
+
+	[IPA_2_6L][IPA_CLIENT_USB_CONS]           = {true,  0},
+	[IPA_2_6L][IPA_CLIENT_USB_DPL_CONS]       = {true, 10},
+	[IPA_2_6L][IPA_CLIENT_APPS_LAN_CONS]      = {true,  2},
+	[IPA_2_6L][IPA_CLIENT_APPS_WAN_CONS]      = {true,  5},
+	[IPA_2_6L][IPA_CLIENT_Q6_LAN_CONS]        = {true,  8},
+	[IPA_2_6L][IPA_CLIENT_Q6_WAN_CONS]        = {true,  9},
+	[IPA_2_6L][IPA_CLIENT_Q6_DECOMP_CONS]     = {true, 12},
+	[IPA_2_6L][IPA_CLIENT_Q6_DECOMP2_CONS]    = {true, 14},
+
+	/* Only for test purpose */
+	[IPA_2_6L][IPA_CLIENT_TEST_CONS]          = {true, 15},
+	[IPA_2_6L][IPA_CLIENT_TEST1_CONS]         = {true, 15},
+	[IPA_2_6L][IPA_CLIENT_TEST2_CONS]         = {true,  0},
+	[IPA_2_6L][IPA_CLIENT_TEST3_CONS]         = {true,  1},
+	[IPA_2_6L][IPA_CLIENT_TEST4_CONS]         = {true, 10},
 };
 
 static struct msm_bus_vectors ipa_init_vectors_v1_1[]  = {
@@ -378,14 +292,14 @@ static struct msm_bus_paths ipa_usecases_v2_0[]  = {
 };
 
 static struct msm_bus_scale_pdata ipa_bus_client_pdata_v1_1 = {
-	ipa_usecases_v1_1,
-	ARRAY_SIZE(ipa_usecases_v1_1),
+	.usecase = ipa_usecases_v1_1,
+	.num_usecases = ARRAY_SIZE(ipa_usecases_v1_1),
 	.name = "ipa",
 };
 
 static struct msm_bus_scale_pdata ipa_bus_client_pdata_v2_0 = {
-	ipa_usecases_v2_0,
-	ARRAY_SIZE(ipa_usecases_v2_0),
+	.usecase = ipa_usecases_v2_0,
+	.num_usecases = ARRAY_SIZE(ipa_usecases_v2_0),
 	.name = "ipa",
 };
 
@@ -955,7 +869,10 @@ int ipa2_get_ep_mapping(enum ipa_client_type client)
 		break;
 	}
 
-	return ep_mapping[hw_type_index][client];
+	if (!ep_mapping[hw_type_index][client].valid)
+		return INVALID_EP_MAPPING_INDEX;
+
+	return ep_mapping[hw_type_index][client].pipe_num;
 }
 
 /* ipa2_set_client() - provide client mapping
@@ -976,11 +893,39 @@ void ipa2_set_client(int index, enum ipacm_client_enum client, bool uplink)
 	}
 }
 
+/* ipa2_get_wlan_stats() - get ipa wifi stats
+ *
+ * Return value: success or failure
+ */
+int ipa2_get_wlan_stats(struct ipa_get_wdi_sap_stats *wdi_sap_stats)
+{
+	if (ipa_ctx->uc_wdi_ctx.stats_notify) {
+		ipa_ctx->uc_wdi_ctx.stats_notify(IPA_GET_WDI_SAP_STATS,
+			wdi_sap_stats);
+	} else {
+		IPAERR_RL("uc_wdi_ctx.stats_notify not registered\n");
+		return -EFAULT;
+	}
+	return 0;
+}
+
+int ipa2_set_wlan_quota(struct ipa_set_wifi_quota *wdi_quota)
+{
+	if (ipa_ctx->uc_wdi_ctx.stats_notify) {
+		ipa_ctx->uc_wdi_ctx.stats_notify(IPA_SET_WIFI_QUOTA,
+			wdi_quota);
+	} else {
+		IPAERR("uc_wdi_ctx.stats_notify not registered\n");
+		return -EFAULT;
+	}
+	return 0;
+}
+
 /**
  * ipa2_get_client() - provide client mapping
  * @client: client type
  *
- * Return value: none
+ * Return value: client mapping enum
  */
 enum ipacm_client_enum ipa2_get_client(int pipe_idx)
 {
@@ -1075,70 +1020,6 @@ enum ipa_client_type ipa2_get_client_mapping(int pipe_idx)
 	}
 
 	return ipa_ctx->ep[pipe_idx].client;
-}
-
-/**
- * ipa_write_32() - convert 32 bit value to byte array
- * @w: 32 bit integer
- * @dest: byte array
- *
- * Return value: converted value
- */
-u8 *ipa_write_32(u32 w, u8 *dest)
-{
-	*dest++ = (u8)((w) & 0xFF);
-	*dest++ = (u8)((w >> 8) & 0xFF);
-	*dest++ = (u8)((w >> 16) & 0xFF);
-	*dest++ = (u8)((w >> 24) & 0xFF);
-
-	return dest;
-}
-
-/**
- * ipa_write_16() - convert 16 bit value to byte array
- * @hw: 16 bit integer
- * @dest: byte array
- *
- * Return value: converted value
- */
-u8 *ipa_write_16(u16 hw, u8 *dest)
-{
-	*dest++ = (u8)((hw) & 0xFF);
-	*dest++ = (u8)((hw >> 8) & 0xFF);
-
-	return dest;
-}
-
-/**
- * ipa_write_8() - convert 8 bit value to byte array
- * @hw: 8 bit integer
- * @dest: byte array
- *
- * Return value: converted value
- */
-u8 *ipa_write_8(u8 b, u8 *dest)
-{
-	*dest++ = (b) & 0xFF;
-
-	return dest;
-}
-
-/**
- * ipa_pad_to_32() - pad byte array to 32 bit value
- * @dest: byte array
- *
- * Return value: padded value
- */
-u8 *ipa_pad_to_32(u8 *dest)
-{
-	int i = (long)dest & 0x3;
-	int j;
-
-	if (i)
-		for (j = 0; j < (4 - i); j++)
-			*dest++ = 0;
-
-	return dest;
 }
 
 void ipa_generate_mac_addr_hw_rule(u8 **buf, u8 hdr_mac_addr_offset,
@@ -1532,6 +1413,11 @@ int ipa_generate_hw_rule(enum ipa_ip_type ip,
 		}
 
 		if (attrib->attrib_mask & IPA_FLT_L2TP_INNER_IP_TYPE) {
+			if (IPA_IS_RAN_OUT_OF_EQ(ipa_ihl_ofst_meq32,
+							ihl_ofst_meq32)) {
+				IPAERR("ran out of ihl_meq32 eq\n");
+				return -EPERM;
+			}
 			if (ipa_ihl_ofst_meq32[ihl_ofst_meq32] == -1) {
 				IPAERR("ran out of ihl_meq32 eq\n");
 				return -EPERM;
@@ -1549,6 +1435,11 @@ int ipa_generate_hw_rule(enum ipa_ip_type ip,
 		}
 
 		if (attrib->attrib_mask & IPA_FLT_L2TP_INNER_IPV4_DST_ADDR) {
+			if (IPA_IS_RAN_OUT_OF_EQ(ipa_ihl_ofst_meq32,
+							ihl_ofst_meq32)) {
+				IPAERR("ran out of ihl_meq32 eq\n");
+				return -EPERM;
+			}
 			if (ipa_ihl_ofst_meq32[ihl_ofst_meq32] == -1) {
 				IPAERR("ran out of ihl_meq32 eq\n");
 				return -EPERM;
@@ -4038,6 +3929,7 @@ int ipa_straddle_boundary(u32 start, u32 end, u32 boundary)
 void ipa2_bam_reg_dump(void)
 {
 	static DEFINE_RATELIMIT_STATE(_rs, 500*HZ, 1);
+
 	if (__ratelimit(&_rs)) {
 		IPA_ACTIVE_CLIENTS_INC_SIMPLE();
 		pr_err("IPA BAM START\n");
@@ -4630,7 +4522,6 @@ int ipa_tag_process(struct ipa_desc desc[],
 	int res;
 	struct ipa_tag_completion *comp;
 	int ep_idx;
-	u32 retry_cnt = 0;
 	gfp_t flag = GFP_KERNEL | (ipa_ctx->use_dma_zone ? GFP_DMA : 0);
 
 	/* Not enough room for the required descriptors for the tag process */
@@ -4747,22 +4638,9 @@ int ipa_tag_process(struct ipa_desc desc[],
 	tag_desc[desc_idx].user1 = dummy_skb;
 	desc_idx++;
 
-retry_alloc:
-
 	/* send all descriptors to IPA with single EOT */
 	res = ipa_send(sys, desc_idx, tag_desc, true);
 	if (res) {
-		if (res == -ENOMEM) {
-			if (retry_cnt < MAX_RETRY_ALLOC) {
-				IPADBG(
-				"Failed to alloc memory retry count %d\n",
-				retry_cnt);
-				retry_cnt++;
-				usleep_range(ALLOC_MIN_SLEEP_RX,
-					ALLOC_MAX_SLEEP_RX);
-				goto retry_alloc;
-			}
-		}
 		IPAERR("failed to send TAG packets %d\n", res);
 		res = -ENOMEM;
 		goto fail_send;
@@ -5038,7 +4916,8 @@ u32 ipa_get_num_pipes(void)
 EXPORT_SYMBOL(ipa_get_num_pipes);
 
 /**
- * ipa2_disable_apps_wan_cons_deaggr()- set ipa_ctx->ipa_client_apps_wan_cons_agg_gro
+ * ipa2_disable_apps_wan_cons_deaggr()-
+ * set ipa_ctx->ipa_client_apps_wan_cons_agg_gro
  *
  * Return value: 0 or negative in case of failure
  */
@@ -5119,6 +4998,11 @@ static void ipa2_set_tag_process_before_gating(bool val)
 	ipa_ctx->tag_process_before_gating = val;
 }
 
+static bool ipa2_pm_is_used(void)
+{
+	return false;
+}
+
 int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	struct ipa_api_controller *api_ctrl)
 {
@@ -5174,7 +5058,7 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	api_ctrl->ipa_mdfy_flt_rule = ipa2_mdfy_flt_rule;
 	api_ctrl->ipa_commit_flt = ipa2_commit_flt;
 	api_ctrl->ipa_reset_flt = ipa2_reset_flt;
-	api_ctrl->allocate_nat_device = ipa2_allocate_nat_device;
+	api_ctrl->ipa_allocate_nat_device = ipa2_allocate_nat_device;
 	api_ctrl->ipa_nat_init_cmd = ipa2_nat_init_cmd;
 	api_ctrl->ipa_nat_dma_cmd = ipa2_nat_dma_cmd;
 	api_ctrl->ipa_nat_del_cmd = ipa2_nat_del_cmd;
@@ -5203,6 +5087,8 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	api_ctrl->ipa_suspend_wdi_pipe = ipa2_suspend_wdi_pipe;
 	api_ctrl->ipa_get_wdi_stats = ipa2_get_wdi_stats;
 	api_ctrl->ipa_get_smem_restr_bytes = ipa2_get_smem_restr_bytes;
+	api_ctrl->ipa_broadcast_wdi_quota_reach_ind =
+			ipa2_broadcast_wdi_quota_reach_ind;
 	api_ctrl->ipa_uc_wdi_get_dbpa = ipa2_uc_wdi_get_dbpa;
 	api_ctrl->ipa_uc_reg_rdyCB = ipa2_uc_reg_rdyCB;
 	api_ctrl->ipa_uc_dereg_rdyCB = ipa2_uc_dereg_rdyCB;
@@ -5283,16 +5169,19 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 		ipa2_set_required_perf_profile;
 	api_ctrl->ipa_get_ipc_logbuf = ipa2_get_ipc_logbuf;
 	api_ctrl->ipa_get_ipc_logbuf_low = ipa2_get_ipc_logbuf_low;
+	api_ctrl->ipa_rx_poll = ipa2_rx_poll;
+	api_ctrl->ipa_recycle_wan_skb = ipa2_recycle_wan_skb;
 	api_ctrl->ipa_setup_uc_ntn_pipes = ipa2_setup_uc_ntn_pipes;
 	api_ctrl->ipa_tear_down_uc_offload_pipes =
 		ipa2_tear_down_uc_offload_pipes;
 	api_ctrl->ipa_get_pdev = ipa2_get_pdev;
 	api_ctrl->ipa_ntn_uc_reg_rdyCB = ipa2_ntn_uc_reg_rdyCB;
 	api_ctrl->ipa_ntn_uc_dereg_rdyCB = ipa2_ntn_uc_dereg_rdyCB;
-	api_ctrl->ipa_conn_wdi3_pipes = ipa2_conn_wdi3_pipes;
-	api_ctrl->ipa_disconn_wdi3_pipes = ipa2_disconn_wdi3_pipes;
-	api_ctrl->ipa_enable_wdi3_pipes = ipa2_enable_wdi3_pipes;
-	api_ctrl->ipa_disable_wdi3_pipes = ipa2_disable_wdi3_pipes;
+	api_ctrl->ipa_conn_wdi_pipes = ipa2_conn_wdi3_pipes;
+	api_ctrl->ipa_disconn_wdi_pipes = ipa2_disconn_wdi3_pipes;
+	api_ctrl->ipa_enable_wdi_pipes = ipa2_enable_wdi3_pipes;
+	api_ctrl->ipa_disable_wdi_pipes = ipa2_disable_wdi3_pipes;
+	api_ctrl->ipa_pm_is_used = ipa2_pm_is_used;
 
 	return 0;
 }
@@ -5305,7 +5194,8 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
  */
 u32 ipa_get_sys_yellow_wm(struct ipa_sys_context *sys)
 {
-	if (ipa_ctx->ipa_hw_type == IPA_HW_v2_6L) {
+	if (ipa_ctx->ipa_hw_type == IPA_HW_v2_6L &&
+		ipa_ctx->ipa_uc_monitor_holb) {
 		return ipa_read_reg(ipa_ctx->mmio,
 			IPA_YELLOW_MARKER_SYS_CFG_OFST);
 	} else {

@@ -26,7 +26,6 @@ obj-$(CONFIG_APPLICOM)		+= applicom.o
 obj-$(CONFIG_SONYPI)		+= sonypi.o
 obj-$(CONFIG_RTC)		+= rtc.o
 obj-$(CONFIG_HPET)		+= hpet.o
-obj-$(CONFIG_GEN_RTC)		+= genrtc.o
 obj-$(CONFIG_EFI_RTC)		+= efirtc.o
 obj-$(CONFIG_DS1302)		+= ds1302.o
 obj-$(CONFIG_XILINX_HWICAP)	+= xilinx_hwicap/
@@ -36,7 +35,6 @@ else
   obj-$(CONFIG_NVRAM)	+= nvram.o
 endif
 obj-$(CONFIG_TOSHIBA)		+= toshiba.o
-obj-$(CONFIG_I8K)		+= i8k.o
 obj-$(CONFIG_DS1620)		+= ds1620.o
 obj-$(CONFIG_HW_RANDOM)		+= hw_random/
 obj-$(CONFIG_PPDEV)		+= ppdev.o
@@ -63,9 +61,17 @@ js-rtc-y = rtc.o
 obj-$(CONFIG_TILE_SROM)		+= tile-srom.o
 obj-$(CONFIG_DIAG_CHAR)		+= diag/
 obj-$(CONFIG_XILLYBUS)		+= xillybus/
+obj-$(CONFIG_POWERNV_OP_PANEL)	+= powernv-op-panel.o
 obj-$(CONFIG_MSM_ADSPRPC)       += adsprpc.o
 ifdef CONFIG_COMPAT
 obj-$(CONFIG_MSM_ADSPRPC)       += adsprpc_compat.o
 endif
-obj-$(CONFIG_MSM_MDSP_TS)       += smd_ts.o
 obj-$(CONFIG_MSM_RDBG)		+= rdbg.o
+obj-$(CONFIG_OKL4_PIPE)		+= okl4_pipe.o
+CFLAGS_okl4_pipe.o			+= -Werror
+obj-$(CONFIG_VSERVICES_SERIAL)		+= vservices_serial.o
+CFLAGS_vservices_serial.o	+= -Werror
+obj-$(CONFIG_VSERVICES_SERIAL_CLIENT)	+= vs_serial_client.o
+CFLAGS_vs_serial_client.o	 += -Werror
+obj-$(CONFIG_VSERVICES_SERIAL_SERVER)	+= vs_serial_server.o
+CFLAGS_vs_serial_server.o	+= -Werror

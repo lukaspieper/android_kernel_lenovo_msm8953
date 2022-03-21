@@ -47,7 +47,8 @@ static inline struct l2tp_ip_sock *l2tp_ip_sk(const struct sock *sk)
 	return (struct l2tp_ip_sock *)sk;
 }
 
-static struct sock *__l2tp_ip_bind_lookup(struct net *net, __be32 laddr, int dif, u32 tunnel_id)
+static struct sock *__l2tp_ip_bind_lookup(const struct net *net, __be32 laddr,
+					  __be32 raddr, int dif, u32 tunnel_id)
 {
 	struct sock *sk;
 
@@ -61,21 +62,14 @@ static struct sock *__l2tp_ip_bind_lookup(struct net *net, __be32 laddr, int dif
 		if ((l2tp->conn_id == tunnel_id) &&
 		    net_eq(sock_net(sk), net) &&
 		    !(inet->inet_rcv_saddr && inet->inet_rcv_saddr != laddr) &&
-		    !(sk->sk_bound_dev_if && sk->sk_bound_dev_if != dif))
+		    (!inet->inet_daddr || !raddr || inet->inet_daddr == raddr) &&
+		    (!sk->sk_bound_dev_if || !dif ||
+		     sk->sk_bound_dev_if == dif))
 			goto found;
 	}
 
 	sk = NULL;
 found:
-	return sk;
-}
-
-static inline struct sock *l2tp_ip_bind_lookup(struct net *net, __be32 laddr, int dif, u32 tunnel_id)
-{
-	struct sock *sk = __l2tp_ip_bind_lookup(net, laddr, dif, tunnel_id);
-	if (sk)
-		sock_hold(sk);
-
 	return sk;
 }
 
@@ -164,9 +158,9 @@ static int l2tp_ip_recv(struct sk_buff *skb)
 	}
 
 	if (l2tp_v3_ensure_opt_in_linear(session, skb, &ptr, &optr))
-		goto discard;
+		goto discard_sess;
 
-	l2tp_recv_common(session, skb, ptr, optr, 0, skb->len, tunnel->recv_payload_hook);
+	l2tp_recv_common(session, skb, ptr, optr, 0, skb->len);
 	l2tp_session_dec_refcount(session);
 
 	return 0;
@@ -183,7 +177,8 @@ pass_up:
 	iph = (struct iphdr *)skb_network_header(skb);
 
 	read_lock_bh(&l2tp_ip_lock);
-	sk = __l2tp_ip_bind_lookup(net, iph->daddr, 0, tunnel_id);
+	sk = __l2tp_ip_bind_lookup(net, iph->daddr, iph->saddr, inet_iif(skb),
+				   tunnel_id);
 	if (!sk) {
 		read_unlock_bh(&l2tp_ip_lock);
 		goto discard;
@@ -212,13 +207,14 @@ discard:
 	return 0;
 }
 
-static void l2tp_ip_hash(struct sock *sk)
+static int l2tp_ip_hash(struct sock *sk)
 {
 	if (sk_unhashed(sk)) {
 		write_lock_bh(&l2tp_ip_lock);
 		sk_add_node(sk, &l2tp_ip_table);
 		write_unlock_bh(&l2tp_ip_lock);
 	}
+	return 0;
 }
 
 static void l2tp_ip_unhash(struct sock *sk)
@@ -298,7 +294,7 @@ static int l2tp_ip_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		inet->inet_saddr = 0;  /* Use device */
 
 	write_lock_bh(&l2tp_ip_lock);
-	if (__l2tp_ip_bind_lookup(net, addr->l2tp_addr.s_addr,
+	if (__l2tp_ip_bind_lookup(net, addr->l2tp_addr.s_addr, 0,
 				  sk->sk_bound_dev_if, addr->l2tp_conn_id)) {
 		write_unlock_bh(&l2tp_ip_lock);
 		ret = -EADDRINUSE;
@@ -362,7 +358,7 @@ static int l2tp_ip_disconnect(struct sock *sk, int flags)
 	if (sock_flag(sk, SOCK_ZAPPED))
 		return 0;
 
-	return udp_disconnect(sk, flags);
+	return __udp_disconnect(sk, flags);
 }
 
 static int l2tp_ip_getname(struct socket *sock, struct sockaddr *uaddr,
@@ -411,7 +407,7 @@ drop:
 /* Userspace will call sendmsg() on the tunnel socket to send L2TP
  * control frames.
  */
-static int l2tp_ip_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg, size_t len)
+static int l2tp_ip_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 {
 	struct sk_buff *skb;
 	int rc;
@@ -467,7 +463,7 @@ static int l2tp_ip_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *m
 	*((__be32 *) skb_put(skb, 4)) = 0;
 
 	/* Copy user data into skb */
-	rc = memcpy_fromiovec(skb_put(skb, len), msg->msg_iov, len);
+	rc = memcpy_from_msg(skb_put(skb, len), msg, len);
 	if (rc < 0) {
 		kfree_skb(skb);
 		goto error;
@@ -532,7 +528,7 @@ no_route:
 	goto out;
 }
 
-static int l2tp_ip_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
+static int l2tp_ip_recvmsg(struct sock *sk, struct msghdr *msg,
 			   size_t len, int noblock, int flags, int *addr_len)
 {
 	struct inet_sock *inet = inet_sk(sk);
@@ -554,7 +550,7 @@ static int l2tp_ip_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *m
 		copied = len;
 	}
 
-	err = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, copied);
+	err = skb_copy_datagram_msg(skb, 0, msg, copied);
 	if (err)
 		goto done;
 
@@ -705,3 +701,4 @@ MODULE_VERSION("1.0");
  * enums
  */
 MODULE_ALIAS_NET_PF_PROTO_TYPE(PF_INET, 2, IPPROTO_L2TP);
+MODULE_ALIAS_NET_PF_PROTO(PF_INET, IPPROTO_L2TP);

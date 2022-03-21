@@ -379,7 +379,7 @@ static int gen_mjpeghdr_to_package(struct go7007 *go, __le16 *code, int space)
 
 	buf = kzalloc(4096, GFP_KERNEL);
 	if (buf == NULL)
-		return -1;
+		return -ENOMEM;
 
 	for (i = 1; i < 32; ++i) {
 		mjpeg_frame_header(go, buf + size, i);
@@ -646,7 +646,7 @@ static int gen_mpeg1hdr_to_package(struct go7007 *go,
 
 	buf = kzalloc(5120, GFP_KERNEL);
 	if (buf == NULL)
-		return -1;
+		return -ENOMEM;
 
 	framelen[0] = mpeg1_frame_header(go, buf, 0, 1, PFRAME);
 	if (go->interlace_coding)
@@ -832,7 +832,7 @@ static int gen_mpeg4hdr_to_package(struct go7007 *go,
 
 	buf = kzalloc(5120, GFP_KERNEL);
 	if (buf == NULL)
-		return -1;
+		return -ENOMEM;
 
 	framelen[0] = mpeg4_frame_header(go, buf, 0, PFRAME);
 	i = 368;
@@ -1499,8 +1499,8 @@ static int modet_to_package(struct go7007 *go, __le16 *code, int space)
 	return cnt;
 }
 
-static int do_special(struct go7007 *go, u16 type, __le16 *code, int space,
-			int *framelen)
+static noinline_for_stack int do_special(struct go7007 *go, u16 type,
+					 __le16 *code, int space, int *framelen)
 {
 	switch (type) {
 	case SPECIAL_FRM_HEAD:

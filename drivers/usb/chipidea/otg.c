@@ -30,7 +30,50 @@
  */
 u32 hw_read_otgsc(struct ci_hdrc *ci, u32 mask)
 {
-	return hw_read(ci, OP_OTGSC, mask);
+	struct ci_hdrc_cable *cable;
+	u32 val = hw_read(ci, OP_OTGSC, mask);
+
+	/*
+	 * If using extcon framework for VBUS and/or ID signal
+	 * detection overwrite OTGSC register value
+	 */
+	cable = &ci->platdata->vbus_extcon;
+	if (!IS_ERR(cable->edev)) {
+		if (cable->changed)
+			val |= OTGSC_BSVIS;
+		else
+			val &= ~OTGSC_BSVIS;
+
+		if (cable->state)
+			val |= OTGSC_BSV;
+		else
+			val &= ~OTGSC_BSV;
+
+		if (cable->enabled)
+			val |= OTGSC_BSVIE;
+		else
+			val &= ~OTGSC_BSVIE;
+	}
+
+	cable = &ci->platdata->id_extcon;
+	if (!IS_ERR(cable->edev)) {
+		if (cable->changed)
+			val |= OTGSC_IDIS;
+		else
+			val &= ~OTGSC_IDIS;
+
+		if (cable->state)
+			val |= OTGSC_ID;
+		else
+			val &= ~OTGSC_ID;
+
+		if (cable->enabled)
+			val |= OTGSC_IDIE;
+		else
+			val &= ~OTGSC_IDIE;
+	}
+
+	return val & mask;
 }
 
 /**
@@ -40,6 +83,36 @@ u32 hw_read_otgsc(struct ci_hdrc *ci, u32 mask)
  */
 void hw_write_otgsc(struct ci_hdrc *ci, u32 mask, u32 data)
 {
+	struct ci_hdrc_cable *cable;
+
+	cable = &ci->platdata->vbus_extcon;
+	if (!IS_ERR(cable->edev)) {
+		if (data & mask & OTGSC_BSVIS)
+			cable->changed = false;
+
+		/* Don't enable vbus interrupt if using external notifier */
+		if (data & mask & OTGSC_BSVIE) {
+			cable->enabled = true;
+			data &= ~OTGSC_BSVIE;
+		} else if (mask & OTGSC_BSVIE) {
+			cable->enabled = false;
+		}
+	}
+
+	cable = &ci->platdata->id_extcon;
+	if (!IS_ERR(cable->edev)) {
+		if (data & mask & OTGSC_IDIS)
+			cable->changed = false;
+
+		/* Don't enable id interrupt if using external notifier */
+		if (data & mask & OTGSC_IDIE) {
+			cable->enabled = true;
+			data &= ~OTGSC_IDIE;
+		} else if (mask & OTGSC_IDIE) {
+			cable->enabled = false;
+		}
+	}
+
 	hw_write(ci, OP_OTGSC, mask | OTGSC_INT_STATUS_BITS, data);
 }
 
@@ -61,9 +134,9 @@ void ci_handle_vbus_change(struct ci_hdrc *ci)
 	if (!ci->is_otg)
 		return;
 
-	if (hw_read_otgsc(ci, OTGSC_BSV))
+	if (hw_read_otgsc(ci, OTGSC_BSV) && !ci->vbus_active)
 		usb_gadget_vbus_connect(&ci->gadget);
-	else
+	else if (!hw_read_otgsc(ci, OTGSC_BSV) && ci->vbus_active)
 		usb_gadget_vbus_disconnect(&ci->gadget);
 }
 
@@ -102,13 +175,21 @@ static void ci_handle_id_switch(struct ci_hdrc *ci)
 
 		ci_role_stop(ci);
 
-		/*
-		 * wait vbus lower than OTGSC_BSV before connecting
-		 * to host
-		 */
-		hw_wait_vbus_lower_bsv(ci);
+		if (role == CI_ROLE_GADGET &&
+				IS_ERR(ci->platdata->vbus_extcon.edev))
+			/*
+			 * Wait vbus lower than OTGSC_BSV before connecting
+			 * to host. If connecting status is from an external
+			 * connector instead of register, we don't need to
+			 * care vbus on the board, since it will not affect
+			 * external connector status.
+			 */
+			hw_wait_vbus_lower_bsv(ci);
 
 		ci_role_start(ci, role);
+		/* vbus change may have already occurred */
+		if (role == CI_ROLE_GADGET)
+			ci_handle_vbus_change(ci);
 	}
 }
 /**
@@ -124,6 +205,8 @@ static void ci_otg_work(struct work_struct *work)
 		return;
 	}
 
+	pm_runtime_get_sync(ci->dev);
+
 	if (ci->id_event) {
 		ci->id_event = false;
 		ci_handle_id_switch(ci);
@@ -133,6 +216,8 @@ static void ci_otg_work(struct work_struct *work)
 		ci->b_sess_valid_event = false;
 		ci_handle_vbus_change(ci);
 	}
+
+	pm_runtime_put_sync(ci->dev);
 
 	enable_irq(ci->irq);
 }

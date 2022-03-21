@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,7 +16,6 @@
 #include <linux/irq.h>
 #include <linux/kthread.h>
 #include <soc/qcom/msm_qmi_interface.h>
-#include <soc/qcom/subsystem_notif.h>
 #include <linux/ipc_logging.h>
 
 /* Per spec.max 40 bytes per received message */
@@ -229,14 +228,24 @@ struct msm_slim_qmi {
 	struct kthread_worker		kworker;
 	struct completion		qmi_comp;
 	struct notifier_block		nb;
-	struct work_struct		ssr_down;
-	struct work_struct		ssr_up;
+	bool				deferred_resp;
+	struct qmi_response_type_v01	resp;
+	struct msg_desc			resp_desc;
+	struct completion		defer_comp;
+};
+
+enum msm_slim_dom {
+	MSM_SLIM_DOM_NONE,
+	MSM_SLIM_DOM_PD,
+	MSM_SLIM_DOM_SS,
 };
 
 struct msm_slim_ss {
 	struct notifier_block nb;
-	void *ssr;
+	void *domr;
 	enum msm_ctrl_state state;
+	struct work_struct dom_up;
+	enum msm_slim_dom dom_t;
 };
 
 struct msm_slim_pdata {
@@ -254,10 +263,17 @@ struct msm_slim_bulk_wr {
 	bool		in_progress;
 };
 
+struct msm_slim_iommu {
+	struct device			*cb_dev;
+	struct dma_iommu_mapping	*iommu_map;
+	bool				s1_bypass;
+};
+
 struct msm_slim_ctrl {
 	struct slim_controller  ctrl;
 	struct slim_framer	framer;
 	struct device		*dev;
+	struct msm_slim_iommu	iommu_desc;
 	void __iomem		*base;
 	struct resource		*slew_mem;
 	struct resource		*bam_mem;
@@ -407,7 +423,7 @@ void msm_dealloc_port(struct slim_controller *ctrl, u8 pn);
 int msm_slim_connect_pipe_port(struct msm_slim_ctrl *dev, u8 pn);
 enum slim_port_err msm_slim_port_xfer_status(struct slim_controller *ctr,
 				u8 pn, phys_addr_t *done_buf, u32 *done_len);
-int msm_slim_port_xfer(struct slim_controller *ctrl, u8 pn, phys_addr_t iobuf,
+int msm_slim_port_xfer(struct slim_controller *ctrl, u8 pn, void *buf,
 			u32 len, struct completion *comp);
 int msm_send_msg_buf(struct msm_slim_ctrl *dev, u32 *buf, u8 len, u32 tx_reg);
 u32 *msm_get_msg_buf(struct msm_slim_ctrl *dev, int len,
@@ -432,4 +448,5 @@ void msm_slim_qmi_exit(struct msm_slim_ctrl *dev);
 int msm_slim_qmi_init(struct msm_slim_ctrl *dev, bool apps_is_master);
 int msm_slim_qmi_power_request(struct msm_slim_ctrl *dev, bool active);
 int msm_slim_qmi_check_framer_request(struct msm_slim_ctrl *dev);
+int msm_slim_qmi_deferred_status_req(struct msm_slim_ctrl *dev);
 #endif

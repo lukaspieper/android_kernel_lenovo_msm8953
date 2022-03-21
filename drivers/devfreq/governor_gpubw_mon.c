@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015,2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -39,9 +39,20 @@ static void _update_cutoff(struct devfreq_msm_adreno_tz_data *priv,
 	}
 }
 
+static inline int devfreq_get_freq_level(struct devfreq *devfreq,
+	unsigned long freq)
+{
+	int lev;
+
+	for (lev = 0; lev < devfreq->profile->max_state; lev++)
+		if (freq == devfreq->profile->freq_table[lev])
+			return lev;
+
+	return -EINVAL;
+}
+
 static int devfreq_gpubw_get_target(struct devfreq *df,
-				unsigned long *freq,
-				u32 *flag)
+				unsigned long *freq)
 {
 
 	struct devfreq_msm_adreno_tz_data *priv = df->data;
@@ -180,6 +191,7 @@ static int gpubw_start(struct devfreq *devfreq)
 static int gpubw_stop(struct devfreq *devfreq)
 {
 	struct devfreq_msm_adreno_tz_data *priv = devfreq->data;
+
 	if (priv) {
 		kfree(priv->bus.up);
 		kfree(priv->bus.down);
@@ -247,7 +259,6 @@ static void __exit devfreq_gpubw_exit(void)
 	if (ret)
 		pr_err("%s: failed remove governor %d\n", __func__, ret);
 
-	return;
 }
 module_exit(devfreq_gpubw_exit);
 

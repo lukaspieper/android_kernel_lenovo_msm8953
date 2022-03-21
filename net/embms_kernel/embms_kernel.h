@@ -1,10 +1,5 @@
 /******************************************************************
- * EMBMS.H
-*******************************************************************
- */
-
-/******************************************************************
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015,2017, The Linux Foundation. All rights reserved.
 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,8 +13,8 @@
 
  * DESCRIPTION
  * Header file for eMBMs Tunneling Module in kernel.
-*******************************************************************
-*/
+ *******************************************************************
+ */
 
 #ifndef EMBMS_H
 #define EMBMS_H
@@ -31,8 +26,9 @@
 #include <linux/ip.h>
 #include <linux/miscdevice.h>
 #include <linux/spinlock.h>
+#include <linux/cdev.h>
 
-#define EMBMS_MAX_IFACE_NAME    16
+#define EMBMS_MAX_IFACE_NAME    20
 
 /* Defining IP and UDP header related macros*/
 
@@ -45,22 +41,22 @@
 #define IP_TTL                      64
 #define BRIDGE_IFACE                "bridge0"
 
-/* The major device number*/
-
-#define DEVICE_NUM 100
 #define BUF_LEN 1024
 #define TUNNELING_ON 1
 #define TUNNELING_OFF 0
 
+// definitions required for IOCTL
+static unsigned int dev_num = 1;
+/* Embms device used for communication*/
+struct cdev embms_device;
+static struct class *embms_class;
+static dev_t device;
+#define EMBMS_IOC_MAGIC 0x64
+
 #define embms_debug pr_debug
 #define embms_error pr_debug
 
-#ifndef MIN
-	#define  MIN(x, y) (((x) < (y)) ? (x) : (y))
-#endif
-
 /* The name of the device file*/
-
 #define EMBMS_DEVICE_NAME "embms_tm_device"
 
 extern int (*embms_tm_multicast_recv)(struct sk_buff *skb);
@@ -105,12 +101,12 @@ enum {
  */
 
 struct tmgi_to_clnt_info_update {
-	u_int32_t multicast_addr;
-	u_int16_t multicast_port;
-	u_int32_t client_addr;
-	u_int16_t client_port;
-	u_int16_t data_port;
-	u_int32_t action_type;
+	u32 multicast_addr;
+	u16 multicast_port;
+	u32 client_addr;
+	u16 client_port;
+	u16 data_port;
+	u32 action_type;
 	char iface_name[EMBMS_MAX_IFACE_NAME];
 };
 
@@ -126,9 +122,9 @@ struct tmgi_to_clnt_info_update {
  */
 
 struct clnt_info {
-	u_int32_t addr;
-	u_int16_t port;
-	u_int8_t dmac[ETH_ALEN];
+	u32 addr;
+	u16 port;
+	u8 dmac[ETH_ALEN];
 	struct list_head client_list_ptr;
 };
 
@@ -145,9 +141,9 @@ struct clnt_info {
  */
 
 struct tmgi_to_clnt_info {
-	u_int32_t tmgi_multicast_addr;
-	u_int16_t tmgi_port;
-	u_int16_t no_of_clients;
+	u32 tmgi_multicast_addr;
+	u16 tmgi_port;
+	u16 no_of_clients;
 	struct list_head client_list_head;
 	struct list_head tmgi_list_ptr;
 };
@@ -181,43 +177,48 @@ struct embms_info_internal {
  * Entry params are populated in the struct used for ioctl
  */
 
-#define ADD_EMBMS_TUNNEL _IOW(DEVICE_NUM, 0, struct tmgi_to_clnt_info_update)
+#define ADD_EMBMS_TUNNEL _IOW(EMBMS_IOC_MAGIC, 0, \
+		struct tmgi_to_clnt_info_update)
 
 /* This ioctl is used to delete a client entry for a particular
  * TMGI from tunneling module.
  * Entry params are populated in the struct used for ioctl
  */
 
-#define DEL_EMBMS_TUNNEL _IOW(DEVICE_NUM, 1, struct tmgi_to_clnt_info_update)
+#define DEL_EMBMS_TUNNEL _IOW(EMBMS_IOC_MAGIC, 1, \
+		struct tmgi_to_clnt_info_update)
 
 /* This ioctl is used to delete a TMGI entry completely
  * from tunneling module.
  * Entry params are populated in the struct used for ioctl
  */
 
-#define TMGI_DEACTIVATE _IOW(DEVICE_NUM, 2, struct tmgi_to_clnt_info_update)
+#define TMGI_DEACTIVATE _IOW(EMBMS_IOC_MAGIC, 2, \
+		struct tmgi_to_clnt_info_update)
 
 /* This ioctl is used to delete client entry completely
  * from tunneling module.
  * Entry params are populated in the struct used for ioctl
  */
 
-#define CLIENT_DEACTIVATE _IOW(DEVICE_NUM, 3, struct tmgi_to_clnt_info_update)
+#define CLIENT_DEACTIVATE _IOW(EMBMS_IOC_MAGIC, 3, \
+		struct tmgi_to_clnt_info_update)
 
 /* Gets the ON/OFF status of Tunneling module*/
 
-#define GET_EMBMS_TUNNELING_STATUS _IO(DEVICE_NUM, 4)
+#define GET_EMBMS_TUNNELING_STATUS _IO(EMBMS_IOC_MAGIC, 4)
 
 /* Used to start tunneling. Argument is the port
  * number to be used to send
  * data to clients
  */
 
-#define START_EMBMS_TUNNEL _IOW(DEVICE_NUM, 5, struct tmgi_to_clnt_info_update)
+#define START_EMBMS_TUNNEL _IOW(EMBMS_IOC_MAGIC, 5, \
+		struct tmgi_to_clnt_info_update)
 
 /* Used to stop tunnleing*/
 
-#define STOP_EMBMS_TUNNEL _IO(DEVICE_NUM, 6)
+#define STOP_EMBMS_TUNNEL _IO(EMBMS_IOC_MAGIC, 6)
 
 /* Return values indicating error status*/
 #define SUCCESS               0         /* Successful operation*/

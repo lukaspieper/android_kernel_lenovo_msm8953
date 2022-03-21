@@ -456,7 +456,7 @@ F2FS_GENERAL_RO_ATTR(features);
 F2FS_GENERAL_RO_ATTR(current_reserved_blocks);
 F2FS_GENERAL_RO_ATTR(unusable);
 
-#ifdef CONFIG_F2FS_FS_ENCRYPTION
+#ifdef CONFIG_FS_ENCRYPTION
 F2FS_FEATURE_RO_ATTR(encryption, FEAT_CRYPTO);
 #endif
 #ifdef CONFIG_BLK_DEV_ZONED
@@ -519,7 +519,7 @@ static struct attribute *f2fs_attrs[] = {
 };
 
 static struct attribute *f2fs_feat_attrs[] = {
-#ifdef CONFIG_F2FS_FS_ENCRYPTION
+#ifdef CONFIG_FS_ENCRYPTION
 	ATTR_LIST(encryption),
 #endif
 #ifdef CONFIG_BLK_DEV_ZONED
@@ -621,7 +621,7 @@ static int __maybe_unused iostat_info_seq_show(struct seq_file *seq,
 {
 	struct super_block *sb = seq->private;
 	struct f2fs_sb_info *sbi = F2FS_SB(sb);
-	time64_t now = get_seconds();
+	time64_t now = ktime_get_real_seconds();
 
 	if (!sbi->iostat_enable)
 		return 0;

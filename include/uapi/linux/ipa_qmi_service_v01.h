@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -53,6 +53,11 @@
  */
 #define QMI_IPA_MAX_CLIENT_DST_PIPES_V01 8
 #define QMI_IPA_MAX_UL_FIREWALL_RULES_V01 64
+
+/*
+ * Indicates presence of newly added member to support HW stats.
+ */
+#define IPA_QMI_SUPPORTS_STATS
 
 #define IPA_INT_MAX	((int)(~0U>>1))
 #define IPA_INT_MIN	(-IPA_INT_MAX - 1)
@@ -177,14 +182,14 @@ struct ipa_zip_tbl_info_type_v01 {
 
 /**
  * Request Message; Requests the modem IPA driver
- * to perform initializtion
+ * to perform initialization
  */
 struct ipa_init_modem_driver_req_msg_v01 {
 
 	/* Optional */
 	/*  Platform info */
-	uint8_t platform_type_valid;  /**< Must be set to true if platform_type
-	is being passed */
+	uint8_t platform_type_valid;
+	/* Must be set to true if platform_type is being passed */
 	enum ipa_platform_type_enum_v01 platform_type;
 	/*   Provides information about the platform (ex. TN/MN/LE/MSM,etc) */
 
@@ -204,15 +209,15 @@ struct ipa_init_modem_driver_req_msg_v01 {
 
 	/* Optional */
 	/*  IPV6 Routing table info */
-	uint8_t v6_route_tbl_info_valid;  /**< Must be set to true if
-	v6_route_tbl_info is being passed */
+	uint8_t v6_route_tbl_info_valid;
+	/* Must be set to true if v6_route_tbl_info is being passed */
 	struct ipa_route_tbl_info_type_v01 v6_route_tbl_info;
 	/*	Provides information about the IPV6 routing table */
 
 	/* Optional */
 	/*  IPV4 Filter table start address */
-	uint8_t v4_filter_tbl_start_addr_valid;  /**< Must be set to true
-	if v4_filter_tbl_start_addr is being passed */
+	uint8_t v4_filter_tbl_start_addr_valid;
+	/* Must be set to true if v4_filter_tbl_start_addr is being passed */
 	uint32_t v4_filter_tbl_start_addr;
 	/*	Provides information about the starting address of IPV4 filter
 	 *	table in IPAv2 or non-hashable IPv4 filter table in IPAv3.
@@ -241,8 +246,8 @@ struct ipa_init_modem_driver_req_msg_v01 {
 
 	/* Optional */
 	/*  Destination end point for control commands from modem */
-	uint8_t ctrl_comm_dest_end_pt_valid;  /**< Must be set to true if
-	ctrl_comm_dest_end_pt is being passed */
+	uint8_t ctrl_comm_dest_end_pt_valid;
+	/* Must be set to true if ctrl_comm_dest_end_pt is being passed */
 	uint32_t ctrl_comm_dest_end_pt;
 	/*  Provides information about the destination end point on the
 	 *	application processor to which the modem driver can send
@@ -252,8 +257,8 @@ struct ipa_init_modem_driver_req_msg_v01 {
 
 	/* Optional */
 	/*  Modem Bootup Information */
-	uint8_t is_ssr_bootup_valid;  /**< Must be set to true if
-	is_ssr_bootup is being passed */
+	uint8_t is_ssr_bootup_valid;
+	/* Must be set to true if is_ssr_bootup is being passed */
 	uint8_t is_ssr_bootup;
 	/*	Specifies whether the modem is booting up after a modem only
 	 *	sub-system restart or not. This will let the modem driver
@@ -290,27 +295,62 @@ struct ipa_init_modem_driver_req_msg_v01 {
 	uint8_t v6_hash_route_tbl_info_valid;
 	struct ipa_route_tbl_info_type_v01 v6_hash_route_tbl_info;
 
-	/* Optional */
-	/*  IPv4 Hashable Filter Table Start Address */
-	/** Must be set to true if v4_hash_filter_tbl_start_addr
-	    is being passed */
+	/*
+	* Optional
+	* IPv4 Hashable Filter Table Start Address
+	* Must be set to true if v4_hash_filter_tbl_start_addr
+	* is being passed
+	*/
 	uint8_t v4_hash_filter_tbl_start_addr_valid;
 	uint32_t v4_hash_filter_tbl_start_addr;
-	/**	Identifies the starting address of the IPv4 hashable filter
-	    table in IPAv3 onwards. Denotes the offset from the start of
-		the IPA shared memory.
+	/* Identifies the starting address of the IPv4 hashable filter
+	* table in IPAv3 onwards. Denotes the offset from the start of
+	* the IPA shared memory.
 	*/
 
-	/* Optional */
-	/*  IPv6 Hashable Filter Table Start Address */
-	/** Must be set to true if v6_hash_filter_tbl_start_addr
-	    is being passed */
+	/* Optional
+	* IPv6 Hashable Filter Table Start Address
+	* Must be set to true if v6_hash_filter_tbl_start_addr
+	* is being passed
+	*/
 	uint8_t v6_hash_filter_tbl_start_addr_valid;
 	uint32_t v6_hash_filter_tbl_start_addr;
-	/**	Identifies the starting address of the IPv6 hashable filter
-	    table in IPAv3 onwards. Denotes the offset from the start of
-		the IPA shared memory.
+	/* Identifies the starting address of the IPv6 hashable filter
+	* table in IPAv3 onwards. Denotes the offset from the start of
+	* the IPA shared memory.
 	*/
+
+	/* Optional
+	 * Modem HW Stats Quota Base address
+	 * Must be set to true if hw_stats_quota_base_addr
+	 * is being passed
+	 */
+	uint8_t hw_stats_quota_base_addr_valid;
+	uint32_t hw_stats_quota_base_addr;
+
+	/* Optional
+	 * Modem HW Stats Quota Size
+	 * Must be set to true if hw_stats_quota_size
+	 * is being passed
+	 */
+	uint8_t hw_stats_quota_size_valid;
+	uint32_t hw_stats_quota_size;
+
+	/* Optional
+	 * Modem HW Drop Stats Table Start Address
+	 * Must be set to true if hw_drop_stats_base_addr
+	 * is being passed
+	 */
+	uint8_t hw_drop_stats_base_addr_valid;
+	uint32_t hw_drop_stats_base_addr;
+
+	/* Optional
+	 * Modem HW Drop Stats Table size
+	 * Must be set to true if hw_drop_stats_table_size
+	 * is being passed
+	 */
+	uint8_t hw_drop_stats_table_size_valid;
+	uint32_t hw_drop_stats_table_size;
 };  /* Message */
 
 /* Response Message; Requests the modem IPA driver about initialization */
@@ -543,7 +583,8 @@ struct ipa_filter_rule_type_v01 {
 
 	uint8_t tc_eq;
 	/* The value against which the IPV4 traffic class field has to
-		be checked */
+	* be checked
+	*/
 
 	uint8_t flow_eq_present;
 	/* Specifies if the "flow equals" rule is present in this rule */
@@ -726,8 +767,8 @@ struct ipa_filter_spec_ex_type_v01 {
 	 */
 
 	uint32_t rule_id;
-	/** Rule Id of the given filter. The Rule Id is populated in the rule
-		header when installing the rule in IPA.
+	/* Rule Id of the given filter. The Rule Id is populated in the rule
+	* header when installing the rule in IPA.
 	*/
 
 	uint8_t is_rule_hashable;
@@ -741,9 +782,10 @@ struct ipa_filter_spec_ex_type_v01 {
  *	of filtering rules in the hardware block by the remote side.
  */
 struct ipa_install_fltr_rule_req_msg_v01 {
-	/* Optional */
-	/*  IP type that this rule applies to
-	Filter specification to be installed in the hardware */
+	/* Optional
+	* IP type that this rule applies to
+	* Filter specification to be installed in the hardware
+	*/
 	uint8_t filter_spec_list_valid;
 	/* Must be set to true if filter_spec_list is being passed */
 	uint32_t filter_spec_list_len;
@@ -1308,8 +1350,9 @@ struct ipa_config_req_msg_v01 {
 	uint8_t dl_buf_size_valid;
 	/* Must be set to true if dl_buf_size is being passed */
 	uint32_t dl_buf_size;
-	/*  Informs the remote driver about the single xDCI buffer size.
-		This is applicable only in GSI mode(in Bytes).\n */
+	/* Informs the remote driver about the single xDCI buffer size.
+	* This is applicable only in GSI mode(in Bytes).\n
+	*/
 };  /* Message */
 
 /* Response Message; Notifies the remote driver of the configuration
@@ -1570,34 +1613,32 @@ struct ipa_install_fltr_rule_req_ex_msg_v01 {
 	struct ipa_filter_spec_ex_type_v01
 		filter_spec_ex_list[QMI_IPA_MAX_FILTERS_EX_V01];
 	/* List of filter specifications of filters that must be installed in
-	the IPAv3.x hardware.
-	The driver installing these rules must do so in the same order as
-	specified in this list.
-	*/
+	 * the IPAv3.x hardware.
+	 * The driver installing these rules must do so in the same order as
+	 * specified in this list.
+	 */
 
 	/* Optional */
 	/* Pipe Index to Install Rule */
 	uint8_t source_pipe_index_valid;
 	uint32_t source_pipe_index;
 	/* Pipe index to install the filter rule.
-	The requester may not always know the pipe indices. If not specified,
-	the receiver must install this rule on all pipes that it controls,
-	through which data may be fed into the IPA.
-	*/
+	 * The requester may not always know the pipe indices. If not specified,
+	 * the receiver must install this rule on all pipes that it controls,
+	 * through which data may be fed into the IPA.
+	 */
 
 	/* Optional */
 	/* Total Number of IPv4 Filters in the Filter Spec List */
 	uint8_t num_ipv4_filters_valid;
 	uint32_t num_ipv4_filters;
-	/* Number of IPv4 rules included in the filter specification list.
-	*/
+	/* Number of IPv4 rules included in the filter specification list. */
 
 	/* Optional */
 	/* Total Number of IPv6 Filters in the Filter Spec List */
 	uint8_t num_ipv6_filters_valid;
 	uint32_t num_ipv6_filters;
-	/* Number of IPv6 rules included in the filter specification list.
-	*/
+	/* Number of IPv6 rules included in the filter specification list. */
 
 	/* Optional */
 	/* List of XLAT Filter Indices in the Filter Spec List */
@@ -1605,10 +1646,10 @@ struct ipa_install_fltr_rule_req_ex_msg_v01 {
 	uint32_t xlat_filter_indices_list_len;
 	uint32_t xlat_filter_indices_list[QMI_IPA_MAX_FILTERS_EX_V01];
 	/* List of XLAT filter indices.
-	Filter rules at specified indices must be modified by the
-	receiver if the PDN is XLAT before installing them on the associated
-	IPA consumer pipe.
-	*/
+	 * Filter rules at specified indices must be modified by the
+	 * receiver if the PDN is XLAT before installing them on the associated
+	 * IPA consumer pipe.
+	 */
 };  /* Message */
 
 /* Response Message; Requests installation of filtering rules in the hardware
@@ -1619,13 +1660,13 @@ struct ipa_install_fltr_rule_resp_ex_msg_v01 {
 	/* Result Code */
 	struct ipa_qmi_response_type_v01 resp;
 	/* Standard response type.
-	Standard response type. Contains the following data members:
-	- qmi_result_type -- QMI_RESULT_SUCCESS or QMI_RESULT_FAILURE
-	- qmi_error_type  -- Error code. Possible error code values are
-						 described in the error codes
-						 section of each message
-						 definition.
-	*/
+	 * Standard response type. Contains the following data members:
+	 * - qmi_result_type -- QMI_RESULT_SUCCESS or QMI_RESULT_FAILURE
+	 * - qmi_error_type  -- Error code. Possible error code values are
+	 *					 described in the error codes
+	 *					 section of each message
+	 *					 definition.
+	 */
 
 	/* Optional */
 	/* Rule ID List */
@@ -1633,9 +1674,9 @@ struct ipa_install_fltr_rule_resp_ex_msg_v01 {
 	uint32_t rule_id_len;
 	uint32_t rule_id[QMI_IPA_MAX_FILTERS_EX_V01];
 	/* List of rule IDs returned to the control point.
-	Any further reference to the rule is done using the filter rule ID
-	specified in this list.
-	*/
+	 * Any further reference to the rule is done using the filter rule ID
+	 * specified in this list.
+	 */
 };  /* Message */
 
 /*
@@ -1860,7 +1901,7 @@ struct ipa_configure_ul_firewall_rules_resp_msg_v01 {
 	 * qmi_result_type -- QMI_RESULT_SUCCESS or QMI_RESULT_FAILURE
 	 * qmi_error_type  -- Error code. Possible error code values are
 	 * described in the error codes section of each message definition.
-    */
+	 */
 };  /* Message */
 
 enum ipa_ul_firewall_status_enum_v01 {
@@ -1868,10 +1909,12 @@ enum ipa_ul_firewall_status_enum_v01 {
 	/* To force a 32 bit signed enum.  Do not change or use*/
 	QMI_IPA_UL_FIREWALL_STATUS_SUCCESS_V01 = 0,
 	/* Indicates that the uplink firewall rules
-	are configured successfully.*/
+	 * are configured successfully.
+	 */
 	QMI_IPA_UL_FIREWALL_STATUS_FAILURE_V01 = 1,
 	/* Indicates that the uplink firewall rules
-	are not configured successfully.*/
+	 * are not configured successfully.
+	 */
 	IPA_UL_FIREWALL_STATUS_ENUM_MAX_ENUM_VAL_V01 = 2147483647
 	/* To force a 32 bit signed enum.  Do not change or use*/
 };
@@ -1886,11 +1929,11 @@ struct ipa_ul_firewall_config_result_type_v01 {
 
 	uint32_t mux_id;
 	/*
-	* QMAP Mux ID. As a part of the QMAP protocol,
-	* several data calls may be multiplexed over the same physical
-	* transport channel. This identifier is used to identify one
-	* such data call. The maximum value for this identifier is 255.
-	*/
+	 * QMAP Mux ID. As a part of the QMAP protocol,
+	 * several data calls may be multiplexed over the same physical
+	 * transport channel. This identifier is used to identify one
+	 * such data call. The maximum value for this identifier is 255.
+	 */
 };
 
 /*
@@ -1945,7 +1988,7 @@ struct ipa_configure_ul_firewall_rules_ind_msg_v01 {
 #define QMI_IPA_INSTALL_UL_FIREWALL_RULES_IND_V01 0x003A
 
 /* add for max length*/
-#define QMI_IPA_INIT_MODEM_DRIVER_REQ_MAX_MSG_LEN_V01 134
+#define QMI_IPA_INIT_MODEM_DRIVER_REQ_MAX_MSG_LEN_V01 162
 #define QMI_IPA_INIT_MODEM_DRIVER_RESP_MAX_MSG_LEN_V01 25
 #define QMI_IPA_INDICATION_REGISTER_REQ_MAX_MSG_LEN_V01 8
 #define QMI_IPA_INDICATION_REGISTER_RESP_MAX_MSG_LEN_V01 7

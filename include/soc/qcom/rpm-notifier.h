@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -55,7 +55,7 @@ void msm_rpm_exit_sleep(void);
 
 /**
  * msm_rpm_waiting_for_ack - Indicate if there is RPM message
- *				pending acknowledgement.
+ *				pending acknowledgment.
  * returns true for pending messages and false otherwise
  */
 bool msm_rpm_waiting_for_ack(void);

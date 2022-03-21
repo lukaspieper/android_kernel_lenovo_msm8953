@@ -38,6 +38,7 @@
 #include <linux/syscalls.h>
 #include <linux/proc_ns.h>
 #include <linux/proc_fs.h>
+#include <linux/anon_inodes.h>
 
 #define pid_hashfn(nr, ns)	\
 	hash_long((unsigned long)nr + (unsigned long)ns, pidhash_shift)
@@ -79,7 +80,10 @@ struct pid_namespace init_pid_ns = {
 	.level = 0,
 	.child_reaper = &init_task,
 	.user_ns = &init_user_ns,
-	.proc_inum = PROC_PID_INIT_INO,
+	.ns.inum = PROC_PID_INIT_INO,
+#ifdef CONFIG_PID_NS
+	.ns.ops = &pidns_operations,
+#endif
 };
 EXPORT_SYMBOL_GPL(init_pid_ns);
 
@@ -179,7 +183,7 @@ static int alloc_pidmap(struct pid_namespace *pid_ns)
 			spin_unlock_irq(&pidmap_lock);
 			kfree(page);
 			if (unlikely(!map->page))
-				break;
+				return -ENOMEM;
 		}
 		if (likely(atomic_read(&map->nr_free))) {
 			for ( ; ; ) {
@@ -207,7 +211,7 @@ static int alloc_pidmap(struct pid_namespace *pid_ns)
 		}
 		pid = mk_pid(pid_ns, map, offset);
 	}
-	return -1;
+	return -EAGAIN;
 }
 
 int next_pidmap(struct pid_namespace *pid_ns, unsigned int last)
@@ -298,17 +302,20 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 	int i, nr;
 	struct pid_namespace *tmp;
 	struct upid *upid;
+	int retval = -ENOMEM;
 
 	pid = kmem_cache_alloc(ns->pid_cachep, GFP_KERNEL);
 	if (!pid)
-		goto out;
+		return ERR_PTR(retval);
 
 	tmp = ns;
 	pid->level = ns->level;
 	for (i = ns->level; i >= 0; i--) {
 		nr = alloc_pidmap(tmp);
-		if (nr < 0)
+		if (nr < 0) {
+			retval = nr;
 			goto out_free;
+		}
 
 		pid->numbers[i].nr = nr;
 		pid->numbers[i].ns = tmp;
@@ -327,6 +334,8 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 	for (type = 0; type < PIDTYPE_MAX; ++type)
 		INIT_HLIST_HEAD(&pid->tasks[type]);
 
+	init_waitqueue_head(&pid->wait_pidfd);
+
 	upid = pid->numbers + ns->level;
 	spin_lock_irq(&pidmap_lock);
 	if (!(ns->nr_hashed & PIDNS_HASH_ADDING))
@@ -338,7 +347,6 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 	}
 	spin_unlock_irq(&pidmap_lock);
 
-out:
 	return pid;
 
 out_unlock:
@@ -350,8 +358,7 @@ out_free:
 		free_pidmap(pid->numbers + i);
 
 	kmem_cache_free(ns->pid_cachep, pid);
-	pid = NULL;
-	goto out;
+	return ERR_PTR(retval);
 }
 
 void disable_pid_allocation(struct pid_namespace *ns)
@@ -449,9 +456,8 @@ EXPORT_SYMBOL(pid_task);
  */
 struct task_struct *find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
 {
-	rcu_lockdep_assert(rcu_read_lock_held(),
-			   "find_task_by_pid_ns() needs rcu_read_lock()"
-			   " protection");
+	RCU_LOCKDEP_WARN(!rcu_read_lock_held(),
+			 "find_task_by_pid_ns() needs rcu_read_lock() protection");
 	return pid_task(find_pid_ns(nr, ns), PIDTYPE_PID);
 }
 
@@ -466,7 +472,7 @@ struct pid *get_task_pid(struct task_struct *task, enum pid_type type)
 	rcu_read_lock();
 	if (type != PIDTYPE_PID)
 		task = task->group_leader;
-	pid = get_pid(task->pids[type].pid);
+	pid = get_pid(rcu_dereference(task->pids[type].pid));
 	rcu_read_unlock();
 	return pid;
 }
@@ -530,7 +536,7 @@ pid_t __task_pid_nr_ns(struct task_struct *task, enum pid_type type,
 				type = PIDTYPE_PID;
 			task = task->group_leader;
 		}
-		nr = pid_nr_ns(task->pids[type].pid, ns);
+		nr = pid_nr_ns(rcu_dereference(task->pids[type].pid), ns);
 	}
 	rcu_read_unlock();
 
@@ -563,6 +569,76 @@ struct pid *find_ge_pid(int nr, struct pid_namespace *ns)
 	return pid;
 }
 
+/**
+ * pidfd_create() - Create a new pid file descriptor.
+ *
+ * @pid:  struct pid that the pidfd will reference
+ *
+ * This creates a new pid file descriptor with the O_CLOEXEC flag set.
+ *
+ * Note, that this function can only be called after the fd table has
+ * been unshared to avoid leaking the pidfd to the new process.
+ *
+ * Return: On success, a cloexec pidfd is returned.
+ *         On error, a negative errno number will be returned.
+ */
+static int pidfd_create(struct pid *pid)
+{
+	int fd;
+
+	fd = anon_inode_getfd("[pidfd]", &pidfd_fops, get_pid(pid),
+			      O_RDWR | O_CLOEXEC);
+	if (fd < 0)
+		put_pid(pid);
+
+	return fd;
+}
+
+/**
+ * pidfd_open() - Open new pid file descriptor.
+ *
+ * @pid:   pid for which to retrieve a pidfd
+ * @flags: flags to pass
+ *
+ * This creates a new pid file descriptor with the O_CLOEXEC flag set for
+ * the process identified by @pid. Currently, the process identified by
+ * @pid must be a thread-group leader. This restriction currently exists
+ * for all aspects of pidfds including pidfd creation (CLONE_PIDFD cannot
+ * be used with CLONE_THREAD) and pidfd polling (only supports thread group
+ * leaders).
+ *
+ * Return: On success, a cloexec pidfd is returned.
+ *         On error, a negative errno number will be returned.
+ */
+SYSCALL_DEFINE2(pidfd_open, pid_t, pid, unsigned int, flags)
+{
+	int fd, ret;
+	struct pid *p;
+	struct task_struct *tsk;
+
+	if (flags)
+		return -EINVAL;
+
+	if (pid <= 0)
+		return -EINVAL;
+
+	p = find_get_pid(pid);
+	if (!p)
+		return -ESRCH;
+
+	ret = 0;
+	rcu_read_lock();
+	tsk = pid_task(p, PIDTYPE_PID);
+	/* Check that pid belongs to a group leader task */
+	if (!tsk || !thread_group_leader(tsk))
+		ret = -EINVAL;
+	rcu_read_unlock();
+
+	fd = ret ?: pidfd_create(p);
+	put_pid(p);
+	return fd;
+}
+
 /*
  * The pid hash table is scaled according to the amount of memory in the
  * machine.  From a minimum of 16 slots up to 4096 slots at one gigabyte or
@@ -584,7 +660,7 @@ void __init pidhash_init(void)
 
 void __init pidmap_init(void)
 {
-	/* Veryify no one has done anything silly */
+	/* Verify no one has done anything silly: */
 	BUILD_BUG_ON(PID_MAX_LIMIT >= PIDNS_HASH_ADDING);
 
 	/* bump default and minimum pid_max based on number of cpus */
@@ -600,5 +676,5 @@ void __init pidmap_init(void)
 	atomic_dec(&init_pid_ns.pidmap[0].nr_free);
 
 	init_pid_ns.pid_cachep = KMEM_CACHE(pid,
-			SLAB_HWCACHE_ALIGN | SLAB_PANIC);
+			SLAB_HWCACHE_ALIGN | SLAB_PANIC | SLAB_ACCOUNT);
 }

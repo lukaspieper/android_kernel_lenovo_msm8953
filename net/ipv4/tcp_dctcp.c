@@ -55,7 +55,6 @@ struct dctcp {
 	u32 dctcp_alpha;
 	u32 next_seq;
 	u32 ce_state;
-	u32 delayed_ack_reserved;
 	u32 loss_cwnd;
 };
 
@@ -66,11 +65,6 @@ MODULE_PARM_DESC(dctcp_shift_g, "parameter g for updating dctcp_alpha");
 static unsigned int dctcp_alpha_on_init __read_mostly = DCTCP_MAX_ALPHA;
 module_param(dctcp_alpha_on_init, uint, 0644);
 MODULE_PARM_DESC(dctcp_alpha_on_init, "parameter for initial alpha value");
-
-static unsigned int dctcp_clamp_alpha_on_loss __read_mostly;
-module_param(dctcp_clamp_alpha_on_loss, uint, 0644);
-MODULE_PARM_DESC(dctcp_clamp_alpha_on_loss,
-		 "parameter for clamping alpha on loss");
 
 static struct tcp_congestion_ops dctcp_reno;
 
@@ -96,7 +90,6 @@ static void dctcp_init(struct sock *sk)
 
 		ca->dctcp_alpha = min(dctcp_alpha_on_init, DCTCP_MAX_ALPHA);
 
-		ca->delayed_ack_reserved = 0;
 		ca->loss_cwnd = 0;
 		ca->ce_state = 0;
 
@@ -189,58 +182,47 @@ static void dctcp_update_alpha(struct sock *sk, u32 flags)
 
 	/* Expired RTT */
 	if (!before(tp->snd_una, ca->next_seq)) {
-		/* For avoiding denominator == 1. */
-		if (ca->acked_bytes_total == 0)
-			ca->acked_bytes_total = 1;
+		u64 bytes_ecn = ca->acked_bytes_ecn;
+		u32 alpha = ca->dctcp_alpha;
 
 		/* alpha = (1 - g) * alpha + g * F */
-		ca->dctcp_alpha = ca->dctcp_alpha -
-				  (ca->dctcp_alpha >> dctcp_shift_g) +
-				  (ca->acked_bytes_ecn << (10U - dctcp_shift_g)) /
-				  ca->acked_bytes_total;
 
-		if (ca->dctcp_alpha > DCTCP_MAX_ALPHA)
-			/* Clamp dctcp_alpha to max. */
-			ca->dctcp_alpha = DCTCP_MAX_ALPHA;
+		alpha -= min_not_zero(alpha, alpha >> dctcp_shift_g);
+		if (bytes_ecn) {
+			/* If dctcp_shift_g == 1, a 32bit value would overflow
+			 * after 8 Mbytes.
+			 */
+			bytes_ecn <<= (10 - dctcp_shift_g);
+			do_div(bytes_ecn, max(1U, ca->acked_bytes_total));
 
+			alpha = min(alpha + (u32)bytes_ecn, DCTCP_MAX_ALPHA);
+		}
+		/* dctcp_alpha can be read from dctcp_get_info() without
+		 * synchro, so we ask compiler to not use dctcp_alpha
+		 * as a temporary variable in prior operations.
+		 */
+		WRITE_ONCE(ca->dctcp_alpha, alpha);
 		dctcp_reset(tp, ca);
 	}
 }
 
-static void dctcp_state(struct sock *sk, u8 new_state)
-{
-	if (dctcp_clamp_alpha_on_loss && new_state == TCP_CA_Loss) {
-		struct dctcp *ca = inet_csk_ca(sk);
-
-		/* If this extension is enabled, we clamp dctcp_alpha to
-		 * max on packet loss; the motivation is that dctcp_alpha
-		 * is an indicator to the extend of congestion and packet
-		 * loss is an indicator of extreme congestion; setting
-		 * this in practice turned out to be beneficial, and
-		 * effectively assumes total congestion which reduces the
-		 * window by half.
-		 */
-		ca->dctcp_alpha = DCTCP_MAX_ALPHA;
-	}
-}
-
-static void dctcp_update_ack_reserved(struct sock *sk, enum tcp_ca_event ev)
+static void dctcp_react_to_loss(struct sock *sk)
 {
 	struct dctcp *ca = inet_csk_ca(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
 
-	switch (ev) {
-	case CA_EVENT_DELAYED_ACK:
-		if (!ca->delayed_ack_reserved)
-			ca->delayed_ack_reserved = 1;
-		break;
-	case CA_EVENT_NON_DELAYED_ACK:
-		if (ca->delayed_ack_reserved)
-			ca->delayed_ack_reserved = 0;
-		break;
-	default:
-		/* Don't care for the rest. */
-		break;
-	}
+	ca->loss_cwnd = tp->snd_cwnd;
+	tp->snd_ssthresh = max(tp->snd_cwnd >> 1U, 2U);
+}
+
+static void dctcp_state(struct sock *sk, u8 new_state)
+{
+	if (new_state == TCP_CA_Recovery &&
+	    new_state != inet_csk(sk)->icsk_ca_state)
+		dctcp_react_to_loss(sk);
+	/* We handle RTO in dctcp_cwnd_event to ensure that we perform only
+	 * one loss-adjustment per RTT.
+	 */
 }
 
 static void dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
@@ -252,9 +234,8 @@ static void dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 	case CA_EVENT_ECN_NO_CE:
 		dctcp_ce_state_1_to_0(sk);
 		break;
-	case CA_EVENT_DELAYED_ACK:
-	case CA_EVENT_NON_DELAYED_ACK:
-		dctcp_update_ack_reserved(sk, ev);
+	case CA_EVENT_LOSS:
+		dctcp_react_to_loss(sk);
 		break;
 	default:
 		/* Don't care for the rest. */
@@ -262,7 +243,8 @@ static void dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 	}
 }
 
-static void dctcp_get_info(struct sock *sk, u32 ext, struct sk_buff *skb)
+static size_t dctcp_get_info(struct sock *sk, u32 ext, int *attr,
+			     union tcp_cc_info *info)
 {
 	const struct dctcp *ca = inet_csk_ca(sk);
 
@@ -271,19 +253,19 @@ static void dctcp_get_info(struct sock *sk, u32 ext, struct sk_buff *skb)
 	 */
 	if (ext & (1 << (INET_DIAG_DCTCPINFO - 1)) ||
 	    ext & (1 << (INET_DIAG_VEGASINFO - 1))) {
-		struct tcp_dctcp_info info;
-
-		memset(&info, 0, sizeof(info));
+		memset(&info->dctcp, 0, sizeof(info->dctcp));
 		if (inet_csk(sk)->icsk_ca_ops != &dctcp_reno) {
-			info.dctcp_enabled = 1;
-			info.dctcp_ce_state = (u16) ca->ce_state;
-			info.dctcp_alpha = ca->dctcp_alpha;
-			info.dctcp_ab_ecn = ca->acked_bytes_ecn;
-			info.dctcp_ab_tot = ca->acked_bytes_total;
+			info->dctcp.dctcp_enabled = 1;
+			info->dctcp.dctcp_ce_state = (u16) ca->ce_state;
+			info->dctcp.dctcp_alpha = ca->dctcp_alpha;
+			info->dctcp.dctcp_ab_ecn = ca->acked_bytes_ecn;
+			info->dctcp.dctcp_ab_tot = ca->acked_bytes_total;
 		}
 
-		nla_put(skb, INET_DIAG_DCTCPINFO, sizeof(info), &info);
+		*attr = INET_DIAG_DCTCPINFO;
+		return sizeof(info->dctcp);
 	}
+	return 0;
 }
 
 static u32 dctcp_cwnd_undo(struct sock *sk)

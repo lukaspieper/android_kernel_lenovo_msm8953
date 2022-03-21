@@ -3,7 +3,6 @@
  *
  * Copyright (C) 2001 Deep Blue Solutions Ltd.
  * Copyright (C) 2012 ARM Ltd.
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -18,46 +17,13 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/errno.h>
 #include <linux/linkage.h>
 #include <linux/init.h>
 #include <asm/assembler.h>
 #include <asm/cpufeature.h>
 #include <asm/alternative.h>
 #include <asm/uaccess.h>
-
-/*
- *     flush_dcache_louis()
- *
- *     Flush the D-cache up to the Level of Unification Inner Shareable
- *
- *     Corrupted registers: x0-x7, x9-x11
- */
-
-ENTRY(flush_dcache_louis)
-	dsb	sy		// ensure ordering with previous memory accesses
-	mrs	x0, clidr_el1	// read clidr
-	and	x3, x0, #(7 << 21)	// extract LoUIS from clidr
-	lsr	x3, x3, #20	// x3 = LoUIS * 2
-	cbz	x3, done	// if LoUIS is 0, then no need to clean
-	mov	x10, #0		// start clean at cache level 0
-	b	loop1		// start flushing cache levels
-done:
-	ret
-ENDPROC(flush_dcache_louis)
-
- /*
- *     flush_kern_cache_louis(void)
- *
- *     Flush the data cache up to Level of Unification Inner Shareable.
- *     Invalidate the I-cache to the point of unification.
- */
-ENTRY(flush_cache_louis)
-	mov	x12, lr
-	bl	flush_dcache_louis
-	mov	x0, #0
-	ic	ialluis				// I+BTB cache invalidate
-	ret x12
-ENDPROC(flush_cache_louis)
 
 /*
  *	__flush_dcache_all()
@@ -120,7 +86,7 @@ ENDPROC(__flush_dcache_all)
  *
  *	Flush the entire cache system.  The data cache flush is now achieved
  *	using atomic clean / invalidates working outwards from L1 cache. This
- *	is done using Set/Way based cache maintainance instructions.  The
+ *	is done using Set/Way based cache maintenance instructions.  The
  *	instruction cache can still be invalidated back to the point of
  *	unification in a single instruction.
  */
@@ -131,8 +97,6 @@ ENTRY(flush_cache_all)
 	ic	ialluis				// I+BTB cache invalidate
 	ret	x12
 ENDPROC(flush_cache_all)
-
-
 
 /*
  *	flush_icache_range(start,end)
@@ -163,7 +127,7 @@ ENTRY(__flush_cache_user_range)
 	sub	x3, x2, #1
 	bic	x4, x0, x3
 1:
-USER(9f, dc	cvau, x4	)		// clean D line to PoU
+user_alt 9f, "dc cvau, x4",  "dc civac, x4",  ARM64_WORKAROUND_CLEAN_CACHE
 	add	x4, x4, x2
 	cmp	x4, x1
 	b.lo	1b
@@ -177,35 +141,54 @@ USER(9f, ic	ivau, x4	)		// invalidate I line PoU
 	add	x4, x4, x2
 	cmp	x4, x1
 	b.lo	1b
-9:						// ignore any faulting cache operation
 	dsb	ish
 	isb
+	mov	x0, #0
+1:
 	uaccess_ttbr0_disable x1, x2
 	ret
+9:
+	mov	x0, #-EFAULT
+	b	1b
 ENDPROC(flush_icache_range)
 ENDPROC(__flush_cache_user_range)
 
 /*
  *	__flush_dcache_area(kaddr, size)
  *
- *	Ensure that the data held in the page kaddr is written back to the
- *	page in question.
+ *	Ensure that any D-cache lines for the interval [kaddr, kaddr+size)
+ *	are cleaned and invalidated to the PoC.
  *
  *	- kaddr   - kernel address
  *	- size    - size in question
  */
 ENTRY(__flush_dcache_area)
-	dcache_line_size x2, x3
-	add	x1, x0, x1
-	sub	x3, x2, #1
-	bic	x0, x0, x3
-1:	dc	civac, x0			// clean & invalidate D line / unified line
-	add	x0, x0, x2
-	cmp	x0, x1
-	b.lo	1b
-	dsb	sy
+	dcache_by_line_op civac, sy, x0, x1, x2, x3
 	ret
 ENDPIPROC(__flush_dcache_area)
+
+/*
+ *	__clean_dcache_area_pou(kaddr, size)
+ *
+ * 	Ensure that any D-cache lines for the interval [kaddr, kaddr+size)
+ * 	are cleaned to the PoU.
+ *
+ *	- kaddr   - kernel address
+ *	- size    - size in question
+ */
+ENTRY(__clean_dcache_area_pou)
+	dcache_by_line_op cvau, ish, x0, x1, x2, x3
+	ret
+ENDPROC(__clean_dcache_area_pou)
+
+/*
+ *	__dma_inv_area(start, size)
+ *	- start   - virtual start address of region
+ *	- size    - size in question
+ */
+ENTRY(__dma_inv_area)
+	add	x1, x1, x0
+	/* FALLTHROUGH */
 
 /*
  *	__inval_cache_range(start, end)
@@ -213,14 +196,6 @@ ENDPIPROC(__flush_dcache_area)
  *	- end     - end address of region
  */
 ENTRY(__inval_cache_range)
-	/* FALLTHROUGH */
-
-/*
- *	__dma_inv_range(start, end)
- *	- start   - virtual start address of region
- *	- end     - virtual end address of region
- */
-ENTRY(__dma_inv_range)
 	dcache_line_size x2, x3
 	sub	x3, x2, #1
 	tst	x1, x3				// end cache line aligned?
@@ -239,46 +214,43 @@ ENTRY(__dma_inv_range)
 	dsb	sy
 	ret
 ENDPIPROC(__inval_cache_range)
-ENDPROC(__dma_inv_range)
+ENDPROC(__dma_inv_area)
 
 /*
- *	__dma_clean_range(start, end)
- *	- start   - virtual start address of region
- *	- end     - virtual end address of region
+ *	__clean_dcache_area_poc(kaddr, size)
+ *
+ * 	Ensure that any D-cache lines for the interval [kaddr, kaddr+size)
+ * 	are cleaned to the PoC.
+ *
+ *	- kaddr   - kernel address
+ *	- size    - size in question
  */
-ENTRY(__dma_clean_range)
-	dcache_line_size x2, x3
-	sub	x3, x2, #1
-	bic	x0, x0, x3
-1:
-alternative_if_not ARM64_WORKAROUND_CLEAN_CACHE
-	dc	cvac, x0
-alternative_else
-	dc	civac, x0
-alternative_endif
-	add	x0, x0, x2
-	cmp	x0, x1
-	b.lo	1b
-	dsb	sy
-	ret
-ENDPROC(__dma_clean_range)
+ENTRY(__clean_dcache_area_poc)
+	/* FALLTHROUGH */
 
 /*
- *	__dma_flush_range(start, end)
+ *	__dma_clean_area(start, size)
  *	- start   - virtual start address of region
- *	- end     - virtual end address of region
+ *	- size    - size in question
  */
-ENTRY(__dma_flush_range)
-	dcache_line_size x2, x3
-	sub	x3, x2, #1
-	bic	x0, x0, x3
-1:	dc	civac, x0			// clean & invalidate D / U line
-	add	x0, x0, x2
-	cmp	x0, x1
-	b.lo	1b
-	dsb	sy
+ENTRY(__dma_clean_area)
+	dcache_by_line_op cvac, sy, x0, x1, x2, x3
 	ret
-ENDPIPROC(__dma_flush_range)
+ENDPIPROC(__clean_dcache_area_poc)
+ENDPROC(__dma_clean_area)
+
+/*
+ *	__dma_flush_area(start, size)
+ *
+ *	clean & invalidate D / U line
+ *
+ *	- start   - virtual start address of region
+ *	- size    - size in question
+ */
+ENTRY(__dma_flush_area)
+	dcache_by_line_op civac, sy, x0, x1, x2, x3
+	ret
+ENDPIPROC(__dma_flush_area)
 
 /*
  *	__dma_map_area(start, size, dir)
@@ -287,10 +259,9 @@ ENDPIPROC(__dma_flush_range)
  *	- dir	- DMA direction
  */
 ENTRY(__dma_map_area)
-	add	x1, x1, x0
 	cmp	w2, #DMA_FROM_DEVICE
-	b.eq	__dma_inv_range
-	b	__dma_clean_range
+	b.eq	__dma_inv_area
+	b	__dma_clean_area
 ENDPIPROC(__dma_map_area)
 
 /*
@@ -300,8 +271,7 @@ ENDPIPROC(__dma_map_area)
  *	- dir	- DMA direction
  */
 ENTRY(__dma_unmap_area)
-	add	x1, x1, x0
 	cmp	w2, #DMA_TO_DEVICE
-	b.ne	__dma_inv_range
+	b.ne	__dma_inv_area
 	ret
 ENDPIPROC(__dma_unmap_area)

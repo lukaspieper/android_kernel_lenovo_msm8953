@@ -1,7 +1,11 @@
 #ifndef _NET_FLOW_DISSECTOR_H
 #define _NET_FLOW_DISSECTOR_H
 
+#include <linux/types.h>
+#include <linux/in6.h>
 #include <linux/siphash.h>
+#include <linux/string.h>
+#include <uapi/linux/if_ether.h>
 
 /**
  * struct flow_dissector_key_control:
@@ -9,8 +13,13 @@
  */
 struct flow_dissector_key_control {
 	u16	thoff;
-	u16	padding;
+	u16	addr_type;
+	u32	flags;
 };
+
+#define FLOW_DIS_IS_FRAGMENT	BIT(0)
+#define FLOW_DIS_FIRST_FRAG	BIT(1)
+#define FLOW_DIS_ENCAPSULATION	BIT(2)
 
 /**
  * struct flow_dissector_key_basic:
@@ -24,41 +33,111 @@ struct flow_dissector_key_basic {
 	u8	padding;
 };
 
+struct flow_dissector_key_tags {
+	u32	flow_label;
+};
+
+struct flow_dissector_key_vlan {
+	u16	vlan_id:12,
+		vlan_priority:3;
+	u16	padding;
+};
+
+struct flow_dissector_key_keyid {
+	__be32	keyid;
+};
+
 /**
- * struct flow_dissector_key_addrs:
- * @src: source ip address in case of IPv4
- *	 For IPv6 it contains 32bit hash of src address
- * @dst: destination ip address in case of IPv4
- *	 For IPv6 it contains 32bit hash of dst address
+ * struct flow_dissector_key_ipv4_addrs:
+ * @src: source ip address
+ * @dst: destination ip address
  */
-struct flow_dissector_key_addrs {
+struct flow_dissector_key_ipv4_addrs {
 	/* (src,dst) must be grouped, in the same way than in IP header */
 	__be32 src;
 	__be32 dst;
 };
 
 /**
+ * struct flow_dissector_key_ipv6_addrs:
+ * @src: source ip address
+ * @dst: destination ip address
+ */
+struct flow_dissector_key_ipv6_addrs {
+	/* (src,dst) must be grouped, in the same way than in IP header */
+	struct in6_addr src;
+	struct in6_addr dst;
+};
+
+/**
+ * struct flow_dissector_key_tipc_addrs:
+ * @srcnode: source node address
+ */
+struct flow_dissector_key_tipc_addrs {
+	__be32 srcnode;
+};
+
+/**
+ * struct flow_dissector_key_addrs:
+ * @v4addrs: IPv4 addresses
+ * @v6addrs: IPv6 addresses
+ */
+struct flow_dissector_key_addrs {
+	union {
+		struct flow_dissector_key_ipv4_addrs v4addrs;
+		struct flow_dissector_key_ipv6_addrs v6addrs;
+		struct flow_dissector_key_tipc_addrs tipcaddrs;
+	};
+};
+
+/**
  * flow_dissector_key_tp_ports:
  *	@ports: port numbers of Transport header
- *		port16[0]: src port number
- *		port16[1]: dst port number
+ *		src: source port number
+ *		dst: destination port number
  */
 struct flow_dissector_key_ports {
 	union {
 		__be32 ports;
-		__be16 port16[2];
+		struct {
+			__be16 src;
+			__be16 dst;
+		};
 	};
+};
+
+
+/**
+ * struct flow_dissector_key_eth_addrs:
+ * @src: source Ethernet address
+ * @dst: destination Ethernet address
+ */
+struct flow_dissector_key_eth_addrs {
+	/* (dst,src) must be grouped, in the same way than in ETH header */
+	unsigned char dst[ETH_ALEN];
+	unsigned char src[ETH_ALEN];
 };
 
 enum flow_dissector_key_id {
 	FLOW_DISSECTOR_KEY_CONTROL, /* struct flow_dissector_key_control */
 	FLOW_DISSECTOR_KEY_BASIC, /* struct flow_dissector_key_basic */
-	FLOW_DISSECTOR_KEY_IPV4_ADDRS, /* struct flow_dissector_key_addrs */
-	FLOW_DISSECTOR_KEY_IPV6_HASH_ADDRS, /* struct flow_dissector_key_addrs */
+	FLOW_DISSECTOR_KEY_IPV4_ADDRS, /* struct flow_dissector_key_ipv4_addrs */
+	FLOW_DISSECTOR_KEY_IPV6_ADDRS, /* struct flow_dissector_key_ipv6_addrs */
 	FLOW_DISSECTOR_KEY_PORTS, /* struct flow_dissector_key_ports */
+	FLOW_DISSECTOR_KEY_ETH_ADDRS, /* struct flow_dissector_key_eth_addrs */
+	FLOW_DISSECTOR_KEY_TIPC_ADDRS, /* struct flow_dissector_key_tipc_addrs */
+	FLOW_DISSECTOR_KEY_VLAN, /* struct flow_dissector_key_flow_vlan */
+	FLOW_DISSECTOR_KEY_FLOW_LABEL, /* struct flow_dissector_key_flow_tags */
+	FLOW_DISSECTOR_KEY_GRE_KEYID, /* struct flow_dissector_key_keyid */
+	FLOW_DISSECTOR_KEY_MPLS_ENTROPY, /* struct flow_dissector_key_keyid */
 
 	FLOW_DISSECTOR_KEY_MAX,
 };
+
+#define FLOW_DISSECTOR_F_PARSE_1ST_FRAG		BIT(0)
+#define FLOW_DISSECTOR_F_STOP_AT_L3		BIT(1)
+#define FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL	BIT(2)
+#define FLOW_DISSECTOR_F_STOP_AT_ENCAP		BIT(3)
 
 struct flow_dissector_key {
 	enum flow_dissector_key_id key_id;
@@ -71,27 +150,13 @@ struct flow_dissector {
 	unsigned short int offset[FLOW_DISSECTOR_KEY_MAX];
 };
 
-void skb_flow_dissector_init(struct flow_dissector *flow_dissector,
-			     const struct flow_dissector_key *key,
-			     unsigned int key_count);
-
-bool __skb_flow_dissect(const struct sk_buff *skb,
-			struct flow_dissector *flow_dissector,
-			void *target_container,
-			void *data, __be16 proto, int nhoff, int hlen);
-
-static inline bool skb_flow_dissect(const struct sk_buff *skb,
-				    struct flow_dissector *flow_dissector,
-				    void *target_container)
-{
-	return __skb_flow_dissect(skb, flow_dissector, target_container,
-				  NULL, 0, 0, 0);
-}
-
 struct flow_keys {
 	struct flow_dissector_key_control control;
 #define FLOW_KEYS_HASH_START_FIELD basic
 	struct flow_dissector_key_basic basic __aligned(SIPHASH_ALIGNMENT);
+	struct flow_dissector_key_tags tags;
+	struct flow_dissector_key_vlan vlan;
+	struct flow_dissector_key_keyid keyid;
 	struct flow_dissector_key_ports ports;
 	struct flow_dissector_key_addrs addrs;
 };
@@ -99,37 +164,53 @@ struct flow_keys {
 #define FLOW_KEYS_HASH_OFFSET		\
 	offsetof(struct flow_keys, FLOW_KEYS_HASH_START_FIELD)
 
+__be32 flow_get_u32_src(const struct flow_keys *flow);
+__be32 flow_get_u32_dst(const struct flow_keys *flow);
+
 extern struct flow_dissector flow_keys_dissector;
 extern struct flow_dissector flow_keys_buf_dissector;
 
-static inline bool skb_flow_dissect_flow_keys(const struct sk_buff *skb,
-					      struct flow_keys *flow)
-{
-	memset(flow, 0, sizeof(*flow));
-	return __skb_flow_dissect(skb, &flow_keys_dissector, flow,
-				  NULL, 0, 0, 0);
-}
+/* struct flow_keys_digest:
+ *
+ * This structure is used to hold a digest of the full flow keys. This is a
+ * larger "hash" of a flow to allow definitively matching specific flows where
+ * the 32 bit skb->hash is not large enough. The size is limited to 16 bytes so
+ * that it can by used in CB of skb (see sch_choke for an example).
+ */
+#define FLOW_KEYS_DIGEST_LEN	16
+struct flow_keys_digest {
+	u8	data[FLOW_KEYS_DIGEST_LEN];
+};
 
-static inline bool skb_flow_dissect_flow_keys_buf(struct flow_keys *flow,
-						  void *data, __be16 proto,
-						  int nhoff, int hlen)
-{
-	memset(flow, 0, sizeof(*flow));
-	return __skb_flow_dissect(NULL, &flow_keys_buf_dissector, flow,
-				  data, proto, nhoff, hlen);
-}
+void make_flow_keys_digest(struct flow_keys_digest *digest,
+			   const struct flow_keys *flow);
 
-__be32 __skb_flow_get_ports(const struct sk_buff *skb, int thoff, u8 ip_proto,
-			    void *data, int hlen_proto);
-
-static inline __be32 skb_flow_get_ports(const struct sk_buff *skb,
-					int thoff, u8 ip_proto)
+static inline bool flow_keys_have_l4(const struct flow_keys *keys)
 {
-	return __skb_flow_get_ports(skb, thoff, ip_proto, NULL, 0);
+	return (keys->ports.ports || keys->tags.flow_label);
 }
 
 u32 flow_hash_from_keys(struct flow_keys *keys);
 
-unsigned int flow_get_hlen(const unsigned char *data, unsigned int max_len,
-			   __be16 protocol);
+static inline bool dissector_uses_key(const struct flow_dissector *flow_dissector,
+				      enum flow_dissector_key_id key_id)
+{
+	return flow_dissector->used_keys & (1 << key_id);
+}
+
+static inline void *skb_flow_dissector_target(struct flow_dissector *flow_dissector,
+					      enum flow_dissector_key_id key_id,
+					      void *target_container)
+{
+	return ((char *)target_container) + flow_dissector->offset[key_id];
+}
+
+static inline void
+flow_dissector_init_keys(struct flow_dissector_key_control *key_control,
+			 struct flow_dissector_key_basic *key_basic)
+{
+	memset(key_control, 0, sizeof(*key_control));
+	memset(key_basic, 0, sizeof(*key_basic));
+}
+
 #endif

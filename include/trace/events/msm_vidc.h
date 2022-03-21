@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -308,6 +308,39 @@ DEFINE_EVENT(msm_smem_buffer_iommu_ops, msm_smem_buffer_iommu_op_end,
 		unsigned long buffer_size),
 
 	TP_ARGS(buffer_op, domain_num, partition_num, align, iova, buffer_size)
+);
+
+DECLARE_EVENT_CLASS(msm_vidc_perf,
+
+	TP_PROTO(const char *name, unsigned long value),
+
+	TP_ARGS(name, value),
+
+	TP_STRUCT__entry(
+		__field(const char *, name)
+		__field(unsigned long, value)
+	),
+
+	TP_fast_assign(
+		__entry->name = name;
+		__entry->value = value;
+	),
+
+	TP_printk("%s %lu", __entry->name, __entry->value)
+);
+
+DEFINE_EVENT(msm_vidc_perf, msm_vidc_perf_clock_scale,
+
+	TP_PROTO(const char *clock_name, unsigned long frequency),
+
+	TP_ARGS(clock_name, frequency)
+);
+
+DEFINE_EVENT(msm_vidc_perf, msm_vidc_perf_bus_vote,
+
+	TP_PROTO(const char *governor_mode, unsigned long ab),
+
+	TP_ARGS(governor_mode, ab)
 );
 
 #endif

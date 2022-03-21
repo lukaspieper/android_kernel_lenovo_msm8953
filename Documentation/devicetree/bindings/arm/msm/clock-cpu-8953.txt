@@ -1,4 +1,4 @@
-Qualcomm MSM8953 CPU clock tree
+Qualcomm Technologies MSM8953 CPU clock tree
 
 clock-cpu-8953 is a device that represents the MSM8953 CPU subystem clock
 tree. It lists the various power supplies that need to be scaled when the

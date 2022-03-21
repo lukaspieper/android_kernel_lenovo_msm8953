@@ -145,7 +145,8 @@ union IpaHwResetPipeCmdData_t {
 /**
  * union IpaHwmonitorHolbCmdData_t - Structure holding the parameters
  * for IPA_CPU_2_HW_CMD_UPDATE_HOLB_MONITORING command.
- * @monitorPipe : Indication whether to monitor the pipe. 0  Do not Monitor Pipe, 1  Monitor Pipe
+ * @monitorPipe : Indication whether to monitor the pipe. 0  Do not Monitor
+ *		  Pipe, 1  Monitor Pipe
  * @pipeNum : Pipe to be monitored/not monitored
  * @reserved_02_03 : Reserved
  *
@@ -247,9 +248,9 @@ static void ipa_log_evt_hdlr(void)
 			ipa_ctx->ctrl->ipa_reg_base_ofst +
 			IPA_SRAM_DIRECT_ACCESS_N_OFST_v2_0(0) +
 			ipa_ctx->smem_sz) {
-				IPAERR("uc_top 0x%x outside SRAM\n",
-					ipa_ctx->uc_ctx.uc_event_top_ofst);
-				goto bad_uc_top_ofst;
+			IPAERR("uc_top 0x%x outside SRAM\n",
+				ipa_ctx->uc_ctx.uc_event_top_ofst);
+			goto bad_uc_top_ofst;
 		}
 
 		ipa_ctx->uc_ctx.uc_event_top_mmio = ioremap(
@@ -270,10 +271,10 @@ static void ipa_log_evt_hdlr(void)
 
 		if (ipa_ctx->uc_ctx.uc_sram_mmio->eventParams !=
 			ipa_ctx->uc_ctx.uc_event_top_ofst) {
-				IPAERR("uc top ofst changed new=%u cur=%u\n",
-					ipa_ctx->uc_ctx.uc_sram_mmio->
-						eventParams,
-					ipa_ctx->uc_ctx.uc_event_top_ofst);
+			IPAERR("uc top ofst changed new=%u cur=%u\n",
+				ipa_ctx->uc_ctx.uc_sram_mmio->
+					eventParams,
+				ipa_ctx->uc_ctx.uc_event_top_ofst);
 		}
 	}
 
@@ -365,8 +366,8 @@ static void ipa_uc_event_handler(enum ipa_irq_type interrupt,
 		BUG();
 	} else if (ipa_ctx->uc_ctx.uc_sram_mmio->eventOp ==
 		IPA_HW_2_CPU_EVENT_LOG_INFO) {
-			IPADBG("uC evt log info ofst=0x%x\n",
-				ipa_ctx->uc_ctx.uc_sram_mmio->eventParams);
+		IPADBG("uC evt log info ofst=0x%x\n",
+			ipa_ctx->uc_ctx.uc_sram_mmio->eventParams);
 		ipa_log_evt_hdlr();
 	} else {
 		IPADBG("unsupported uC evt opcode=%u\n",
@@ -671,7 +672,6 @@ send_cmd:
 				 * assert to check why cmd send failed.
 				 */
 				ipa_assert();
-				return -EFAULT;
 			} else {
 				/* sleep for short period to flush IPA */
 				usleep_range(IPA_UC_WAIT_MIN_SLEEP,
@@ -790,8 +790,12 @@ int ipa_uc_monitor_holb(enum ipa_client_type ipa_client, bool enable)
 	int ep_idx;
 	int ret;
 
-	/* HOLB monitoring is applicable only to 2.6L. */
-	if (ipa_ctx->ipa_hw_type != IPA_HW_v2_6L) {
+	/*
+	 * HOLB monitoring is applicable to 2.6L.
+	 * And also could be enabled from dtsi node.
+	 */
+	if (ipa_ctx->ipa_hw_type != IPA_HW_v2_6L ||
+		!ipa_ctx->ipa_uc_monitor_holb) {
 		IPADBG("Not applicable on this target\n");
 		return 0;
 	}

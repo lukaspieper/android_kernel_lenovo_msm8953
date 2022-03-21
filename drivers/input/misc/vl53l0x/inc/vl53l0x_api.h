@@ -1,6 +1,6 @@
 /*
- *  vl53l0x_api.h - Linux kernel modules for STM VL53L0 FlightSense TOF
- *						 sensor
+ *  vl53l0x_api.h - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -592,8 +592,8 @@ VL_API int8_t VL_SetRangeFractionEnable(struct vl_data *Dev,
  *
  * @note This function Accesses the device
  *
- * @param   Dev               Device Handle
- * @param   pEnable           Output Parameter reporting the fraction enable state.
+ * @param   Dev       Device Handle
+ * @param   pEnable   Output Parameter reporting the fraction enable state.
  *
  * @return  VL_ERROR_NONE                   Success
  * @return  "Other error code"                  See ::int8_t

@@ -5,6 +5,7 @@
  *
  * Copyright (C) 2012 Alexandra Chin <alexandra.chin@tw.synaptics.com>
  * Copyright (C) 2012 Scott Lin <scott.lin@tw.synaptics.com>
+ * Copyright (C) 2018 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -665,49 +666,49 @@ static struct bin_attribute dev_attr_data = {
 
 static struct device_attribute attrs[] = {
 #ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
-	__ATTR(dorecovery, S_IWUSR | S_IWGRP,
+	__ATTR(dorecovery, 0220,
 			NULL,
 			fwu_sysfs_do_recovery_store),
-	__ATTR(doreflash, S_IWUSR | S_IWGRP,
+	__ATTR(doreflash, 0220,
 			NULL,
 			fwu_sysfs_do_reflash_store),
-	__ATTR(writeconfig, S_IWUSR | S_IWGRP,
+	__ATTR(writeconfig, 0220,
 			NULL,
 			fwu_sysfs_write_config_store),
-	__ATTR(readconfig, S_IWUSR | S_IWGRP,
+	__ATTR(readconfig, 0220,
 			NULL,
 			fwu_sysfs_read_config_store),
-	__ATTR(configarea, S_IWUSR | S_IWGRP,
+	__ATTR(configarea, 0220,
 			NULL,
 			fwu_sysfs_config_area_store),
-	__ATTR(imagename, S_IWUSR | S_IWGRP,
+	__ATTR(imagename, 0220,
 			NULL,
 			fwu_sysfs_image_name_store),
-	__ATTR(imagesize, S_IWUSR | S_IWGRP,
+	__ATTR(imagesize, 0220,
 			NULL,
 			fwu_sysfs_image_size_store),
-	__ATTR(blocksize, S_IRUGO,
+	__ATTR(blocksize, 0444,
 			fwu_sysfs_block_size_show,
 			NULL),
-	__ATTR(fwblockcount, S_IRUGO,
+	__ATTR(fwblockcount, 0444,
 			fwu_sysfs_firmware_block_count_show,
 			NULL),
-	__ATTR(configblockcount, S_IRUGO,
+	__ATTR(configblockcount, 0444,
 			fwu_sysfs_configuration_block_count_show,
 			NULL),
-	__ATTR(dispconfigblockcount, S_IRUGO,
+	__ATTR(dispconfigblockcount, 0444,
 			fwu_sysfs_disp_config_block_count_show,
 			NULL),
-	__ATTR(permconfigblockcount, S_IRUGO,
+	__ATTR(permconfigblockcount, 0444,
 			fwu_sysfs_perm_config_block_count_show,
 			NULL),
-	__ATTR(blconfigblockcount, S_IRUGO,
+	__ATTR(blconfigblockcount, 0444,
 			fwu_sysfs_bl_config_block_count_show,
 			NULL),
-	__ATTR(guestcodeblockcount, S_IRUGO,
+	__ATTR(guestcodeblockcount, 0444,
 			fwu_sysfs_guest_code_block_count_show,
 			NULL),
-	__ATTR(writeguestcode, S_IWUSR | S_IWGRP,
+	__ATTR(writeguestcode, 0220,
 			NULL,
 			fwu_sysfs_write_guest_code_store),
 #endif
@@ -1950,7 +1951,7 @@ static int fwu_write_f34_v7_blocks(unsigned char *block_ptr,
 			return retval;
 		}
 
-		retval = fwu_wait_for_idle(WRITE_WAIT_MS, false);
+		retval = fwu_wait_for_idle(WRITE_WAIT_MS, true);
 		if (retval < 0) {
 			dev_err(rmi4_data->pdev->dev.parent,
 					"%s: Failed to wait for idle status (%d blocks remaining)\n",
@@ -1960,6 +1961,8 @@ static int fwu_write_f34_v7_blocks(unsigned char *block_ptr,
 
 		block_ptr += (transfer * fwu->block_size);
 		remaining -= transfer;
+		dev_dbg(rmi4_data->pdev->dev.parent, "%s: remaining %d\n",
+					__func__, remaining);
 	} while (remaining);
 
 	return 0;
@@ -2009,7 +2012,7 @@ static int fwu_write_f34_v5v6_blocks(unsigned char *block_ptr,
 			return retval;
 		}
 
-		retval = fwu_wait_for_idle(WRITE_WAIT_MS, false);
+		retval = fwu_wait_for_idle(WRITE_WAIT_MS, true);
 		if (retval < 0) {
 			dev_err(rmi4_data->pdev->dev.parent,
 					"%s: Failed to wait for idle status (block %d)\n",
@@ -2018,6 +2021,8 @@ static int fwu_write_f34_v5v6_blocks(unsigned char *block_ptr,
 		}
 
 		block_ptr += fwu->block_size;
+		dev_dbg(rmi4_data->pdev->dev.parent, "%s: remaining %d\n",
+					__func__, block_cnt - blk);
 	}
 
 	return 0;
@@ -4256,6 +4261,28 @@ static void synaptics_rmi4_fwu_attn(struct synaptics_rmi4_data *rmi4_data,
 	return;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
+static int synaptics_create_fwu_bin_file(struct synaptics_rmi4_data *rmi4_data)
+{
+	return sysfs_create_bin_file(&rmi4_data->input_dev->dev.kobj,
+			&dev_attr_data);
+}
+
+static void synaptics_remove_fwu_bin_file(struct synaptics_rmi4_data *rmi4_data)
+{
+	sysfs_remove_bin_file(&rmi4_data->input_dev->dev.kobj, &dev_attr_data);
+}
+#else
+static int synaptics_create_fwu_bin_file(struct synaptics_rmi4_data *rmi4_data)
+{
+	return 0;
+}
+
+static void synaptics_remove_fwu_bin_file(struct synaptics_rmi4_data *rmi4_data)
+{
+}
+#endif
+
 static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 {
 	int retval;
@@ -4327,16 +4354,13 @@ static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 	fwu->do_lockdown = DO_LOCKDOWN;
 	fwu->initialized = true;
 
-#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
-	retval = sysfs_create_bin_file(&rmi4_data->input_dev->dev.kobj,
-			&dev_attr_data);
+	retval = synaptics_create_fwu_bin_file(rmi4_data);
 	if (retval < 0) {
 		dev_err(rmi4_data->pdev->dev.parent,
 				"%s: Failed to create sysfs bin file\n",
 				__func__);
 		goto exit_free_mem;
 	}
-#endif
 
 	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
 		retval = sysfs_create_file(&rmi4_data->input_dev->dev.kobj,
@@ -4365,9 +4389,7 @@ exit_remove_attrs:
 				&attrs[attr_count].attr);
 	}
 
-#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
-	sysfs_remove_bin_file(&rmi4_data->input_dev->dev.kobj, &dev_attr_data);
-#endif
+	synaptics_remove_fwu_bin_file(rmi4_data);
 
 exit_free_mem:
 	kfree(fwu->image_name);
@@ -4398,9 +4420,7 @@ static void synaptics_rmi4_fwu_remove(struct synaptics_rmi4_data *rmi4_data)
 				&attrs[attr_count].attr);
 	}
 
-#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
-	sysfs_remove_bin_file(&rmi4_data->input_dev->dev.kobj, &dev_attr_data);
-#endif
+	synaptics_remove_fwu_bin_file(rmi4_data);
 
 	kfree(fwu->read_config_buf);
 	kfree(fwu->image_name);

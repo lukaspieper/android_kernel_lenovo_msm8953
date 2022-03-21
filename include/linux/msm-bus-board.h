@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -155,6 +155,7 @@ int msm_bus_board_get_iid(int id);
 
 
 #define MSM_BUS_MASTER_HALT(u32haltmask, u32haltval, master) \
+	(\
 	MSM_BUS_SET_BITFIELD(u32haltmask, \
 		MSM_BUS_CLK_HALT_MASK<<MSM_BUS_MASTER_SHIFT((master),\
 		MSM_BUS_CLK_HALT_FIELDSIZE), \
@@ -165,8 +166,10 @@ int msm_bus_board_get_iid(int id);
 		MSM_BUS_CLK_HALT_FIELDSIZE), \
 		MSM_BUS_CLK_HALT<<MSM_BUS_MASTER_SHIFT((master),\
 		MSM_BUS_CLK_HALT_FIELDSIZE))\
+	)
 
 #define MSM_BUS_MASTER_UNHALT(u32haltmask, u32haltval, master) \
+	(\
 	MSM_BUS_SET_BITFIELD(u32haltmask, \
 		MSM_BUS_CLK_HALT_MASK<<MSM_BUS_MASTER_SHIFT((master),\
 		MSM_BUS_CLK_HALT_FIELDSIZE), \
@@ -177,6 +180,7 @@ int msm_bus_board_get_iid(int id);
 		MSM_BUS_CLK_HALT_FIELDSIZE), \
 		MSM_BUS_CLK_UNHALT<<MSM_BUS_MASTER_SHIFT((master),\
 		MSM_BUS_CLK_HALT_FIELDSIZE))\
+	)
 
 #define RPM_BUS_SLAVE_REQ	0x766c7362
 #define RPM_BUS_MASTER_REQ	0x73616d62

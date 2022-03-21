@@ -80,7 +80,7 @@ is stored in the table of contents will be compared to the size specified by the
 client.  This sanity check of the expected vs actual size is done to ensure that
 all users of a particular SMEM item agree on the size of the data to be
 exchanged under the assumption that if the users do not agree on the item size,
-then they will not be able to sucessfully communicate as one or more sides may
+then they will not be able to successfully communicate as one or more sides may
 view a corruption of the data stored in the SMEM item.  Assuming the sizes
 match, the virtual address corresponding to the base address stored in the table
 of contents for the item will be returned to the client.
@@ -160,13 +160,13 @@ struct smem_proc_comm {
 The version field of the smem_shared struct is an array of version entries
 specifying the SMEM protocol version of every supporting processor active in the
 system.  Each unsigned value in the array corresponds to one entry.  This
-provides a mechanism for ensuring protocol version compatability between
+provides a mechanism for ensuring protocol version compatibility between
 processors.  While the full table of assigned and reserved entries in the array
 is beyond the scope of this document, index 8 (smem_shared.version[8]) is
 reserved for any future use by Linux.  The bootloader always initializes it's
 entry (index 7, or smem_shared.version[7]) to the SMEM protocol version
 supported by the bootloader.  Checking the value of the bootloader's entry can
-be used as a sanity check to determine if the SMEM region was sucessfully
+be used as a sanity check to determine if the SMEM region was successfully
 initialized.
 
 The heap_info field of smem_shared contains basic information of the SMEM heap.
@@ -364,7 +364,7 @@ a different format and structure:
   |              |  |                          |   |
   | Uncached Page|  |       Unused Heap        |   |
   |              |  |         space to         |   v
-  |              |  |       page boundry       |
+  |              |  |       page boundary      |
   |              |  |                          |
   +--------------+  +--------------------------+<----------+ End of heap
                   . . .                      . . .
@@ -376,7 +376,7 @@ a different format and structure:
   |              |  |                          |
   |              |  |      Unused Heap         |
   |  Cached Page |  |        space to          |   ^
-  |              |  |      page boundry        |   |
+  |              |  |      page boundary       |   |
   |              |  +--------------------------+   |
   |              |  | Item Y Data              |   |
   +--------------+  |                          |   |

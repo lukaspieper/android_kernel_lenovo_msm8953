@@ -137,6 +137,7 @@ polling:
 	if ((dev->state & BAM_STATE_MTI) == 0) {
 		u32 mask = dev->pipe_active_mask;
 		enum sps_callback_case cb_case;
+
 		source = bam_check_irq_source(&dev->base, dev->props.ee,
 						mask, &cb_case);
 
@@ -195,6 +196,7 @@ polling:
 	if (dev->props.options & SPS_BAM_RES_CONFIRM) {
 		u32 mask = dev->pipe_active_mask;
 		enum sps_callback_case cb_case;
+
 		source = bam_check_irq_source(&dev->base, dev->props.ee,
 						mask, &cb_case);
 
@@ -236,6 +238,7 @@ static irqreturn_t bam_isr(int irq, void *ctxt)
 	if (dev->props.options & SPS_BAM_RES_CONFIRM) {
 		if (dev->props.callback) {
 			bool ready = false;
+
 			dev->props.callback(SPS_CALLBACK_BAM_RES_REQ, &ready);
 			if (ready) {
 				SPS_DBG1(dev,
@@ -274,7 +277,6 @@ int sps_bam_enable(struct sps_bam *dev)
 	int result;
 	int rc;
 	int MTIenabled;
-	unsigned long irq_arg = 0;
 
 	/* Is this BAM enabled? */
 	if ((dev->state & BAM_STATE_ENABLED))
@@ -285,9 +287,6 @@ int sps_bam_enable(struct sps_bam *dev)
 		SPS_ERR(dev, "sps:No local access to BAM %pa\n", BAM_ID(dev));
 		return SPS_ERROR;
 	}
-
-	if (dev->props.options & SPS_BAM_OPT_IRQ_NO_SUSPEND)
-		irq_arg = IRQF_NO_SUSPEND;
 
 	/* Set interrupt handling */
 	if ((dev->props.options & SPS_BAM_OPT_IRQ_DISABLED) != 0 ||
@@ -301,16 +300,14 @@ int sps_bam_enable(struct sps_bam *dev)
 			if (dev->props.options & SPS_BAM_RES_CONFIRM) {
 				result = request_irq(dev->props.irq,
 					(irq_handler_t) bam_isr,
-					(IRQF_TRIGGER_RISING | irq_arg),
-					"sps", dev);
+					IRQF_TRIGGER_RISING, "sps", dev);
 				SPS_DBG3(dev,
 					"sps:BAM %pa uses edge for IRQ# %d\n",
 					BAM_ID(dev), dev->props.irq);
 			} else {
 				result = request_irq(dev->props.irq,
 					(irq_handler_t) bam_isr,
-					(IRQF_TRIGGER_HIGH | irq_arg),
-					"sps", dev);
+					IRQF_TRIGGER_HIGH, "sps", dev);
 				SPS_DBG3(dev,
 					"sps:BAM %pa uses level for IRQ# %d\n",
 					BAM_ID(dev), dev->props.irq);
@@ -340,10 +337,10 @@ int sps_bam_enable(struct sps_bam *dev)
 					"sps:Fail to enable wakeup irq for BAM %pa IRQ %d\n",
 					BAM_ID(dev), dev->props.irq);
 				return SPS_ERROR;
-			} else
-				SPS_DBG3(dev,
-					"sps:Enable wakeup irq for BAM %pa IRQ %d\n",
-					BAM_ID(dev), dev->props.irq);
+			}
+			SPS_DBG3(dev,
+				"sps:Enable wakeup irq for BAM %pa IRQ %d\n",
+				BAM_ID(dev), dev->props.irq);
 		}
 	}
 
@@ -491,6 +488,7 @@ int sps_bam_enable(struct sps_bam *dev)
 			&& MTIenabled) {
 		u32 pipe_index;
 		u32 pipe_mask;
+
 		for (pipe_index = 0, pipe_mask = 1;
 		    pipe_index < dev->props.num_pipes;
 		    pipe_index++, pipe_mask <<= 1) {
@@ -1121,6 +1119,7 @@ int sps_bam_pipe_disconnect(struct sps_bam *dev, u32 pipe_index)
 			bam_pipe_exit(&dev->base, pipe_index, dev->props.ee);
 		if (pipe->sys.desc_cache != NULL) {
 			u32 size = pipe->num_descs * sizeof(void *);
+
 			if (pipe->desc_size + size <= PAGE_SIZE) {
 				if (dev->props.options & SPS_BAM_HOLD_MEM)
 					memset(pipe->sys.desc_cache, 0,
@@ -1523,6 +1522,7 @@ int sps_bam_pipe_transfer_one(struct sps_bam *dev,
 	/* Record user pointer value */
 	if (!pipe->sys.no_queue) {
 		u32 index = pipe->sys.desc_offset / sizeof(struct sps_iovec);
+
 		pipe->sys.user_ptrs[index] = user;
 #ifdef SPS_BAM_STATISTICS
 		if (user != NULL)
@@ -1854,6 +1854,7 @@ static void pipe_handler_eot(struct sps_bam *dev, struct sps_pipe *pipe)
 
 	if (producer && pipe->late_eot) {
 		struct sps_iovec *desc_end;
+
 		if (end_offset == 0)
 			desc_end = (struct sps_iovec *)(pipe->sys.desc_buf
 				+ pipe->desc_size - sizeof(struct sps_iovec));

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -67,7 +67,7 @@ struct pil_bg_data {
 	struct notifier_block reboot_blk;
 	struct subsys_desc subsys_desc;
 	struct subsys_device *subsys;
-	unsigned gpios[NUM_GPIOS];
+	unsigned int gpios[NUM_GPIOS];
 	int errfatal_irq;
 	int status_irq;
 	struct pil_desc desc;
@@ -271,6 +271,11 @@ static int bg_powerup(const struct subsys_desc *subsys)
 	struct pil_bg_data *bg_data = subsys_to_data(subsys);
 	int ret;
 
+	if (is_bg_running()) {
+		pr_debug("bg is already up\n");
+		return 0;
+	}
+
 	init_completion(&bg_data->err_ready);
 	if (!bg_data->qseecom_handle) {
 		ret = pil_load_bg_tzapp(bg_data);
@@ -294,7 +299,6 @@ static int bg_powerup(const struct subsys_desc *subsys)
 			__func__, bg_data->status_irq, ret);
 			return ret;
 	}
-	disable_irq(bg_data->status_irq);
 
 	/* Enable status and err fatal irqs */
 	ret = pil_boot(&bg_data->desc);
@@ -303,7 +307,6 @@ static int bg_powerup(const struct subsys_desc *subsys)
 			"%s: BG PIL Boot failed\n", __func__);
 		return ret;
 	}
-	enable_irq(bg_data->status_irq);
 	ret = wait_for_err_ready(bg_data);
 	if (ret) {
 		dev_err(bg_data->desc.dev,
@@ -346,20 +349,22 @@ static int bg_shutdown(const struct subsys_desc *subsys, bool force_stop)
  */
 static int bg_auth_metadata(struct pil_desc *pil,
 	const u8 *metadata, size_t size,
-	phys_addr_t addr, size_t sz)
+	phys_addr_t addr, void *sz)
 {
 	struct pil_bg_data *bg_data = desc_to_data(pil);
 	struct tzapp_bg_req bg_tz_req;
 	void *mdata_buf;
 	dma_addr_t mdata_phys;
-	DEFINE_DMA_ATTRS(attrs);
-	struct device dev = {NULL};
+	unsigned long attrs = 0;
+	struct device dev = {0};
 	int ret;
 
+	arch_setup_dma_ops(&dev, 0, 0, NULL, 0);
+
 	dev.coherent_dma_mask = DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
-	dma_set_attr(DMA_ATTR_STRONGLY_ORDERED, &attrs);
+	attrs |= DMA_ATTR_STRONGLY_ORDERED;
 	mdata_buf = dma_alloc_attrs(&dev, size,
-			&mdata_phys, GFP_KERNEL, &attrs);
+			&mdata_phys, GFP_KERNEL, attrs);
 
 	if (!mdata_buf) {
 		pr_err("BG_PIL: Allocation for metadata failed.\n");
@@ -383,7 +388,7 @@ static int bg_auth_metadata(struct pil_desc *pil,
 				__func__);
 		return bg_data->cmd_status;
 	}
-	dma_free_attrs(&dev, size, mdata_buf, mdata_phys, &attrs);
+	dma_free_attrs(&dev, size, mdata_buf, mdata_phys, attrs);
 	pr_debug("BG MDT Authenticated\n");
 	return 0;
 }
@@ -415,10 +420,14 @@ static int bg_get_version(const struct subsys_desc *subsys)
 	struct pil_desc desc = bg_data->desc;
 	struct tzapp_bg_req bg_tz_req;
 	int ret;
+	struct device dev = {NULL};
 
-	init_dma_attrs(&desc.attrs);
-	dma_set_attr(DMA_ATTR_SKIP_ZEROING, &desc.attrs);
-	dma_set_attr(DMA_ATTR_NO_KERNEL_MAPPING, &desc.attrs);
+	arch_setup_dma_ops(&dev, 0, 0, NULL, 0);
+
+	desc.attrs = 0;
+	desc.attrs |= DMA_ATTR_SKIP_ZEROING;
+	desc.attrs |= DMA_ATTR_STRONGLY_ORDERED;
+
 
 	bg_tz_req.tzapp_bg_cmd = BGPIL_GET_BG_VERSION;
 
@@ -489,13 +498,16 @@ static int bg_ramdump(int enable, const struct subsys_desc *subsys)
 	phys_addr_t start_addr;
 	void *region;
 	int ret;
+	struct device dev = {0};
 
-	init_dma_attrs(&desc.attrs);
-	dma_set_attr(DMA_ATTR_SKIP_ZEROING, &desc.attrs);
-	dma_set_attr(DMA_ATTR_NO_KERNEL_MAPPING, &desc.attrs);
+	arch_setup_dma_ops(&dev, 0, 0, NULL, 0);
+
+	desc.attrs = 0;
+	desc.attrs |= DMA_ATTR_SKIP_ZEROING;
+	desc.attrs |= DMA_ATTR_STRONGLY_ORDERED;
 
 	region = dma_alloc_attrs(desc.dev, BG_RAMDUMP_SZ,
-				&start_addr, GFP_KERNEL, &desc.attrs);
+				&start_addr, GFP_KERNEL, desc.attrs);
 
 	if (region == NULL) {
 		dev_dbg(desc.dev,
@@ -525,7 +537,7 @@ static int bg_ramdump(int enable, const struct subsys_desc *subsys)
 	do_ramdump(bg_data->ramdump_dev, ramdump_segments, 1);
 	kfree(ramdump_segments);
 	dma_free_attrs(desc.dev, BG_RAMDUMP_SZ, region,
-		       start_addr, &desc.attrs);
+		       start_addr, desc.attrs);
 	return 0;
 }
 
@@ -768,7 +780,6 @@ static int pil_bg_driver_probe(struct platform_device *pdev)
 		goto err_subsys;
 	}
 
-	bg_data->desc.subsys_dev = bg_data->subsys;
 	bg_data->reboot_blk.notifier_call = bg_app_reboot_notify;
 	register_reboot_notifier(&bg_data->reboot_blk);
 
@@ -798,7 +809,7 @@ static int pil_bg_driver_exit(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id pil_bg_match_table[] = {
+const struct of_device_id pil_bg_match_table[] = {
 	{.compatible = "qcom,pil-blackghost"},
 	{}
 };

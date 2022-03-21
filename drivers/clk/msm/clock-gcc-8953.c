@@ -39,6 +39,7 @@
 #include <dt-bindings/clock/msm-clocks-8953.h>
 
 #include "clock.h"
+#include "reset.h"
 
 enum {
 	GCC_BASE,
@@ -410,6 +411,27 @@ static struct clk_freq_tbl ftbl_gfx3d_clk_src_sdm450[] = {
 	F_END
 };
 
+static struct clk_freq_tbl ftbl_gfx3d_clk_src_sdm632[] = {
+	F_MM(  19200000, FIXED_CLK_SRC,                  xo,    1,    0,     0),
+	F_MM(  50000000, FIXED_CLK_SRC,  gpll0_main_div2_mm,    8,    0,     0),
+	F_MM(  80000000, FIXED_CLK_SRC,  gpll0_main_div2_mm,    5,    0,     0),
+	F_MM( 100000000, FIXED_CLK_SRC,  gpll0_main_div2_mm,    4,    0,     0),
+	F_MM( 133330000, FIXED_CLK_SRC,  gpll0_main_div2_mm,    3,    0,     0),
+	F_MM( 160000000, FIXED_CLK_SRC,  gpll0_main_div2_mm,  2.5,    0,     0),
+	F_MM( 200000000, FIXED_CLK_SRC,  gpll0_main_div2_mm,    2,    0,     0),
+	F_MM( 216000000, FIXED_CLK_SRC, gpll6_main_div2_gfx,  2.5,    0,     0),
+	F_MM( 266670000, FIXED_CLK_SRC,               gpll0,    3,    0,     0),
+	F_MM( 320000000, FIXED_CLK_SRC,               gpll0,  2.5,    0,     0),
+	F_MM( 400000000, FIXED_CLK_SRC,               gpll0,    2,    0,     0),
+	F_MM( 460800000, FIXED_CLK_SRC,       gpll4_out_aux,  2.5,    0,     0),
+	F_MM( 510000000,    1020000000,               gpll3,    1,    0,     0),
+	F_MM( 560000000,    1120000000,               gpll3,    1,    0,     0),
+	F_MM( 650000000,    1300000000,               gpll3,    1,    0,     0),
+	F_MM( 700000000,    1400000000,               gpll3,    1,    0,     0),
+	F_MM( 725000000,    1450000000,               gpll3,    1,    0,     0),
+
+	F_END
+};
 static struct rcg_clk gfx3d_clk_src = {
 	.cmd_rcgr_reg = GFX3D_CMD_RCGR,
 	.set_rate = set_rate_hid,
@@ -1177,7 +1199,6 @@ static struct rcg_clk camss_gp1_clk_src = {
 };
 
 static struct clk_freq_tbl ftbl_mclk0_clk_src[] = {
-	F(  12000000, gpll6_main_div2,    1,    2,    90),
 	F(  24000000, gpll6_main_div2,    1,    2,    45),
 	F(  33330000, gpll0_main_div2,   12,    0,     0),
 	F(  36610000, gpll6,		  1,    2,    59),
@@ -1200,7 +1221,6 @@ static struct rcg_clk mclk0_clk_src = {
 };
 
 static struct clk_freq_tbl ftbl_mclk1_clk_src[] = {
-	F(  12000000, gpll6_main_div2,    1,    2,    90),
 	F(  24000000, gpll6_main_div2,    1,    2,    45),
 	F(  33330000, gpll0_main_div2,   12,    0,     0),
 	F(  36610000, gpll6,		  1,    2,    59),
@@ -1223,7 +1243,6 @@ static struct rcg_clk mclk1_clk_src = {
 };
 
 static struct clk_freq_tbl ftbl_mclk2_clk_src[] = {
-	F(  12000000, gpll6_main_div2,    1,    2,    90),
 	F(  24000000, gpll6_main_div2,    1,    2,    45),
 	F(  33330000, gpll0_main_div2,   12,    0,     0),
 	F(  36610000, gpll6,		  1,    2,    59),
@@ -1246,7 +1265,6 @@ static struct rcg_clk mclk2_clk_src = {
 };
 
 static struct clk_freq_tbl ftbl_mclk3_clk_src[] = {
-	F(  12000000, gpll6_main_div2,    1,    2,    90),
 	F(  24000000, gpll6_main_div2,    1,    2,    45),
 	F(  33330000, gpll0_main_div2,   12,    0,     0),
 	F(  36610000, gpll6,		  1,    2,    59),
@@ -3706,6 +3724,15 @@ static struct clk_lookup msm_clocks_lookup[] = {
 	CLK_LIST(gcc_mdss_vsync_clk),
 };
 
+static const struct msm_reset_map gcc_8953_resets[] = {
+
+	[GCC_QUSB2_PHY_BCR] = { 0x4103C },
+	[GCC_USB3_PHY_BCR] = { 0x3F034 },
+	[GCC_USB3PHY_PHY_BCR] = { 0x3F03C },
+	[GCC_USB_30_BCR] = { 0x3F070 },
+	[GCC_CAMSS_MICRO_BCR] = {0x56008},
+
+};
 #define SPEED_BIN	7
 
 static void override_for_8953(struct platform_device *pdev)
@@ -3799,14 +3826,17 @@ static int msm_gcc_probe(struct platform_device *pdev)
 	clk_prepare_enable(&pcnoc_keepalive_a_clk.c);
 
 	clk_prepare_enable(&xo_a_clk_src.c);
+	msm_reset_controller_register(pdev, gcc_8953_resets,
+			ARRAY_SIZE(gcc_8953_resets), virt_bases[GCC_BASE]);
 
 	dev_info(&pdev->dev, "Registered GCC clocks\n");
 
 	return 0;
 }
 
-static struct of_device_id msm_clock_gcc_match_table[] = {
+static const struct of_device_id msm_clock_gcc_match_table[] = {
 	{ .compatible = "qcom,gcc-8953" },
+	{ .compatible = "qcom,gcc-sdm632" },
 	{},
 };
 
@@ -3854,8 +3884,9 @@ static int msm_clock_debug_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static struct of_device_id msm_clock_debug_match_table[] = {
+static const struct of_device_id msm_clock_debug_match_table[] = {
 	{ .compatible = "qcom,cc-debug-8953" },
+	{ .compatible = "qcom,cc-debug-sdm632" },
 	{}
 };
 
@@ -3966,8 +3997,9 @@ pclk1_fail:
 	return ret;
 }
 
-static struct of_device_id msm_clock_mdss_match_table[] = {
+static const struct of_device_id msm_clock_mdss_match_table[] = {
 	{ .compatible = "qcom,gcc-mdss-8953" },
+	{ .compatible = "qcom,gcc-mdss-sdm632" },
 	{}
 };
 
@@ -4057,7 +4089,16 @@ static int msm_gcc_gfx_probe(struct platform_device *pdev)
 	struct resource *res;
 	int ret;
 	u32 regval;
+	struct clk *xo_clk;
 	bool compat_bin = false;
+
+	/* Require the GCC-RPM-XO clock to be registered first */
+	xo_clk = devm_clk_get(&pdev->dev, "xo");
+	if (IS_ERR(xo_clk)) {
+		if (PTR_ERR(xo_clk) != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Unable to get xo clock\n");
+		return PTR_ERR(xo_clk);
+	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "cc_base");
 	if (!res) {
@@ -4084,6 +4125,11 @@ static int msm_gcc_gfx_probe(struct platform_device *pdev)
 	if (compat_bin)
 		gfx3d_clk_src.freq_tbl = ftbl_gfx3d_clk_src_sdm450;
 
+	compat_bin = of_device_is_compatible(pdev->dev.of_node,
+							"qcom,gcc-gfx-sdm632");
+	if (compat_bin)
+		gfx3d_clk_src.freq_tbl = ftbl_gfx3d_clk_src_sdm632;
+
 	ret = of_get_fmax_vdd_class(pdev, &gcc_oxili_gfx3d_clk.c,
 					"qcom,gfxfreq-corner");
 	if (ret) {
@@ -4104,9 +4150,10 @@ static int msm_gcc_gfx_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static struct of_device_id msm_clock_gfx_match_table[] = {
+static const struct of_device_id msm_clock_gfx_match_table[] = {
 	{ .compatible = "qcom,gcc-gfx-8953" },
 	{ .compatible = "qcom,gcc-gfx-sdm450" },
+	{ .compatible = "qcom,gcc-gfx-sdm632" },
 	{}
 };
 

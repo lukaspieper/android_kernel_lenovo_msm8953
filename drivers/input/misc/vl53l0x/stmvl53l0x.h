@@ -1,7 +1,8 @@
 /*
- *  stmvl53l0.h - Linux kernel modules for STM VL53L0 FlightSense TOF sensor
+ *  stmvl53l0x.h - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
- *  Copyright (C) 2016 STMicroelectronics Imaging Division
+ *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -33,6 +34,7 @@
 /* #define INT_POLLING_DELAY	20 */
 
 /* if don't want to have output from dbg, comment out #DEBUG macro */
+#define DEBUG
 #ifdef DEBUG
 #define dbg(fmt, ...)	\
 	printk(fmt, ##__VA_ARGS__)
@@ -50,6 +52,8 @@ enum init_mode_e {
 	NORMAL_MODE = 0,
 	OFFSETCALIB_MODE = 1,
 	XTALKCALIB_MODE = 2,
+	SPADCALIB_MODE = 3,
+	REFCALIB_MODE = 4,
 };
 
 enum parameter_name_e {
@@ -97,14 +101,12 @@ struct stmvl53l0x_parameter {
  */
 struct vl_data {
 
-	struct VL_DevData_t Data;	/* !<embed ST VL53L0 Dev data as
-								"dev_data" */
-	uint8_t   I2cDevAddr;	/*!< i2c device address user specific field
-							*/
-	uint8_t   comms_type;	/*!< Type of comms : VL_COMMS_I2C
-							or VL_COMMS_SPI */
-	uint16_t  comms_speed_khz;	/*!< Comms speed [kHz] :
-						typically 400kHz for I2C */
+	struct VL_DevData_t Data; /* !<embed ST VL53L0 Dev data as "dev_data" */
+	uint8_t   I2cDevAddr;	/* !< i2c device address user specific field */
+	uint8_t   comms_type;	/* !< Type of comms : */
+				/* VL_COMMS_I2C or VL_COMMS_SPI */
+	uint16_t  comms_speed_khz;	/*!< Comms speed [kHz] : */
+					/*typically 400kHz for I2C */
 	uint8_t   bus_type;		/* CCI_BUS; I2C_BUS */
 
 	void *client_object; /* cci or i2c client */
@@ -168,6 +170,8 @@ struct vl_data {
 	/* Debug */
 	unsigned int enableDebug;
 	uint8_t interrupt_received;
+	int32_t default_offset_calibration;
+	unsigned int default_xtalk_Compensation;
 };
 
 /*

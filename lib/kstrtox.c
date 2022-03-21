@@ -48,11 +48,9 @@ unsigned int _parse_integer(const char *s, unsigned int base, unsigned long long
 {
 	unsigned long long res;
 	unsigned int rv;
-	int overflow;
 
 	res = 0;
 	rv = 0;
-	overflow = 0;
 	while (*s) {
 		unsigned int val;
 
@@ -71,15 +69,13 @@ unsigned int _parse_integer(const char *s, unsigned int base, unsigned long long
 		 */
 		if (unlikely(res & (~0ull << 60))) {
 			if (res > div_u64(ULLONG_MAX - val, base))
-				overflow = 1;
+				rv |= KSTRTOX_OVERFLOW;
 		}
 		res = res * base + val;
 		rv++;
 		s++;
 	}
 	*p = res;
-	if (overflow)
-		rv |= KSTRTOX_OVERFLOW;
 	return rv;
 }
 
@@ -152,7 +148,7 @@ int kstrtoll(const char *s, unsigned int base, long long *res)
 		rv = _kstrtoull(s + 1, base, &tmp);
 		if (rv < 0)
 			return rv;
-		if ((long long)(-tmp) >= 0)
+		if ((long long)-tmp > 0)
 			return -ERANGE;
 		*res = -tmp;
 	} else {

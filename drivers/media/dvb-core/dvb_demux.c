@@ -5,8 +5,6 @@
  *		       & Marcus Metzler <marcus@convergence.de>
  *			 for convergence integrated media GmbH
  *
- * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
- *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
  * as published by the Free Software Foundation; either version 2.1
@@ -133,6 +131,39 @@ static const struct dvb_dmx_video_patterns h264_non_idr = {
 	DMX_IDX_H264_NON_IDR_START
 };
 
+/*
+ *  Forbidden (1 bit) + NAL idc (2 bits) + NAL type (5 bits)
+ *  I-Slice NAL idc = 3, NAL type = 5, 01100101 mask 0x7F
+ */
+static const struct dvb_dmx_video_patterns h264_idr_islice = {
+	{0x00, 0x00, 0x01, 0x65, 0x80},
+	{0xFF, 0xFF, 0xFF, 0x7F, 0x80},
+	5,
+	DMX_IDX_H264_IDR_ISLICE_START
+};
+
+/*
+ *  Forbidden (1 bit) + NAL idc (2 bits) + NAL type (5 bits)
+ *  P-Slice NAL idc = 2, NAL type = 1, 01000001 mask 0x7F
+ */
+static const struct dvb_dmx_video_patterns h264_non_idr_pslice = {
+	{0x00, 0x00, 0x01, 0x41, 0x80},
+	{0xFF, 0xFF, 0xFF, 0x7F, 0x80},
+	5,
+	DMX_IDX_H264_NON_IDR_PSLICE_START
+};
+
+/*
+ *  Forbidden (1 bit) + NAL idc (2 bits) + NAL type (5 bits)
+ *  B-Slice NAL idc = 0, NAL type = 1, 00000001  mask 0x7F
+ */
+static const struct dvb_dmx_video_patterns h264_non_idr_bslice = {
+	{0x00, 0x00, 0x01, 0x01, 0x80},
+	{0xFF, 0xFF, 0xFF, 0x7F, 0x80},
+	5,
+	DMX_IDX_H264_NON_IDR_BSLICE_START
+};
+
 static const struct dvb_dmx_video_patterns h264_non_access_unit_del = {
 	{0x00, 0x00, 0x01, 0x09},
 	{0xFF, 0xFF, 0xFF, 0x1F},
@@ -209,15 +240,10 @@ static void dvb_dmx_memcopy(struct dvb_demux_feed *f, u8 *d, const u8 *s,
 	memcpy(d, s, len);
 }
 
-static u32 dvb_dmx_calc_time_delta(struct timespec past_time)
+static u32 dvb_dmx_calc_time_delta(ktime_t past_time)
 {
-	struct timespec curr_time, delta_time;
-	u64 delta_time_us;
-
-	curr_time = current_kernel_time();
-	delta_time = timespec_sub(curr_time, past_time);
-	delta_time_us = ((s64)delta_time.tv_sec * USEC_PER_SEC) +
-					delta_time.tv_nsec / 1000;
+	ktime_t curr_time = ktime_get();
+	s64 delta_time_us = ktime_us_delta(curr_time, past_time);
 
 	return (u32)delta_time_us;
 }
@@ -319,6 +345,9 @@ int dvb_dmx_video_pattern_search(
 				 */
 				if ((int)(patterns[j]->size - current_size) >
 						buf_size)
+					break;
+
+				if (current_size >= DVB_DMX_MAX_PATTERN_LEN)
 					break;
 
 				if (dvb_dmx_patterns_match(
@@ -552,7 +581,7 @@ static inline int dvb_dmx_swfilter_payload(struct dvb_demux_feed *feed,
 	if (feed->pusi_seen == 0)
 		return 0;
 
-	ret = feed->cb.ts(&buf[p], count, NULL, 0, &feed->feed.ts, DMX_OK);
+	ret = feed->cb.ts(&buf[p], count, NULL, 0, &feed->feed.ts);
 
 	/* Verify TS packet was copied successfully */
 	if (!ret) {
@@ -584,7 +613,7 @@ static int dvb_dmx_swfilter_sectionfilter(struct dvb_demux_feed *feed,
 		return 0;
 
 	return feed->cb.sec(feed->feed.sec.secbuf, feed->feed.sec.seclen,
-			    NULL, 0, &f->filter, DMX_OK);
+			    NULL, 0, &f->filter);
 }
 
 static inline int dvb_dmx_swfilter_section_feed(struct dvb_demux_feed *feed)
@@ -601,10 +630,10 @@ static inline int dvb_dmx_swfilter_section_feed(struct dvb_demux_feed *feed)
 		return 0;
 
 	if (sec->check_crc) {
-		struct timespec pre_crc_time;
+		ktime_t pre_crc_time = ktime_set(0, 0);
 
 		if (dvb_demux_performancecheck)
-			pre_crc_time = current_kernel_time();
+			pre_crc_time = ktime_get();
 
 		section_syntax_indicator = ((sec->secbuf[1] & 0x80) != 0);
 		if (section_syntax_indicator &&
@@ -615,7 +644,7 @@ static inline int dvb_dmx_swfilter_section_feed(struct dvb_demux_feed *feed)
 
 			/* Notify on CRC error */
 			feed->cb.sec(NULL, 0, NULL, 0,
-				&f->filter, DMX_CRC_ERROR);
+				&f->filter);
 
 			return -1;
 		}
@@ -1013,6 +1042,18 @@ static void dvb_dmx_process_pattern_result(struct dvb_demux_feed *feed,
 		} else if (feed->prev_frame_type & DMX_IDX_H264_NON_IDR_START) {
 			idx_event.type = DMX_IDX_H264_NON_IDR_END;
 			frame_end_in_seq = DMX_IDX_H264_FIRST_SPS_FRAME_END;
+		} else if (feed->prev_frame_type &
+			   DMX_IDX_H264_IDR_ISLICE_START) {
+			idx_event.type = DMX_IDX_H264_IDR_END;
+			frame_end_in_seq = DMX_IDX_H264_FIRST_SPS_FRAME_END;
+		} else if (feed->prev_frame_type &
+			   DMX_IDX_H264_NON_IDR_PSLICE_START) {
+			idx_event.type = DMX_IDX_H264_NON_IDR_END;
+			frame_end_in_seq = DMX_IDX_H264_FIRST_SPS_FRAME_END;
+		} else if (feed->prev_frame_type &
+			   DMX_IDX_H264_NON_IDR_BSLICE_START) {
+			idx_event.type = DMX_IDX_H264_NON_IDR_END;
+			frame_end_in_seq = DMX_IDX_H264_FIRST_SPS_FRAME_END;
 		} else {
 			idx_event.type = DMX_IDX_VC1_FRAME_END;
 			frame_end_in_seq = DMX_IDX_VC1_FIRST_SEQ_FRAME_END;
@@ -1258,9 +1299,9 @@ static inline void dvb_dmx_swfilter_output_packet(
 	 */
 	if (feed->tsp_out_format == DMX_TSP_FORMAT_192_HEAD)
 		feed->cb.ts(timestamp, TIMESTAMP_LEN, NULL,
-			0, &feed->feed.ts, DMX_OK);
+			0, &feed->feed.ts);
 
-	feed->cb.ts(buf, 188, NULL, 0, &feed->feed.ts, DMX_OK);
+	feed->cb.ts(buf, 188, NULL, 0, &feed->feed.ts);
 
 	/*
 	 * if we output 192 packet with timestamp at tail of packet,
@@ -1268,7 +1309,7 @@ static inline void dvb_dmx_swfilter_output_packet(
 	 */
 	if (feed->tsp_out_format == DMX_TSP_FORMAT_192_TAIL)
 		feed->cb.ts(timestamp, TIMESTAMP_LEN, NULL,
-			0, &feed->feed.ts, DMX_OK);
+			0, &feed->feed.ts);
 
 	if (feed->idx_params.enable)
 		dvb_dmx_index(feed, buf, timestamp);
@@ -1486,31 +1527,25 @@ static void dvb_dmx_swfilter_one_packet(struct dvb_demux *demux, const u8 *buf,
 	int dvr_done = 0;
 
 	if (dvb_demux_speedcheck) {
-		struct timespec cur_time, delta_time;
+		ktime_t cur_time;
 		u64 speed_bytes, speed_timedelta;
 
 		demux->speed_pkts_cnt++;
 
 		/* show speed every SPEED_PKTS_INTERVAL packets */
 		if (!(demux->speed_pkts_cnt % SPEED_PKTS_INTERVAL)) {
-			cur_time = current_kernel_time();
+			cur_time = ktime_get();
 
-			if (demux->speed_last_time.tv_sec != 0 &&
-					demux->speed_last_time.tv_nsec != 0) {
-				delta_time = timespec_sub(cur_time,
-						demux->speed_last_time);
+			if (ktime_to_ns(demux->speed_last_time) != 0) {
 				speed_bytes = (u64)demux->speed_pkts_cnt
 					* 188 * 8;
 				/* convert to 1024 basis */
 				speed_bytes = 1000 * div64_u64(speed_bytes,
-						1024);
-				speed_timedelta =
-					(u64)timespec_to_ns(&delta_time);
-				speed_timedelta = div64_u64(speed_timedelta,
-						1000000); /* nsec -> usec */
+							       1024);
+				speed_timedelta = ktime_ms_delta(cur_time,
+							demux->speed_last_time);
 				pr_info("TS speed %llu Kbits/sec\n",
-					div64_u64(speed_bytes,
-						speed_timedelta));
+				div64_u64(speed_bytes, speed_timedelta));
 			}
 
 			demux->speed_last_time = cur_time;
@@ -1521,8 +1556,10 @@ static void dvb_dmx_swfilter_one_packet(struct dvb_demux *demux, const u8 *buf,
 	if (buf[1] & 0x80) {
 		dprintk_tscheck("TEI detected. PID=0x%x data1=0x%x\n", pid,
 			buf[1]);
-		/* data in this packet can't be trusted - drop it unless
-		 * module option dvb_demux_feed_err_pkts is set */
+		/*
+		 * data in this packet can't be trusted - drop it unless
+		 * module option dvb_demux_feed_err_pkts is set
+		 */
 		if (!dvb_demux_feed_err_pkts)
 			return;
 	} else /* if TEI bit is set, pid may be wrong- skip pkt counter */
@@ -1553,8 +1590,10 @@ static void dvb_dmx_swfilter_one_packet(struct dvb_demux *demux, const u8 *buf,
 		if ((feed->pid != pid) && (feed->pid != 0x2000))
 			continue;
 
-		/* copy each packet only once to the dvr device, even
-		 * if a PID is in multiple filters (e.g. video + PCR) */
+		/*
+		 * copy each packet only once to the dvr device, even
+		 * if a PID is in multiple filters (e.g. video + PCR)
+		 */
 		if ((DVR_FEED(feed)) && (dvr_done++))
 			continue;
 
@@ -1578,11 +1617,11 @@ EXPORT_SYMBOL(dvb_dmx_swfilter_packet);
 void dvb_dmx_swfilter_packets(struct dvb_demux *demux, const u8 *buf,
 			      size_t count)
 {
-	struct timespec pre_time;
+	ktime_t pre_time = ktime_set(0, 0);
 	u8 timestamp[TIMESTAMP_LEN] = {0};
 
 	if (dvb_demux_performancecheck)
-		pre_time = current_kernel_time();
+		pre_time = ktime_get();
 
 	spin_lock(&demux->lock);
 
@@ -1600,7 +1639,6 @@ void dvb_dmx_swfilter_packets(struct dvb_demux *demux, const u8 *buf,
 	if (dvb_demux_performancecheck)
 		demux->total_process_time += dvb_dmx_calc_time_delta(pre_time);
 }
-
 EXPORT_SYMBOL(dvb_dmx_swfilter_packets);
 
 static inline int find_next_packet(const u8 *buf, int pos, size_t count,
@@ -1639,11 +1677,11 @@ static inline void _dvb_dmx_swfilter(struct dvb_demux *demux, const u8 *buf,
 {
 	int p = 0, i, j;
 	const u8 *q;
-	struct timespec pre_time;
+	ktime_t pre_time;
 	u8 timestamp[TIMESTAMP_LEN];
 
 	if (dvb_demux_performancecheck)
-		pre_time = current_kernel_time();
+		pre_time = ktime_get();
 
 	spin_lock(&demux->lock);
 
@@ -1748,7 +1786,7 @@ void dvb_dmx_swfilter_raw(struct dvb_demux *demux, const u8 *buf, size_t count)
 {
 	spin_lock(&demux->lock);
 
-	demux->feed->cb.ts(buf, count, NULL, 0, &demux->feed->feed.ts, DMX_OK);
+	demux->feed->cb.ts(buf, count, NULL, 0, &demux->feed->feed.ts);
 
 	spin_unlock(&demux->lock);
 }
@@ -1846,6 +1884,15 @@ const struct dvb_dmx_video_patterns *dvb_dmx_get_pattern(u64 dmx_idx_pattern)
 
 	case DMX_IDX_H264_NON_IDR_START:
 		return &h264_non_idr;
+
+	case DMX_IDX_H264_IDR_ISLICE_START:
+		return &h264_idr_islice;
+
+	case DMX_IDX_H264_NON_IDR_PSLICE_START:
+		return &h264_non_idr_pslice;
+
+	case DMX_IDX_H264_NON_IDR_BSLICE_START:
+		return &h264_non_idr_bslice;
 
 	case DMX_IDX_H264_ACCESS_UNIT_DEL:
 		return &h264_non_access_unit_del;
@@ -1971,6 +2018,40 @@ static void dvb_dmx_init_idx_state(struct dvb_demux_feed *feed)
 		  DMX_IDX_H264_FIRST_SPS_FRAME_END))) {
 		feed->patterns[feed->pattern_num] =
 			dvb_dmx_get_pattern(DMX_IDX_H264_NON_IDR_START);
+		feed->pattern_num++;
+	}
+
+	/* H264 IDR ISlice */
+	if ((feed->pattern_num < DVB_DMX_MAX_SEARCH_PATTERN_NUM) &&
+		(feed->idx_params.types &
+		 (DMX_IDX_H264_IDR_ISLICE_START | DMX_IDX_H264_IDR_END |
+		  DMX_IDX_H264_NON_IDR_END |
+		  DMX_IDX_H264_FIRST_SPS_FRAME_START |
+		  DMX_IDX_H264_FIRST_SPS_FRAME_END))) {
+		feed->patterns[feed->pattern_num] =
+			dvb_dmx_get_pattern(DMX_IDX_H264_IDR_ISLICE_START);
+		feed->pattern_num++;
+	}
+	/* H264 non-IDR PSlice */
+	if ((feed->pattern_num < DVB_DMX_MAX_SEARCH_PATTERN_NUM) &&
+		(feed->idx_params.types &
+		 (DMX_IDX_H264_NON_IDR_PSLICE_START | DMX_IDX_H264_NON_IDR_END |
+		  DMX_IDX_H264_IDR_END |
+		  DMX_IDX_H264_FIRST_SPS_FRAME_START |
+		  DMX_IDX_H264_FIRST_SPS_FRAME_END))) {
+		feed->patterns[feed->pattern_num] =
+			dvb_dmx_get_pattern(DMX_IDX_H264_NON_IDR_PSLICE_START);
+		feed->pattern_num++;
+	}
+	/* H264 non-IDR BSlice */
+	if ((feed->pattern_num < DVB_DMX_MAX_SEARCH_PATTERN_NUM) &&
+		(feed->idx_params.types &
+		 (DMX_IDX_H264_NON_IDR_BSLICE_START | DMX_IDX_H264_NON_IDR_END |
+		  DMX_IDX_H264_IDR_END |
+		  DMX_IDX_H264_FIRST_SPS_FRAME_START |
+		  DMX_IDX_H264_FIRST_SPS_FRAME_END))) {
+		feed->patterns[feed->pattern_num] =
+			dvb_dmx_get_pattern(DMX_IDX_H264_NON_IDR_BSLICE_START);
 		feed->pattern_num++;
 	}
 
@@ -2120,7 +2201,7 @@ out:
 
 static int dmx_ts_feed_set(struct dmx_ts_feed *ts_feed, u16 pid, int ts_type,
 			   enum dmx_ts_pes pes_type,
-			   size_t circular_buffer_size, struct timespec timeout)
+			   size_t circular_buffer_size, ktime_t timeout)
 {
 	struct dvb_demux_feed *feed = (struct dvb_demux_feed *)ts_feed;
 	struct dvb_demux *demux = feed->demux;
@@ -2519,7 +2600,7 @@ static int dvbdmx_ts_insertion_insert_buffer(struct dmx_ts_feed *ts_feed,
 		return 0;
 	}
 
-	feed->cb.ts(data, size, NULL, 0, ts_feed, DMX_OK);
+	feed->cb.ts(data, size, NULL, 0, ts_feed);
 
 	spin_unlock(&demux->lock);
 
@@ -3252,7 +3333,8 @@ static int dvbdmx_get_pes_pids(struct dmx_demux *demux, u16 * pids)
 {
 	struct dvb_demux *dvbdemux = (struct dvb_demux *)demux;
 
-	memcpy(pids, dvbdemux->pids, 5 * sizeof(u16));
+    /* 4 Demux Instances each with group of 5 pids */
+	memcpy(pids, dvbdemux->pids, DMX_PES_OTHER*sizeof(u16));
 	return 0;
 }
 
@@ -3340,14 +3422,12 @@ int dvb_dmx_init(struct dvb_demux *dvbdemux)
 
 	if (dvbdemux->dmx.debugfs_demux_dir != NULL) {
 		debugfs_create_u32(
-			"total_processing_time",
-			S_IRUGO | S_IWUSR | S_IWGRP,
+			"total_processing_time", 0664,
 			dvbdemux->dmx.debugfs_demux_dir,
 			&dvbdemux->total_process_time);
 
 		debugfs_create_u32(
-			"total_crc_time",
-			S_IRUGO | S_IWUSR | S_IWGRP,
+			"total_crc_time", 0664,
 			dvbdemux->dmx.debugfs_demux_dir,
 			&dvbdemux->total_crc_time);
 	}

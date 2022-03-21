@@ -16,7 +16,6 @@
  *  GNU General Public License for more details.
  */
 
-
 #ifndef _VL_API_CALIBRATION_H_
 #define _VL_API_CALIBRATION_H_
 

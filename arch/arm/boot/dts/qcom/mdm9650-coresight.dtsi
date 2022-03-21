@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -159,17 +159,6 @@
 		clocks = <&clock_gcc clk_qdss_clk>,
 			 <&clock_gcc clk_qdss_a_clk>;
 		clock-names = "core_clk", "core_a_clk";
-	};
-
-	fuse: fuse@a601c {
-		compatible = "arm,coresight-fuse-v2";
-		reg = <0xa601c 0x8>,
-		      <0xa600c 0x4>;
-		reg-names = "fuse-base", "qpdi-fuse-base";
-
-		coresight-id = <10>;
-		coresight-name = "coresight-fuse";
-		coresight-nr-inports = <0>;
 	};
 
 	csr: csr@801000 {

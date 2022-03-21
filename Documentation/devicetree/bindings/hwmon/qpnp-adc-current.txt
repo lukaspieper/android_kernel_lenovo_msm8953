@@ -1,4 +1,4 @@
-Qualcomm's QPNP PMIC current ADC driver
+Qualcomm Technologies, Inc. QPNP PMIC current ADC driver
 
 QPNP PMIC current ADC (IADC) provides interface to clients to read
 current. A 16 bit ADC is used for current measurements. There are multiple

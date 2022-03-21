@@ -67,9 +67,9 @@
 #define map_from_smd_trans_signal(sigs) \
 	do { \
 		if (sigs & SMD_DTR_SIG) \
-			sigs |= TIOCM_DSR; \
+			sigs |= TIOCM_DTR; \
 		if (sigs & SMD_CTS_SIG) \
-			sigs |= TIOCM_CTS; \
+			sigs |= TIOCM_RTS; \
 		if (sigs & SMD_CD_SIG) \
 			sigs |= TIOCM_CD; \
 		if (sigs & SMD_RI_SIG) \
@@ -112,7 +112,7 @@ struct glink_pkt_dev {
 	const char *dev_name;
 	void *handle;
 	struct mutex ch_lock;
-	unsigned ch_state;
+	unsigned int ch_state;
 
 	struct cdev cdev;
 	struct device *devicep;
@@ -174,7 +174,7 @@ struct queue_rx_intent_work {
  * work:	Hold the worker function information.
  */
 struct notify_state_work {
-	unsigned state;
+	unsigned int state;
 	struct glink_pkt_dev *devp;
 	void *handle;
 	struct work_struct work;
@@ -200,7 +200,7 @@ enum {
 
 static int msm_glink_pkt_debug_mask;
 module_param_named(debug_mask, msm_glink_pkt_debug_mask,
-		int, S_IRUGO | S_IWUSR | S_IWGRP);
+		int, 0664);
 
 static void glink_pkt_queue_rx_intent_worker(struct work_struct *work);
 static void glink_pkt_notify_state_worker(struct work_struct *work);
@@ -249,12 +249,11 @@ static ssize_t open_timeout_store(struct device *d,
 				devp->open_time_wait = tmp;
 				mutex_unlock(&glink_pkt_dev_lock_lha1);
 				return n;
-			} else {
-				mutex_unlock(&glink_pkt_dev_lock_lha1);
-				pr_err("%s: unable to convert: %s to an int\n",
-						__func__, buf);
-				return -EINVAL;
 			}
+			mutex_unlock(&glink_pkt_dev_lock_lha1);
+			pr_err("%s: unable to convert: %s to an int\n",
+				__func__, buf);
+			return -EINVAL;
 		}
 	}
 	mutex_unlock(&glink_pkt_dev_lock_lha1);
@@ -381,7 +380,6 @@ void glink_pkt_notify_rx(void *handle, const void *priv,
 	spin_unlock_irqrestore(&devp->pa_spinlock, flags);
 	wake_up(&devp->ch_read_wait_queue);
 	schedule_work(&devp->packet_arrival_work);
-	return;
 }
 
 /**
@@ -400,7 +398,10 @@ void glink_pkt_notify_tx_done(void *handle, const void *priv,
 	GLINK_PKT_INFO("%s(): priv[%p] pkt_priv[%p] ptr[%p]\n",
 					__func__, priv, pkt_priv, ptr);
 	/* Free Tx buffer allocated in glink_pkt_write */
-	kvfree(ptr);
+	if (is_vmalloc_addr(ptr))
+		vfree_atomic(ptr);
+	else
+		kfree(ptr);
 }
 
 /**
@@ -412,7 +413,7 @@ void glink_pkt_notify_tx_done(void *handle, const void *priv,
  * This callback function is notified when the remote channel alters
  * the channel state and send the event to local G-Link core.
  */
-void glink_pkt_notify_state(void *handle, const void *priv, unsigned event)
+void glink_pkt_notify_state(void *handle, const void *priv, unsigned int event)
 {
 	struct glink_pkt_dev *devp = (struct glink_pkt_dev *)priv;
 	struct notify_state_work *work_item;
@@ -499,6 +500,7 @@ void glink_pkt_notify_rx_sigs(void *handle, const void *priv,
 			uint32_t old_sigs, uint32_t new_sigs)
 {
 	struct glink_pkt_dev *devp = (struct glink_pkt_dev *)priv;
+
 	GLINK_PKT_INFO("%s(): sigs old[%x] new[%x]\n",
 				__func__, old_sigs, new_sigs);
 	mutex_lock(&devp->ch_lock);
@@ -559,7 +561,7 @@ static void glink_pkt_notify_state_worker(struct work_struct *work)
 				container_of(work,
 				struct notify_state_work, work);
 	struct glink_pkt_dev *devp = work_item->devp;
-	unsigned event = work_item->state;
+	unsigned int event = work_item->state;
 	void *handle = work_item->handle;
 
 	if (!devp) {
@@ -573,8 +575,10 @@ static void glink_pkt_notify_state_worker(struct work_struct *work)
 	mutex_lock(&devp->ch_lock);
 	devp->ch_state = event;
 	if (event == GLINK_CONNECTED) {
-		if (!devp->handle)
-			devp->handle = handle;
+		if (!devp->handle) {
+			GLINK_PKT_ERR("%s: Invalid device handle\n", __func__);
+			goto exit;
+		}
 		devp->in_reset = 0;
 		wake_up_interruptible(&devp->ch_opened_wait_queue);
 	} else if (event == GLINK_REMOTE_DISCONNECTED) {
@@ -586,6 +590,7 @@ static void glink_pkt_notify_state_worker(struct work_struct *work)
 			devp->handle = NULL;
 		wake_up_interruptible(&devp->ch_closed_wait_queue);
 	}
+exit:
 	mutex_unlock(&devp->ch_lock);
 	kfree(work_item);
 }
@@ -697,7 +702,7 @@ ssize_t glink_pkt_read(struct file *file,
 	spin_unlock_irqrestore(&devp->pkt_list_lock, flags);
 
 	ret = copy_to_user(buf, pkt->data, pkt->size);
-	 if (ret) {
+	if (ret) {
 		GLINK_PKT_ERR(
 		"%s copy_to_user failed ret[%d] on dev id:%d size %zu\n",
 		 __func__, ret, devp->i, pkt->size);
@@ -706,7 +711,6 @@ ssize_t glink_pkt_read(struct file *file,
 		spin_unlock_irqrestore(&devp->pkt_list_lock, flags);
 		return -EFAULT;
 	}
-
 
 	ret = pkt->size;
 	glink_rx_done(devp->handle, pkt->data, false);
@@ -786,14 +790,20 @@ ssize_t glink_pkt_write(struct file *file,
 		GLINK_PKT_ERR(
 		"%s copy_from_user failed ret[%d] on dev id:%d size %zu\n",
 		 __func__, ret, devp->i, count);
-		kvfree(data);
+		if (is_vmalloc_addr(data))
+			vfree_atomic(data);
+		else
+			kfree(data);
 		return -EFAULT;
 	}
 
 	ret = glink_tx(devp->handle, data, data, count, GLINK_TX_REQ_INTENT);
 	if (ret) {
 		GLINK_PKT_ERR("%s glink_tx failed ret[%d]\n", __func__, ret);
-		kvfree(data);
+		if (is_vmalloc_addr(data))
+			vfree_atomic(data);
+		else
+			kfree(data);
 		return ret;
 	}
 
@@ -1092,7 +1102,7 @@ error:
  *
  * This function return first item from rx pkt_list and NULL if list is empty.
  */
-static struct glink_rx_pkt *pop_rx_pkt(struct glink_pkt_dev *devp)
+struct glink_rx_pkt *pop_rx_pkt(struct glink_pkt_dev *devp)
 {
 	unsigned long flags;
 	struct glink_rx_pkt *pkt = NULL;
@@ -1122,9 +1132,9 @@ int glink_pkt_release(struct inode *inode, struct file *file)
 	struct glink_pkt_dev *devp = file->private_data;
 	unsigned long flags;
 	struct glink_rx_pkt *pkt;
+
 	GLINK_PKT_INFO("%s() on dev id:%d by [%s] ref_cnt[%d]\n",
 			__func__, devp->i, current->comm, devp->ref_cnt);
-
 	mutex_lock(&devp->ch_lock);
 	if (devp->ref_cnt > 0)
 		devp->ref_cnt--;
@@ -1203,6 +1213,7 @@ static int glink_pkt_init_add_device(struct glink_pkt_dev *devp, int i)
 
 	devp->link_up = false;
 	devp->link_info.edge = devp->open_cfg.edge;
+	devp->link_info.transport = devp->open_cfg.transport;
 	devp->link_info.glink_link_state_notif_cb =
 				glink_pkt_link_state_cb;
 	devp->i = i;
@@ -1235,7 +1246,7 @@ static int glink_pkt_init_add_device(struct glink_pkt_dev *devp, int i)
 	devp->cdev.owner = THIS_MODULE;
 
 	ret = cdev_add(&devp->cdev, (glink_pkt_number + i), 1);
-	if (IS_ERR_VALUE(ret)) {
+	if (ret) {
 		GLINK_PKT_ERR("%s: cdev_add() failed for dev id:%d ret:%i\n",
 			__func__, i, ret);
 		wakeup_source_trash(&devp->pa_ws);
@@ -1314,7 +1325,7 @@ static int glink_pkt_alloc_chrdev_region(void)
 			       0,
 			       num_glink_pkt_ports,
 			       DEVICE_NAME);
-	if (IS_ERR_VALUE(ret)) {
+	if (ret) {
 		GLINK_PKT_ERR("%s: alloc_chrdev_region() failed ret:%i\n",
 			__func__, ret);
 		return ret;
@@ -1475,7 +1486,7 @@ static int msm_glink_pkt_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msm_glink_pkt_match_table[] = {
+static const struct of_device_id msm_glink_pkt_match_table[] = {
 	{ .compatible = "qcom,glinkpkt" },
 	{},
 };

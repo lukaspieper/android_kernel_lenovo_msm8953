@@ -148,7 +148,7 @@ static int uio_pdrv_genirq_probe(struct platform_device *pdev)
 	if (!uioinfo->irq) {
 		ret = platform_get_irq(pdev, 0);
 		uioinfo->irq = ret;
-		if (ret == -ENXIO)
+		if (ret == -ENXIO && pdev->dev.of_node)
 			uioinfo->irq = UIO_IRQ_NONE;
 		else if (ret < 0) {
 			dev_err(&pdev->dev, "failed to get IRQ\n");
@@ -266,7 +266,6 @@ static struct platform_driver uio_pdrv_genirq = {
 	.remove = uio_pdrv_genirq_remove,
 	.driver = {
 		.name = DRIVER_NAME,
-		.owner = THIS_MODULE,
 		.pm = &uio_pdrv_genirq_dev_pm_ops,
 		.of_match_table = of_match_ptr(uio_of_genirq_match),
 	},

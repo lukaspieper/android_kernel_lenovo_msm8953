@@ -58,7 +58,7 @@ static const u8 REG_TEMP_MAX[4] = { 0x34, 0x30, 0x31, 0x32 };
  */
 static int apd = -1;
 module_param(apd, bint, 0);
-MODULE_PARM_DESC(init, "Set to zero to disable anti-parallel diode mode");
+MODULE_PARM_DESC(apd, "Set to zero to disable anti-parallel diode mode");
 
 struct temperature {
 	s8	degrees;
@@ -452,7 +452,7 @@ static ssize_t set_pwm_enable(struct device *dev, struct device_attribute *da,
 	}
 
 	result = read_u8_from_i2c(client, REG_FAN_CONF1, &conf_reg);
-	if (result < 0) {
+	if (result) {
 		count = result;
 		goto err;
 	}

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,6 +14,7 @@
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
 #include <linux/kernel.h>
+#include <linux/regmap.h>
 #include <linux/of.h>
 #include <linux/err.h>
 #include <linux/init.h>
@@ -25,6 +26,7 @@
 #include <linux/module.h>
 #include <linux/debugfs.h>
 #include <linux/spmi.h>
+#include <linux/platform_device.h>
 #include <linux/of_irq.h>
 #include <linux/interrupt.h>
 #include <linux/completion.h>
@@ -32,6 +34,7 @@
 #include <linux/qpnp/qpnp-adc.h>
 #include <linux/thermal.h>
 #include <linux/platform_device.h>
+#include "thermal_core.h"
 
 /* QPNP VADC TM register definition */
 #define QPNP_REVISION3					0x2
@@ -60,12 +63,9 @@
 #define QPNP_BTM_CONV_REQ				0x47
 #define QPNP_ADC_CONV_REQ_EN				BIT(7)
 
-#define QPNP_ADC_CH_SEL_CTL				0x48
 #define QPNP_ADC_DIG_PARAM				0x50
 #define QPNP_ADC_DIG_DEC_RATIO_SEL_SHIFT		3
 #define QPNP_HW_SETTLE_DELAY				0x51
-#define QPNP_CONV_REQ					0x52
-#define QPNP_CONV_REQ_SET				BIT(7)
 #define QPNP_CONV_SEQ_CTL				0x54
 #define QPNP_CONV_SEQ_HOLDOFF_SHIFT			4
 #define QPNP_CONV_SEQ_TRIG_CTL				0x55
@@ -76,8 +76,12 @@
 #define QPNP_ADC_TM_MEAS_INTERVAL_CTL2_MASK		0xf0
 #define QPNP_ADC_TM_MEAS_INTERVAL_CTL3_MASK		0xf
 
-#define QPNP_ADC_MEAS_INTERVAL_OP_CTL			0x59
-#define QPNP_ADC_MEAS_INTERVAL_OP			BIT(7)
+#define QPNP_ADC_MEAS_INTERVAL_OP_CTL                   0x59
+#define QPNP_ADC_MEAS_INTERVAL_OP                       BIT(7)
+
+#define QPNP_OP_MODE_SHIFT				3
+#define QPNP_CONV_REQ					0x52
+#define QPNP_CONV_REQ_SET				BIT(7)
 
 #define QPNP_FAST_AVG_CTL				0x5a
 #define QPNP_FAST_AVG_EN				0x5b
@@ -159,6 +163,7 @@
 #define QPNP_ADC_TM_M5_MEAS_INTERVAL_CTL			0x8d
 #define QPNP_ADC_TM_M6_MEAS_INTERVAL_CTL			0x95
 #define QPNP_ADC_TM_M7_MEAS_INTERVAL_CTL			0x9d
+
 #define QPNP_ADC_TM_STATUS1				0x8
 #define QPNP_ADC_TM_STATUS_LOW				0xa
 #define QPNP_ADC_TM_STATUS_HIGH				0xb
@@ -175,17 +180,23 @@
 #define QPNP_RETRY			1000
 
 /* QPNP ADC TM HC start */
-#define QPNP_BTM_HC_STATUS1		0x08
-#define QPNP_BTM_HC_STATUS_LOW		0x0a
-#define QPNP_BTM_HC_STATUS_HIGH		0x0b
+#define QPNP_BTM_HC_STATUS1				0x08
+#define QPNP_BTM_HC_STATUS_LOW				0x0a
+#define QPNP_BTM_HC_STATUS_HIGH				0x0b
 
-#define QPNP_BTM_HC_ADC_DIG_PARAM	0x42
-#define QPNP_BTM_HC_FAST_AVG_CTL	0x43
-#define QPNP_BTM_EN_CTL1		0x46
-#define QPNP_BTM_CONV_REQ		0x47
+#define QPNP_BTM_HC_ADC_DIG_PARAM			0x42
+#define QPNP_BTM_HC_FAST_AVG_CTL			0x43
+#define QPNP_BTM_EN_CTL1				0x46
+#define QPNP_BTM_CONV_REQ				0x47
 
-#define QPNP_BTM_MEAS_INTERVAL_CTL	0x50
-#define QPNP_BTM_MEAS_INTERVAL_CTL2	0x51
+#define QPNP_BTM_MEAS_INTERVAL_CTL			0x50
+#define QPNP_BTM_MEAS_INTERVAL_CTL2			0x51
+#define QPNP_BTM_MEAS_INTERVAL_CTL_PM5			0x44
+#define QPNP_BTM_MEAS_INTERVAL_CTL2_PM5		0x45
+#define QPNP_ADC_TM_MEAS_INTERVAL_TIME_SHIFT		0x3
+#define QPNP_ADC_TM_MEAS_INTERVAL_CTL2_SHIFT		0x4
+#define QPNP_ADC_TM_MEAS_INTERVAL_CTL2_MASK		0xf0
+#define QPNP_ADC_TM_MEAS_INTERVAL_CTL3_MASK		0xf
 
 #define QPNP_BTM_Mn_ADC_CH_SEL_CTL(n)		((n * 8) + 0x60)
 #define QPNP_BTM_Mn_LOW_THR0(n)			((n * 8) + 0x61)
@@ -206,6 +217,9 @@
 
 #define QPNP_BTM_Mn_DATA0(n)			((n * 2) + 0xa0)
 #define QPNP_BTM_Mn_DATA1(n)			((n * 2) + 0xa1)
+#define QPNP_BTM_CHANNELS			8
+
+#define QPNP_ADC_WAKEUP_SRC_TIMEOUT_MS          2000
 
 /* QPNP ADC TM HC end */
 
@@ -217,8 +231,8 @@ struct qpnp_adc_thr_info {
 	u8		adc_tm_high_enable;
 	u8		adc_tm_low_thr_set;
 	u8		adc_tm_high_thr_set;
-	spinlock_t			adc_tm_low_lock;
-	spinlock_t			adc_tm_high_lock;
+	spinlock_t	adc_tm_low_lock;
+	spinlock_t	adc_tm_high_lock;
 };
 
 struct qpnp_adc_thr_client_info {
@@ -261,13 +275,13 @@ struct qpnp_adc_tm_chip {
 	bool				adc_tm_initialized;
 	bool				adc_tm_recalib_check;
 	int				max_channels_available;
-	atomic_t			wq_cnt;
 	struct qpnp_vadc_chip		*vadc_dev;
 	struct workqueue_struct		*high_thr_wq;
 	struct workqueue_struct		*low_thr_wq;
 	struct workqueue_struct		*thr_wq;
 	struct work_struct		trigger_high_thr_work;
 	struct work_struct		trigger_low_thr_work;
+	struct work_struct		trigger_thr_work;
 	bool				adc_vote_enable;
 	struct qpnp_adc_thr_info	th_info;
 	bool				adc_tm_hc;
@@ -348,7 +362,7 @@ static struct qpnp_adc_tm_reverse_scale_fn adc_tm_rscale_fn[] = {
 	[SCALE_R_ABSOLUTE] = {qpnp_adc_absolute_rthr},
 	[SCALE_QRD_SKUH_RBATT_THERM] = {qpnp_adc_qrd_skuh_btm_scaler},
 	[SCALE_QRD_SKUT1_RBATT_THERM] = {qpnp_adc_qrd_skut1_btm_scaler},
-	[SCALE_QRD_SKUE_RBATT_THERM] = {qpnp_adc_qrd_skue_btm_scaler},
+	[SCALE_QRD_215_RBATT_THERM] = {qpnp_adc_qrd_215_btm_scaler},
 };
 
 static int32_t qpnp_adc_tm_read_reg(struct qpnp_adc_tm_chip *chip,
@@ -356,8 +370,8 @@ static int32_t qpnp_adc_tm_read_reg(struct qpnp_adc_tm_chip *chip,
 {
 	int rc = 0;
 
-	rc = spmi_ext_register_readl(chip->adc->spmi->ctrl,
-		chip->adc->slave, (chip->adc->offset + reg), data, len);
+	rc = regmap_bulk_read(chip->adc->regmap, (chip->adc->offset + reg),
+								data, len);
 	if (rc < 0)
 		pr_err("adc-tm read reg %d failed with %d\n", reg, rc);
 
@@ -372,8 +386,8 @@ static int32_t qpnp_adc_tm_write_reg(struct qpnp_adc_tm_chip *chip,
 
 	buf = &data;
 
-	rc = spmi_ext_register_writel(chip->adc->spmi->ctrl,
-		chip->adc->slave, (chip->adc->offset + reg), buf, len);
+	rc = regmap_bulk_write(chip->adc->regmap, (chip->adc->offset + reg),
+								buf, len);
 	if (rc < 0)
 		pr_err("adc-tm write reg %d failed with %d\n", reg, rc);
 
@@ -451,7 +465,6 @@ static int32_t qpnp_adc_tm_enable(struct qpnp_adc_tm_chip *chip)
 			return rc;
 		}
 	}
-
 	return rc;
 }
 
@@ -460,18 +473,12 @@ static int32_t qpnp_adc_tm_disable(struct qpnp_adc_tm_chip *chip)
 	u8 data = 0;
 	int rc = 0;
 
-	if (chip->adc_tm_hc) {
-		rc = qpnp_adc_tm_write_reg(chip, QPNP_BTM_CONV_REQ, data, 1);
+	if (!chip->adc_tm_hc) {
+		rc = qpnp_adc_tm_write_reg(chip, QPNP_EN_CTL1, data, 1);
 		if (rc < 0) {
-			pr_err("adc-tm enable failed\n");
+			pr_err("adc-tm disable failed\n");
 			return rc;
 		}
-	}
-
-	rc = qpnp_adc_tm_write_reg(chip, QPNP_EN_CTL1, data, 1);
-	if (rc < 0) {
-		pr_err("adc-tm disable failed\n");
-		return rc;
 	}
 
 	return rc;
@@ -550,14 +557,13 @@ static int32_t qpnp_adc_tm_enable_if_channel_meas(
 	} else {
 		/* Check if a measurement request is still required */
 		rc = qpnp_adc_tm_read_reg(chip, QPNP_ADC_TM_MULTI_MEAS_EN,
-							&adc_tm_meas_en, 1);
+				&adc_tm_meas_en, 1);
 		if (rc) {
 			pr_err("read status high failed with %d\n", rc);
 			return rc;
 		}
-
 		rc = qpnp_adc_tm_read_reg(chip, QPNP_ADC_TM_LOW_THR_INT_EN,
-							&status_low, 1);
+				&status_low, 1);
 		if (rc) {
 			pr_err("read status low failed with %d\n", rc);
 			return rc;
@@ -574,7 +580,6 @@ static int32_t qpnp_adc_tm_enable_if_channel_meas(
 		if ((adc_tm_meas_en && status_high) ||
 				(adc_tm_meas_en && status_low)) {
 			qpnp_adc_tm_enable(chip);
-
 			/* Request conversion */
 			rc = qpnp_adc_tm_write_reg(chip, QPNP_CONV_REQ,
 							QPNP_CONV_REQ_SET, 1);
@@ -591,7 +596,6 @@ static int32_t qpnp_adc_tm_enable_if_channel_meas(
 			}
 		}
 	}
-
 	return rc;
 }
 
@@ -629,7 +633,7 @@ static int32_t qpnp_adc_tm_req_sts_check(struct qpnp_adc_tm_chip *chip)
 		return rc;
 	}
 
-	/* Disable the bank if a conversion is occuring */
+	/* Disable the bank if a conversion is occurring */
 	while (status1 & QPNP_STATUS1_REQ_STS) {
 		if (count > QPNP_RETRY) {
 			pr_err("retry error=%d with 0x%x\n", count, status1);
@@ -695,7 +699,6 @@ static int32_t qpnp_adc_tm_get_btm_idx(struct qpnp_adc_tm_chip *chip,
 
 	if (!chan_found)
 		return -EINVAL;
-
 	return rc;
 }
 
@@ -743,6 +746,7 @@ static int32_t qpnp_adc_tm_timer_interval_select(
 	bool chan_found = false;
 	u8 meas_interval_timer2 = 0, timer_interval_store = 0;
 	uint32_t btm_chan_idx = 0;
+	bool is_pmic_5 = chip->adc->adc_prop->is_pmic_5;
 
 	while (i < chip->max_channels_available) {
 		if (chip->sensor[i].btm_channel_num == btm_chan) {
@@ -764,25 +768,39 @@ static int32_t qpnp_adc_tm_timer_interval_select(
 			rc = qpnp_adc_tm_write_reg(chip,
 				QPNP_ADC_TM_MEAS_INTERVAL_CTL,
 				chip->sensor[chan_idx].meas_interval, 1);
-		else
-			rc = qpnp_adc_tm_write_reg(chip,
-				QPNP_BTM_MEAS_INTERVAL_CTL,
-				chip->sensor[chan_idx].meas_interval, 1);
+		else {
+			if (!is_pmic_5)
+				rc = qpnp_adc_tm_write_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL,
+					chip->sensor[chan_idx].meas_interval,
+					1);
+			else
+				rc = qpnp_adc_tm_write_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL_PM5,
+					chip->sensor[chan_idx].meas_interval,
+					1);
+		}
 		if (rc < 0) {
 			pr_err("timer1 configure failed\n");
 			return rc;
 		}
-	break;
+		break;
 	case ADC_MEAS_TIMER_SELECT2:
 		/* Thermal channels uses timer2, default to 1 second */
 		if (!chip->adc_tm_hc)
 			rc = qpnp_adc_tm_read_reg(chip,
 				QPNP_ADC_TM_MEAS_INTERVAL_CTL2,
 				&meas_interval_timer2, 1);
-		else
-			rc = qpnp_adc_tm_read_reg(chip,
-				QPNP_BTM_MEAS_INTERVAL_CTL2,
-				&meas_interval_timer2, 1);
+		else {
+			if (!is_pmic_5)
+				rc = qpnp_adc_tm_read_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL2,
+					&meas_interval_timer2, 1);
+			else
+				rc = qpnp_adc_tm_read_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL2_PM5,
+					&meas_interval_timer2, 1);
+		}
 		if (rc < 0) {
 			pr_err("timer2 configure read failed\n");
 			return rc;
@@ -795,10 +813,16 @@ static int32_t qpnp_adc_tm_timer_interval_select(
 			rc = qpnp_adc_tm_write_reg(chip,
 				QPNP_ADC_TM_MEAS_INTERVAL_CTL2,
 				meas_interval_timer2, 1);
-		else
-			rc = qpnp_adc_tm_write_reg(chip,
-				QPNP_BTM_MEAS_INTERVAL_CTL2,
-				meas_interval_timer2, 1);
+		else {
+			if (!is_pmic_5)
+				rc = qpnp_adc_tm_write_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL2,
+					meas_interval_timer2, 1);
+			else
+				rc = qpnp_adc_tm_write_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL2_PM5,
+					meas_interval_timer2, 1);
+		}
 		if (rc < 0) {
 			pr_err("timer2 configure failed\n");
 			return rc;
@@ -809,10 +833,16 @@ static int32_t qpnp_adc_tm_timer_interval_select(
 			rc = qpnp_adc_tm_read_reg(chip,
 				QPNP_ADC_TM_MEAS_INTERVAL_CTL2,
 				&meas_interval_timer2, 1);
-		else
-			rc = qpnp_adc_tm_read_reg(chip,
-				QPNP_BTM_MEAS_INTERVAL_CTL2,
-				&meas_interval_timer2, 1);
+		else {
+			if (!is_pmic_5)
+				rc = qpnp_adc_tm_read_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL2,
+					&meas_interval_timer2, 1);
+			else
+				rc = qpnp_adc_tm_read_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL2_PM5,
+					&meas_interval_timer2, 1);
+		}
 		if (rc < 0) {
 			pr_err("timer3 read failed\n");
 			return rc;
@@ -824,10 +854,16 @@ static int32_t qpnp_adc_tm_timer_interval_select(
 			rc = qpnp_adc_tm_write_reg(chip,
 				QPNP_ADC_TM_MEAS_INTERVAL_CTL2,
 				meas_interval_timer2, 1);
-		else
-			rc = qpnp_adc_tm_write_reg(chip,
-				QPNP_BTM_MEAS_INTERVAL_CTL2,
-				meas_interval_timer2, 1);
+		else {
+			if (!is_pmic_5)
+				rc = qpnp_adc_tm_write_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL2,
+					meas_interval_timer2, 1);
+			else
+				rc = qpnp_adc_tm_write_reg(chip,
+					QPNP_BTM_MEAS_INTERVAL_CTL2_PM5,
+					meas_interval_timer2, 1);
+		}
 		if (rc < 0) {
 			pr_err("timer3 configure failed\n");
 			return rc;
@@ -850,8 +886,8 @@ static int32_t qpnp_adc_tm_timer_interval_select(
 				chip->sensor[chan_idx].timer_select, 1);
 	else
 		rc = qpnp_adc_tm_write_reg(chip,
-				QPNP_BTM_Mn_MEAS_INTERVAL_CTL(btm_chan_idx),
-				chip->sensor[chan_idx].timer_select, 1);
+			QPNP_BTM_Mn_MEAS_INTERVAL_CTL(btm_chan_idx),
+			chip->sensor[chan_idx].timer_select, 1);
 	if (rc < 0) {
 		pr_err("TM channel timer configure failed\n");
 		return rc;
@@ -890,10 +926,8 @@ static int32_t qpnp_adc_tm_add_to_list(struct qpnp_adc_tm_chip *chip,
 	if (!client_info_exists) {
 		client_info = devm_kzalloc(chip->dev,
 			sizeof(struct qpnp_adc_thr_client_info), GFP_KERNEL);
-		if (!client_info) {
-			pr_err("%s: kzalloc() failed.\n", __func__);
+		if (!client_info)
 			return -ENOMEM;
-		}
 
 		pr_debug("new client\n");
 		client_info->btm_param = param;
@@ -997,6 +1031,8 @@ static int32_t qpnp_adc_tm_read_thr_value(struct qpnp_adc_tm_chip *chip,
 	return rc;
 }
 
+
+
 static int32_t qpnp_adc_tm_thr_update(struct qpnp_adc_tm_chip *chip,
 			uint32_t btm_chan, int32_t high_thr, int32_t low_thr)
 {
@@ -1073,7 +1109,7 @@ static int32_t qpnp_adc_tm_thr_update(struct qpnp_adc_tm_chip *chip,
 	}
 
 	pr_debug("client requested high:%d and low:%d\n",
-		high_thr, low_thr);
+			high_thr, low_thr);
 
 	return rc;
 }
@@ -1251,7 +1287,6 @@ static int32_t qpnp_adc_tm_channel_configure(struct qpnp_adc_tm_chip *chip,
 		pr_err("multi measurement en failed\n");
 		return rc;
 	}
-
 	return rc;
 }
 
@@ -1395,7 +1430,7 @@ static int32_t qpnp_adc_tm_configure(struct qpnp_adc_tm_chip *chip,
 		return rc;
 	}
 
-	/* Digital paramater setup */
+	/* Digital parameter setup */
 	decimation |= chan_prop->decimation <<
 				QPNP_ADC_DIG_DEC_RATIO_SEL_SHIFT;
 	rc = qpnp_adc_tm_write_reg(chip, QPNP_ADC_DIG_PARAM, decimation, 1);
@@ -1468,24 +1503,9 @@ static int32_t qpnp_adc_tm_configure(struct qpnp_adc_tm_chip *chip,
 	return 0;
 }
 
-static int qpnp_adc_tm_get_mode(struct thermal_zone_device *thermal,
-			      enum thermal_device_mode *mode)
-{
-	struct qpnp_adc_tm_sensor *adc_tm = thermal->devdata;
-
-	if ((IS_ERR(adc_tm)) || qpnp_adc_tm_check_revision(
-			adc_tm->chip, adc_tm->btm_channel_num))
-		return -EINVAL;
-
-	*mode = adc_tm->mode;
-
-	return 0;
-}
-
-static int qpnp_adc_tm_set_mode(struct thermal_zone_device *thermal,
+static int qpnp_adc_tm_set_mode(struct qpnp_adc_tm_sensor *adc_tm,
 			      enum thermal_device_mode mode)
 {
-	struct qpnp_adc_tm_sensor *adc_tm = thermal->devdata;
 	struct qpnp_adc_tm_chip *chip = adc_tm->chip;
 	int rc = 0, channel;
 	u8 sensor_mask = 0, mode_ctl = 0;
@@ -1535,7 +1555,7 @@ static int qpnp_adc_tm_set_mode(struct thermal_zone_device *thermal,
 			}
 		} else {
 			rc = qpnp_adc_tm_hc_configure(chip,
-							chip->adc->amux_prop);
+					chip->adc->amux_prop);
 			if (rc) {
 				pr_err("hc configure failed with %d\n", rc);
 				goto fail;
@@ -1543,7 +1563,6 @@ static int qpnp_adc_tm_set_mode(struct thermal_zone_device *thermal,
 		}
 	} else if (mode == THERMAL_DEVICE_DISABLED) {
 		sensor_mask = 1 << adc_tm->sensor_num;
-
 		if (!chip->adc_tm_hc) {
 			mode_ctl = ADC_OP_NORMAL_MODE << QPNP_OP_MODE_SHIFT;
 			rc = qpnp_adc_tm_mode_select(chip, mode_ctl);
@@ -1567,17 +1586,17 @@ static int qpnp_adc_tm_set_mode(struct thermal_zone_device *thermal,
 				pr_err("adc-tm req_sts check failed\n");
 				goto fail;
 			}
-
 			rc = qpnp_adc_tm_reg_update(chip,
-				QPNP_ADC_TM_MULTI_MEAS_EN, sensor_mask, false);
+					QPNP_ADC_TM_MULTI_MEAS_EN,
+					sensor_mask, false);
 			if (rc < 0) {
 				pr_err("multi measurement update failed\n");
 				goto fail;
 			}
 		} else {
 			rc = qpnp_adc_tm_reg_update(chip,
-				QPNP_BTM_Mn_EN(btm_chan_idx),
-				QPNP_BTM_Mn_MEAS_EN, false);
+					QPNP_BTM_Mn_EN(btm_chan_idx),
+					QPNP_BTM_Mn_MEAS_EN, false);
 			if (rc < 0) {
 				pr_err("multi measurement disable failed\n");
 				goto fail;
@@ -1599,11 +1618,14 @@ fail:
 	return 0;
 }
 
-static int qpnp_adc_tm_get_trip_type(struct thermal_zone_device *thermal,
-				   int trip, enum thermal_trip_type *type)
+static int qpnp_adc_tm_activate_trip_type(struct qpnp_adc_tm_sensor *adc_tm,
+			int trip, enum thermal_trip_activation_mode mode)
 {
-	struct qpnp_adc_tm_sensor *adc_tm = thermal->devdata;
 	struct qpnp_adc_tm_chip *chip = adc_tm->chip;
+	int rc = 0, sensor_mask = 0;
+	u8 thr_int_en = 0;
+	bool state = false;
+	uint32_t btm_chan_idx = 0, btm_chan = 0;
 
 	if (qpnp_adc_tm_is_valid(chip))
 		return -ENODEV;
@@ -1611,110 +1633,60 @@ static int qpnp_adc_tm_get_trip_type(struct thermal_zone_device *thermal,
 	if (qpnp_adc_tm_check_revision(chip, adc_tm->btm_channel_num))
 		return -EINVAL;
 
-	switch (trip) {
-	case ADC_TM_TRIP_HIGH_WARM:
-		*type = THERMAL_TRIP_CONFIGURABLE_HI;
-	break;
-	case ADC_TM_TRIP_LOW_COOL:
-		*type = THERMAL_TRIP_CONFIGURABLE_LOW;
-	break;
-	default:
-		return -EINVAL;
-	}
+	if (mode == THERMAL_TRIP_ACTIVATION_ENABLED)
+		state = true;
 
-	return 0;
-}
+	sensor_mask = 1 << adc_tm->sensor_num;
 
-static int qpnp_adc_tm_get_trip_temp(struct thermal_zone_device *thermal,
-				   int trip, unsigned long *temp)
-{
-	struct qpnp_adc_tm_sensor *adc_tm_sensor = thermal->devdata;
-	struct qpnp_adc_tm_chip *chip = adc_tm_sensor->chip;
-	int64_t result = 0;
-	u8 trip_cool_thr0, trip_cool_thr1, trip_warm_thr0, trip_warm_thr1;
-	unsigned int reg, rc = 0;
-	uint16_t reg_low_thr_lsb, reg_low_thr_msb;
-	uint16_t reg_high_thr_lsb, reg_high_thr_msb;
-	uint32_t btm_chan_idx = 0, btm_chan = 0;
+	pr_debug("Sensor number:%x with state:%d\n",
+					adc_tm->sensor_num, state);
 
-	if (qpnp_adc_tm_is_valid(chip))
-		return -ENODEV;
-
-	if (qpnp_adc_tm_check_revision(chip, adc_tm_sensor->btm_channel_num))
-		return -EINVAL;
-
-	btm_chan = adc_tm_sensor->btm_channel_num;
+	btm_chan = adc_tm->btm_channel_num;
 	rc = qpnp_adc_tm_get_btm_idx(chip, btm_chan, &btm_chan_idx);
 	if (rc < 0) {
 		pr_err("Invalid btm channel idx\n");
 		return rc;
 	}
 
-	if (!chip->adc_tm_hc) {
-		reg_low_thr_lsb = adc_tm_data[btm_chan_idx].low_thr_lsb_addr;
-		reg_low_thr_msb = adc_tm_data[btm_chan_idx].low_thr_msb_addr;
-		reg_high_thr_lsb = adc_tm_data[btm_chan_idx].high_thr_lsb_addr;
-		reg_high_thr_msb = adc_tm_data[btm_chan_idx].high_thr_msb_addr;
-	} else {
-		reg_low_thr_lsb = QPNP_BTM_Mn_LOW_THR0(btm_chan_idx);
-		reg_low_thr_msb = QPNP_BTM_Mn_LOW_THR1(btm_chan_idx);
-		reg_high_thr_lsb = QPNP_BTM_Mn_HIGH_THR0(btm_chan_idx);
-		reg_high_thr_msb = QPNP_BTM_Mn_HIGH_THR1(btm_chan_idx);
-	}
-
 	switch (trip) {
 	case ADC_TM_TRIP_HIGH_WARM:
-		rc = qpnp_adc_tm_read_reg(chip, reg_low_thr_lsb,
-						&trip_warm_thr0, 1);
-		if (rc) {
-			pr_err("adc-tm low_thr_lsb err\n");
-			return rc;
-		}
-
-		rc = qpnp_adc_tm_read_reg(chip, reg_low_thr_msb,
-						&trip_warm_thr1, 1);
-		if (rc) {
-			pr_err("adc-tm low_thr_msb err\n");
-			return rc;
-		}
-	reg = (trip_warm_thr1 << 8) | trip_warm_thr0;
+		/* low_thr (lower voltage) for higher temp */
+		thr_int_en = adc_tm_data[btm_chan_idx].low_thr_int_chan_en;
+		if (!chip->adc_tm_hc)
+			rc = qpnp_adc_tm_reg_update(chip,
+					QPNP_ADC_TM_LOW_THR_INT_EN,
+					sensor_mask, state);
+		else
+			rc = qpnp_adc_tm_reg_update(chip,
+				QPNP_BTM_Mn_EN(btm_chan_idx),
+				QPNP_BTM_Mn_LOW_THR_INT_EN, state);
+		if (rc)
+			pr_err("channel:%x failed\n", btm_chan);
 	break;
 	case ADC_TM_TRIP_LOW_COOL:
-		rc = qpnp_adc_tm_read_reg(chip, reg_high_thr_lsb,
-						&trip_cool_thr0, 1);
-		if (rc) {
-			pr_err("adc-tm_tm high_thr_lsb err\n");
-			return rc;
-		}
-
-		rc = qpnp_adc_tm_read_reg(chip, reg_high_thr_msb,
-						&trip_cool_thr1, 1);
-		if (rc) {
-			pr_err("adc-tm_tm high_thr_lsb err\n");
-			return rc;
-		}
-	reg = (trip_cool_thr1 << 8) | trip_cool_thr0;
+		/* high_thr (higher voltage) for cooler temp */
+		thr_int_en = adc_tm_data[btm_chan_idx].high_thr_int_chan_en;
+		if (!chip->adc_tm_hc)
+			rc = qpnp_adc_tm_reg_update(chip,
+				QPNP_ADC_TM_HIGH_THR_INT_EN,
+				sensor_mask, state);
+		else
+			rc = qpnp_adc_tm_reg_update(chip,
+				QPNP_BTM_Mn_EN(btm_chan_idx),
+				QPNP_BTM_Mn_HIGH_THR_INT_EN, state);
+		if (rc)
+			pr_err("channel:%x failed\n", btm_chan);
 	break;
 	default:
 		return -EINVAL;
 	}
 
-	rc = qpnp_adc_tm_scale_voltage_therm_pu2(chip->vadc_dev,
-					chip->adc->adc_prop, reg, &result);
-	if (rc < 0) {
-		pr_err("Failed to lookup the therm thresholds\n");
-		return rc;
-	}
-
-	*temp = result;
-
-	return 0;
+	return rc;
 }
 
-static int qpnp_adc_tm_set_trip_temp(struct thermal_zone_device *thermal,
-				   int trip, unsigned long temp)
+static int qpnp_adc_tm_set_trip_temp(void *data, int low_temp, int high_temp)
 {
-	struct qpnp_adc_tm_sensor *adc_tm = thermal->devdata;
+	struct qpnp_adc_tm_sensor *adc_tm = data;
 	struct qpnp_adc_tm_chip *chip = adc_tm->chip;
 	struct qpnp_adc_tm_config tm_config;
 	u8 trip_cool_thr0, trip_cool_thr1, trip_warm_thr0, trip_warm_thr1;
@@ -1731,19 +1703,18 @@ static int qpnp_adc_tm_set_trip_temp(struct thermal_zone_device *thermal,
 
 	tm_config.channel = adc_tm->vadc_channel_num;
 	tm_config.high_thr_temp = tm_config.low_thr_temp = 0;
-	switch (trip) {
-	case ADC_TM_TRIP_HIGH_WARM:
-		tm_config.high_thr_temp = temp;
-		break;
-	case ADC_TM_TRIP_LOW_COOL:
-		tm_config.low_thr_temp = temp;
-		break;
-	default:
+	if (high_temp != INT_MAX)
+		tm_config.high_thr_temp = high_temp;
+	if (low_temp != INT_MIN)
+		tm_config.low_thr_temp = low_temp;
+
+	if ((high_temp == INT_MAX) && (low_temp == INT_MIN)) {
+		pr_err("No trips to set\n");
 		return -EINVAL;
 	}
 
-	pr_debug("requested a high - %d and low - %d with trip - %d\n",
-			tm_config.high_thr_temp, tm_config.low_thr_temp, trip);
+	pr_debug("requested a high - %d and low - %d\n",
+			tm_config.high_thr_temp, tm_config.low_thr_temp);
 	rc = qpnp_adc_tm_scale_therm_voltage_pu2(chip->vadc_dev,
 				chip->adc->adc_prop, &tm_config);
 	if (rc < 0) {
@@ -1778,8 +1749,7 @@ static int qpnp_adc_tm_set_trip_temp(struct thermal_zone_device *thermal,
 		reg_high_thr_msb = QPNP_BTM_Mn_HIGH_THR1(btm_chan_idx);
 	}
 
-	switch (trip) {
-	case ADC_TM_TRIP_HIGH_WARM:
+	if (high_temp != INT_MAX) {
 		rc = qpnp_adc_tm_write_reg(chip, reg_low_thr_lsb,
 						trip_cool_thr0, 1);
 		if (rc) {
@@ -1793,9 +1763,26 @@ static int qpnp_adc_tm_set_trip_temp(struct thermal_zone_device *thermal,
 			pr_err("adc-tm_tm read threshold err\n");
 			return rc;
 		}
-	adc_tm->low_thr = tm_config.high_thr_voltage;
-	break;
-	case ADC_TM_TRIP_LOW_COOL:
+		adc_tm->low_thr = tm_config.high_thr_voltage;
+
+		rc = qpnp_adc_tm_activate_trip_type(adc_tm,
+				ADC_TM_TRIP_HIGH_WARM,
+				THERMAL_TRIP_ACTIVATION_ENABLED);
+		if (rc) {
+			pr_err("adc-tm warm activation failed\n");
+			return rc;
+		}
+	} else {
+		rc = qpnp_adc_tm_activate_trip_type(adc_tm,
+				ADC_TM_TRIP_HIGH_WARM,
+				THERMAL_TRIP_ACTIVATION_DISABLED);
+		if (rc) {
+			pr_err("adc-tm warm deactivation failed\n");
+			return rc;
+		}
+	}
+
+	if (low_temp != INT_MIN) {
 		rc = qpnp_adc_tm_write_reg(chip, reg_high_thr_lsb,
 						trip_warm_thr0, 1);
 		if (rc) {
@@ -1809,10 +1796,37 @@ static int qpnp_adc_tm_set_trip_temp(struct thermal_zone_device *thermal,
 			pr_err("adc-tm_tm read threshold err\n");
 			return rc;
 		}
-	adc_tm->high_thr = tm_config.low_thr_voltage;
-	break;
-	default:
-		return -EINVAL;
+		adc_tm->high_thr = tm_config.low_thr_voltage;
+
+		rc = qpnp_adc_tm_activate_trip_type(adc_tm,
+				ADC_TM_TRIP_LOW_COOL,
+				THERMAL_TRIP_ACTIVATION_ENABLED);
+		if (rc) {
+			pr_err("adc-tm cool activation failed\n");
+			return rc;
+		}
+	} else {
+		rc = qpnp_adc_tm_activate_trip_type(adc_tm,
+				ADC_TM_TRIP_LOW_COOL,
+				THERMAL_TRIP_ACTIVATION_DISABLED);
+		if (rc) {
+			pr_err("adc-tm cool deactivation failed\n");
+			return rc;
+		}
+	}
+
+	if ((high_temp != INT_MAX) || (low_temp != INT_MIN)) {
+		rc = qpnp_adc_tm_set_mode(adc_tm, THERMAL_DEVICE_ENABLED);
+		if (rc) {
+			pr_err("sensor enabled failed\n");
+			return rc;
+		}
+	} else {
+		rc = qpnp_adc_tm_set_mode(adc_tm, THERMAL_DEVICE_DISABLED);
+		if (rc) {
+			pr_err("sensor disable failed\n");
+			return rc;
+		}
 	}
 
 	return 0;
@@ -1840,8 +1854,6 @@ static void notify_battery_therm(struct qpnp_adc_tm_sensor *adc_tm)
 			client_info->notify_high_thr = false;
 		}
 	}
-
-	return;
 }
 
 static void notify_clients(struct qpnp_adc_tm_sensor *adc_tm)
@@ -1873,96 +1885,22 @@ static void notify_clients(struct qpnp_adc_tm_sensor *adc_tm)
 			}
 		}
 	}
-
-	return;
 }
 
 static void notify_adc_tm_fn(struct work_struct *work)
 {
 	struct qpnp_adc_tm_sensor *adc_tm = container_of(work,
 		struct qpnp_adc_tm_sensor, work);
-	struct qpnp_adc_tm_chip *chip = adc_tm->chip;
 
 	if (adc_tm->thermal_node) {
-		sysfs_notify(&adc_tm->tz_dev->device.kobj,
-					NULL, "type");
 		pr_debug("notifying uspace client\n");
+		of_thermal_handle_trip(adc_tm->tz_dev);
 	} else {
 		if (adc_tm->scale_type == SCALE_RBATT_THERM)
 			notify_battery_therm(adc_tm);
 		else
 			notify_clients(adc_tm);
 	}
-
-	atomic_dec(&chip->wq_cnt);
-	return;
-}
-
-static int qpnp_adc_tm_activate_trip_type(struct thermal_zone_device *thermal,
-			int trip, enum thermal_trip_activation_mode mode)
-{
-	struct qpnp_adc_tm_sensor *adc_tm = thermal->devdata;
-	struct qpnp_adc_tm_chip *chip = adc_tm->chip;
-	int rc = 0, sensor_mask = 0;
-	u8 thr_int_en = 0;
-	bool state = false;
-	uint32_t btm_chan_idx = 0, btm_chan = 0;
-
-	if (qpnp_adc_tm_is_valid(chip))
-		return -ENODEV;
-
-	if (qpnp_adc_tm_check_revision(chip, adc_tm->btm_channel_num))
-		return -EINVAL;
-
-	if (mode == THERMAL_TRIP_ACTIVATION_ENABLED)
-		state = true;
-
-	sensor_mask = 1 << adc_tm->sensor_num;
-
-	pr_debug("Sensor number:%x with state:%d\n",
-					adc_tm->sensor_num, state);
-
-	btm_chan = adc_tm->btm_channel_num;
-	rc = qpnp_adc_tm_get_btm_idx(chip, btm_chan, &btm_chan_idx);
-	if (rc < 0) {
-		pr_err("Invalid btm channel idx\n");
-		return rc;
-	}
-
-	switch (trip) {
-	case ADC_TM_TRIP_HIGH_WARM:
-		/* low_thr (lower voltage) for higher temp */
-		thr_int_en = adc_tm_data[btm_chan_idx].low_thr_int_chan_en;
-		if (!chip->adc_tm_hc)
-			rc = qpnp_adc_tm_reg_update(chip,
-				QPNP_ADC_TM_LOW_THR_INT_EN,
-				sensor_mask, state);
-		else
-			rc = qpnp_adc_tm_reg_update(chip,
-				QPNP_BTM_Mn_EN(btm_chan_idx),
-				QPNP_BTM_Mn_LOW_THR_INT_EN, state);
-		if (rc)
-			pr_err("channel:%x failed\n", btm_chan);
-	break;
-	case ADC_TM_TRIP_LOW_COOL:
-		/* high_thr (higher voltage) for cooler temp */
-		thr_int_en = adc_tm_data[btm_chan_idx].high_thr_int_chan_en;
-		if (!chip->adc_tm_hc)
-			rc = qpnp_adc_tm_reg_update(chip,
-				QPNP_ADC_TM_HIGH_THR_INT_EN,
-				sensor_mask, state);
-		else
-			rc = qpnp_adc_tm_reg_update(chip,
-				QPNP_BTM_Mn_EN(btm_chan_idx),
-				QPNP_BTM_Mn_HIGH_THR_INT_EN, state);
-		if (rc)
-			pr_err("channel:%x failed\n", btm_chan);
-	break;
-	default:
-		return -EINVAL;
-	}
-
-	return rc;
 }
 
 static int qpnp_adc_tm_recalib_request_check(struct qpnp_adc_tm_chip *chip,
@@ -2106,13 +2044,20 @@ fail:
 static int qpnp_adc_tm_disable_rearm_high_thresholds(
 			struct qpnp_adc_tm_chip *chip, int sensor_num)
 {
+
 	struct qpnp_adc_thr_client_info *client_info = NULL;
 	struct list_head *thr_list;
-	uint32_t btm_chan_num = 0;
+	uint32_t btm_chan_num = 0, btm_chan_idx = 0;
 	u8 sensor_mask = 0, notify_check = 0;
 	int rc = 0;
 
 	btm_chan_num = chip->sensor[sensor_num].btm_channel_num;
+	rc = qpnp_adc_tm_get_btm_idx(chip, btm_chan_num, &btm_chan_idx);
+	if (rc < 0) {
+		pr_err("Invalid btm channel idx\n");
+		return rc;
+	}
+
 	pr_debug("high:sen:%d, hs:0x%x, ls:0x%x, meas_en:0x%x\n",
 		sensor_num, chip->th_info.adc_tm_high_enable,
 		chip->th_info.adc_tm_low_enable,
@@ -2124,14 +2069,24 @@ static int qpnp_adc_tm_disable_rearm_high_thresholds(
 		 */
 		sensor_mask = 1 << sensor_num;
 		pr_debug("non thermal node - mask:%x\n", sensor_mask);
-		rc = qpnp_adc_tm_recalib_request_check(chip,
-				sensor_num, true, &notify_check);
-		if (rc < 0 || !notify_check) {
-			pr_debug("Calib recheck re-armed rc=%d\n", rc);
-			chip->th_info.adc_tm_high_enable = 0;
-			return rc;
+		if (!chip->adc_tm_hc) {
+			rc = qpnp_adc_tm_recalib_request_check(chip,
+					sensor_num, true, &notify_check);
+			if (rc < 0 || !notify_check) {
+				pr_debug("Calib recheck re-armed rc=%d\n", rc);
+				chip->th_info.adc_tm_high_enable = 0;
+				return rc;
+			}
+		} else {
+			rc = qpnp_adc_tm_reg_update(chip,
+				QPNP_BTM_Mn_EN(btm_chan_idx),
+				QPNP_BTM_Mn_HIGH_THR_INT_EN, false);
+			if (rc < 0) {
+				pr_err("high threshold int update failed\n");
+				return rc;
+			}
 		}
-	} else {
+		} else {
 		/*
 		 * Uses the thermal sysfs registered device to disable
 		 * the corresponding high voltage threshold which
@@ -2140,7 +2095,7 @@ static int qpnp_adc_tm_disable_rearm_high_thresholds(
 		sensor_mask = 1 << sensor_num;
 		pr_debug("thermal node with mask:%x\n", sensor_mask);
 		rc = qpnp_adc_tm_activate_trip_type(
-			chip->sensor[sensor_num].tz_dev,
+			&chip->sensor[sensor_num],
 			ADC_TM_TRIP_LOW_COOL,
 			THERMAL_TRIP_ACTIVATION_DISABLED);
 		if (rc < 0) {
@@ -2189,11 +2144,8 @@ static int qpnp_adc_tm_disable_rearm_high_thresholds(
 		return rc;
 	}
 
-	if (!queue_work(chip->sensor[sensor_num].req_wq,
-				&chip->sensor[sensor_num].work)) {
-		/* The item is already queued, reduce the count */
-		atomic_dec(&chip->wq_cnt);
-	}
+	queue_work(chip->sensor[sensor_num].req_wq,
+		&chip->sensor[sensor_num].work);
 
 	return rc;
 }
@@ -2203,11 +2155,17 @@ static int qpnp_adc_tm_disable_rearm_low_thresholds(
 {
 	struct qpnp_adc_thr_client_info *client_info = NULL;
 	struct list_head *thr_list;
-	uint32_t btm_chan_num = 0;
+	uint32_t btm_chan_num = 0, btm_chan_idx = 0;
 	u8 sensor_mask = 0, notify_check = 0;
 	int rc = 0;
 
 	btm_chan_num = chip->sensor[sensor_num].btm_channel_num;
+	rc = qpnp_adc_tm_get_btm_idx(chip, btm_chan_num, &btm_chan_idx);
+	if (rc < 0) {
+		pr_err("Invalid btm channel idx\n");
+		return rc;
+	}
+
 	pr_debug("low:sen:%d, hs:0x%x, ls:0x%x, meas_en:0x%x\n",
 		sensor_num, chip->th_info.adc_tm_high_enable,
 		chip->th_info.adc_tm_low_enable,
@@ -2217,21 +2175,24 @@ static int qpnp_adc_tm_disable_rearm_low_thresholds(
 		 * For non thermal registered clients such as usb_id,
 		 * vbatt, pmic_therm
 		 */
-		pr_debug("non thermal node - mask:%x\n", sensor_mask);
-		rc = qpnp_adc_tm_recalib_request_check(chip,
-				sensor_num, false, &notify_check);
-		if (rc < 0 || !notify_check) {
-			pr_debug("Calib recheck re-armed rc=%d\n", rc);
-			chip->th_info.adc_tm_low_enable = 0;
-			return rc;
-		}
 		sensor_mask = 1 << sensor_num;
-		rc = qpnp_adc_tm_reg_update(chip,
-			QPNP_ADC_TM_LOW_THR_INT_EN,
-			sensor_mask, false);
-		if (rc < 0) {
-			pr_err("low threshold int read failed\n");
-			return rc;
+		pr_debug("non thermal node - mask:%x\n", sensor_mask);
+		if (!chip->adc_tm_hc) {
+			rc = qpnp_adc_tm_recalib_request_check(chip,
+					sensor_num, false, &notify_check);
+			if (rc < 0 || !notify_check) {
+				pr_debug("Calib recheck re-armed rc=%d\n", rc);
+				chip->th_info.adc_tm_low_enable = 0;
+				return rc;
+			}
+		} else {
+			rc = qpnp_adc_tm_reg_update(chip,
+				QPNP_BTM_Mn_EN(btm_chan_idx),
+				QPNP_BTM_Mn_LOW_THR_INT_EN, false);
+			if (rc < 0) {
+				pr_err("low threshold int update failed\n");
+				return rc;
+			}
 		}
 	} else {
 		/*
@@ -2242,7 +2203,7 @@ static int qpnp_adc_tm_disable_rearm_low_thresholds(
 		sensor_mask = 1 << sensor_num;
 		pr_debug("thermal node with mask:%x\n", sensor_mask);
 		rc = qpnp_adc_tm_activate_trip_type(
-			chip->sensor[sensor_num].tz_dev,
+			&chip->sensor[sensor_num],
 			ADC_TM_TRIP_HIGH_WARM,
 			THERMAL_TRIP_ACTIVATION_DISABLED);
 		if (rc < 0) {
@@ -2291,11 +2252,8 @@ static int qpnp_adc_tm_disable_rearm_low_thresholds(
 		return rc;
 	}
 
-	if (!queue_work(chip->sensor[sensor_num].req_wq,
-				&chip->sensor[sensor_num].work)) {
-		/* The item is already queued, reduce the count */
-		atomic_dec(&chip->wq_cnt);
-	}
+	queue_work(chip->sensor[sensor_num].req_wq,
+				&chip->sensor[sensor_num].work);
 
 	return rc;
 }
@@ -2359,8 +2317,6 @@ static int qpnp_adc_tm_read_status(struct qpnp_adc_tm_chip *chip)
 
 fail:
 	mutex_unlock(&chip->adc->adc_lock);
-	if (rc < 0)
-		atomic_dec(&chip->wq_cnt);
 
 	return rc;
 }
@@ -2383,7 +2339,6 @@ static int qpnp_adc_tm_hc_read_status(struct qpnp_adc_tm_chip *chip)
 			goto fail;
 		}
 	}
-
 	while (sensor_num < chip->max_channels_available) {
 		if (chip->sensor[sensor_num].high_thr_triggered) {
 			rc = qpnp_adc_tm_disable_rearm_high_thresholds(
@@ -2414,10 +2369,6 @@ static int qpnp_adc_tm_hc_read_status(struct qpnp_adc_tm_chip *chip)
 fail:
 	mutex_unlock(&chip->adc->adc_lock);
 
-	if (rc < 0 || (!chip->th_info.adc_tm_high_enable &&
-					!chip->th_info.adc_tm_low_enable))
-		atomic_dec(&chip->wq_cnt);
-
 	return rc;
 }
 
@@ -2445,8 +2396,6 @@ static void qpnp_adc_tm_high_thr_work(struct work_struct *work)
 		if (rc < 0)
 			pr_err("adc-tm-hc high thr work failed\n");
 	}
-
-	return;
 }
 
 static irqreturn_t qpnp_adc_tm_high_thr_isr(int irq, void *data)
@@ -2482,7 +2431,8 @@ static irqreturn_t qpnp_adc_tm_high_thr_isr(int irq, void *data)
 	}
 
 	/* Check which interrupt threshold is lower and measure against the
-	 * enabled channel */
+	 * enabled channel
+	 */
 	rc = qpnp_adc_tm_read_reg(chip, QPNP_ADC_TM_MULTI_MEAS_EN,
 				&chip->th_info.qpnp_adc_tm_meas_en, 1);
 	if (rc) {
@@ -2519,7 +2469,7 @@ static irqreturn_t qpnp_adc_tm_high_thr_isr(int irq, void *data)
 		 */
 		pr_debug("thermal node with mask:%x\n", sensor_mask);
 		rc = qpnp_adc_tm_activate_trip_type(
-			chip->sensor[sensor_num].tz_dev,
+			&chip->sensor[sensor_num],
 			ADC_TM_TRIP_LOW_COOL,
 			THERMAL_TRIP_ACTIVATION_DISABLED);
 		if (rc < 0) {
@@ -2528,7 +2478,6 @@ static irqreturn_t qpnp_adc_tm_high_thr_isr(int irq, void *data)
 		}
 	}
 
-	atomic_inc(&chip->wq_cnt);
 	queue_work(chip->high_thr_wq, &chip->trigger_high_thr_work);
 
 	return IRQ_HANDLED;
@@ -2558,8 +2507,6 @@ static void qpnp_adc_tm_low_thr_work(struct work_struct *work)
 		if (rc < 0)
 			pr_err("adc-tm-hc low thr work failed\n");
 	}
-
-	return;
 }
 
 static irqreturn_t qpnp_adc_tm_low_thr_isr(int irq, void *data)
@@ -2630,7 +2577,7 @@ static irqreturn_t qpnp_adc_tm_low_thr_isr(int irq, void *data)
 		 */
 		pr_debug("thermal node with mask:%x\n", sensor_mask);
 		rc = qpnp_adc_tm_activate_trip_type(
-			chip->sensor[sensor_num].tz_dev,
+			&chip->sensor[sensor_num],
 			ADC_TM_TRIP_HIGH_WARM,
 			THERMAL_TRIP_ACTIVATION_DISABLED);
 		if (rc < 0) {
@@ -2639,7 +2586,6 @@ static irqreturn_t qpnp_adc_tm_low_thr_isr(int irq, void *data)
 		}
 	}
 
-	atomic_inc(&chip->wq_cnt);
 	queue_work(chip->low_thr_wq, &chip->trigger_low_thr_work);
 
 	return IRQ_HANDLED;
@@ -2679,7 +2625,7 @@ static int qpnp_adc_tm_rc_check_sensor_trip(struct qpnp_adc_tm_chip *chip,
 			 */
 			pr_debug("thermal node with mask:%x\n", sensor_mask);
 				rc = qpnp_adc_tm_activate_trip_type(
-					chip->sensor[i].tz_dev,
+					&chip->sensor[i],
 					ADC_TM_TRIP_HIGH_WARM,
 					THERMAL_TRIP_ACTIVATION_DISABLED);
 				if (rc < 0) {
@@ -2710,7 +2656,7 @@ static int qpnp_adc_tm_rc_check_sensor_trip(struct qpnp_adc_tm_chip *chip,
 			 */
 				pr_debug("thermal node with mask:%x\n", i);
 				rc = qpnp_adc_tm_activate_trip_type(
-					chip->sensor[i].tz_dev,
+					&chip->sensor[i],
 					ADC_TM_TRIP_LOW_COOL,
 					THERMAL_TRIP_ACTIVATION_DISABLED);
 				if (rc < 0) {
@@ -2768,23 +2714,24 @@ static irqreturn_t qpnp_adc_tm_rc_thr_isr(int irq, void *data)
 	}
 
 	if (sensor_low_notify_num) {
-		if (queue_work(chip->low_thr_wq, &chip->trigger_low_thr_work))
-			atomic_inc(&chip->wq_cnt);
+		pm_wakeup_event(chip->dev,
+				QPNP_ADC_WAKEUP_SRC_TIMEOUT_MS);
+		queue_work(chip->low_thr_wq, &chip->trigger_low_thr_work);
 	}
 
 	if (sensor_high_notify_num) {
-		if (queue_work(chip->high_thr_wq,
-				&chip->trigger_high_thr_work))
-			atomic_inc(&chip->wq_cnt);
+		pm_wakeup_event(chip->dev,
+				QPNP_ADC_WAKEUP_SRC_TIMEOUT_MS);
+		queue_work(chip->high_thr_wq,
+				&chip->trigger_high_thr_work);
 	}
 
 	return IRQ_HANDLED;
 }
 
-static int qpnp_adc_read_temp(struct thermal_zone_device *thermal,
-			    unsigned long *temp)
+static int qpnp_adc_read_temp(void *data, int *temp)
 {
-	struct qpnp_adc_tm_sensor *adc_tm_sensor = thermal->devdata;
+	struct qpnp_adc_tm_sensor *adc_tm_sensor = data;
 	struct qpnp_adc_tm_chip *chip = adc_tm_sensor->chip;
 	struct qpnp_vadc_result result;
 	int rc = 0;
@@ -2799,14 +2746,9 @@ static int qpnp_adc_read_temp(struct thermal_zone_device *thermal,
 	return rc;
 }
 
-static struct thermal_zone_device_ops qpnp_adc_tm_thermal_ops = {
+static struct thermal_zone_of_device_ops qpnp_adc_tm_thermal_ops = {
 	.get_temp = qpnp_adc_read_temp,
-	.get_mode = qpnp_adc_tm_get_mode,
-	.set_mode = qpnp_adc_tm_set_mode,
-	.get_trip_type = qpnp_adc_tm_get_trip_type,
-	.activate_trip_type = qpnp_adc_tm_activate_trip_type,
-	.get_trip_temp = qpnp_adc_tm_get_trip_temp,
-	.set_trip_temp = qpnp_adc_tm_set_trip_temp,
+	.set_trips = qpnp_adc_tm_set_trip_temp,
 };
 
 int32_t qpnp_adc_tm_channel_measure(struct qpnp_adc_tm_chip *chip,
@@ -2880,6 +2822,7 @@ int32_t qpnp_adc_tm_channel_measure(struct qpnp_adc_tm_chip *chip,
 	param->gain_num = qpnp_vadc_amux_scaling_ratio[amux_prescaling].num;
 	param->gain_den = qpnp_vadc_amux_scaling_ratio[amux_prescaling].den;
 	param->adc_tm_hc = chip->adc_tm_hc;
+	param->full_scale_code = chip->adc->adc_prop->full_scale_code;
 	chip->adc->amux_prop->amux_channel = channel;
 	chip->adc->amux_prop->decimation =
 			chip->adc->adc_channels[dt_index].adc_decimation;
@@ -2978,21 +2921,14 @@ int32_t qpnp_adc_tm_disable_chan_meas(struct qpnp_adc_tm_chip *chip,
 		sensor_mask = 1 << chip->sensor[dt_index].sensor_num;
 
 		rc = qpnp_adc_tm_reg_update(chip, QPNP_ADC_TM_LOW_THR_INT_EN,
-			sensor_mask, false);
-		if (rc < 0) {
-			pr_err("low threshold int write failed\n");
-			goto fail;
-		}
-
-		rc = qpnp_adc_tm_reg_update(chip, QPNP_ADC_TM_HIGH_THR_INT_EN,
-			sensor_mask, false);
+				sensor_mask, false);
 		if (rc < 0) {
 			pr_err("high threshold int enable failed\n");
 			goto fail;
 		}
 
 		rc = qpnp_adc_tm_reg_update(chip, QPNP_ADC_TM_MULTI_MEAS_EN,
-			sensor_mask, false);
+				sensor_mask, false);
 		if (rc < 0) {
 			pr_err("multi measurement en failed\n");
 			goto fail;
@@ -3006,14 +2942,14 @@ int32_t qpnp_adc_tm_disable_chan_meas(struct qpnp_adc_tm_chip *chip,
 		}
 
 		rc = qpnp_adc_tm_reg_update(chip, QPNP_BTM_Mn_EN(btm_chan_num),
-					QPNP_BTM_Mn_LOW_THR_INT_EN, false);
+				QPNP_BTM_Mn_LOW_THR_INT_EN, false);
 		if (rc < 0) {
 			pr_err("low thr disable err:%d\n", btm_chan_num);
 			return rc;
 		}
 
 		rc = qpnp_adc_tm_reg_update(chip, QPNP_BTM_Mn_EN(btm_chan_num),
-					QPNP_BTM_Mn_MEAS_EN, false);
+				QPNP_BTM_Mn_MEAS_EN, false);
 		if (rc < 0) {
 			pr_err("multi measurement disable failed\n");
 			return rc;
@@ -3031,22 +2967,6 @@ fail:
 }
 EXPORT_SYMBOL(qpnp_adc_tm_disable_chan_meas);
 
-int32_t qpnp_adc_tm_usbid_configure(struct qpnp_adc_tm_chip *chip,
-				struct qpnp_adc_tm_btm_param *param)
-{
-	param->channel = LR_MUX10_PU2_AMUX_USB_ID_LV;
-	return qpnp_adc_tm_channel_measure(chip, param);
-}
-EXPORT_SYMBOL(qpnp_adc_tm_usbid_configure);
-
-int32_t qpnp_adc_tm_usbid_end(struct qpnp_adc_tm_chip *chip)
-{
-	struct qpnp_adc_tm_btm_param param;
-
-	return qpnp_adc_tm_disable_chan_meas(chip, &param);
-}
-EXPORT_SYMBOL(qpnp_adc_tm_usbid_end);
-
 struct qpnp_adc_tm_chip *qpnp_get_adc_tm(struct device *dev, const char *name)
 {
 	struct qpnp_adc_tm_chip *chip;
@@ -3060,7 +2980,7 @@ struct qpnp_adc_tm_chip *qpnp_get_adc_tm(struct device *dev, const char *name)
 		return ERR_PTR(-ENODEV);
 
 	list_for_each_entry(chip, &qpnp_adc_tm_device_list, list)
-		if (chip->adc->spmi->dev.of_node == node)
+		if (chip->adc->pdev->dev.of_node == node)
 			return chip;
 
 	return ERR_PTR(-EPROBE_DEFER);
@@ -3080,7 +3000,7 @@ static int qpnp_adc_tm_initial_setup(struct qpnp_adc_tm_chip *chip)
 	}
 
 	rc = qpnp_adc_tm_write_reg(chip, QPNP_ADC_TM_LOW_THR_INT_EN,
-							thr_init, 1);
+			thr_init, 1);
 	if (rc < 0) {
 		pr_err("low thr init failed\n");
 		return rc;
@@ -3099,12 +3019,13 @@ static int qpnp_adc_tm_initial_setup(struct qpnp_adc_tm_chip *chip)
 static const struct of_device_id qpnp_adc_tm_match_table[] = {
 	{	.compatible = "qcom,qpnp-adc-tm" },
 	{	.compatible = "qcom,qpnp-adc-tm-hc" },
+	{	.compatible = "qcom,qpnp-adc-tm-hc-pm5" },
 	{}
 };
 
-static int qpnp_adc_tm_probe(struct spmi_device *spmi)
+static int qpnp_adc_tm_probe(struct platform_device *pdev)
 {
-	struct device_node *node = spmi->dev.of_node, *child;
+	struct device_node *node = pdev->dev.of_node, *child;
 	struct qpnp_adc_tm_chip *chip;
 	struct qpnp_adc_drv *adc_qpnp;
 	int32_t count_adc_channel_list = 0, rc, sen_idx = 0, i = 0;
@@ -3125,56 +3046,63 @@ static int qpnp_adc_tm_probe(struct spmi_device *spmi)
 		return -ENODEV;
 	}
 
-	chip = devm_kzalloc(&spmi->dev, sizeof(struct qpnp_adc_tm_chip) +
+	chip = devm_kzalloc(&pdev->dev, sizeof(struct qpnp_adc_tm_chip) +
 			(count_adc_channel_list *
 			sizeof(struct qpnp_adc_tm_sensor)),
 				GFP_KERNEL);
-	if (!chip) {
-		dev_err(&spmi->dev, "Unable to allocate memory\n");
+	if (!chip)
 		return -ENOMEM;
-	}
 
-	adc_qpnp = devm_kzalloc(&spmi->dev, sizeof(struct qpnp_adc_drv),
+	list_add(&chip->list, &qpnp_adc_tm_device_list);
+	chip->max_channels_available = count_adc_channel_list;
+
+	adc_qpnp = devm_kzalloc(&pdev->dev, sizeof(struct qpnp_adc_drv),
 			GFP_KERNEL);
 	if (!adc_qpnp) {
-		dev_err(&spmi->dev, "Unable to allocate memory\n");
 		rc = -ENOMEM;
 		goto fail;
 	}
 
-	chip->dev = &(spmi->dev);
+	chip->dev = &(pdev->dev);
 	chip->adc = adc_qpnp;
+	chip->adc->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+	if (!chip->adc->regmap) {
+		dev_err(&pdev->dev, "Couldn't get parent's regmap\n");
+		rc = -EINVAL;
+		goto fail;
+	}
 
 	if (of_device_is_compatible(node, "qcom,qpnp-adc-tm-hc")) {
 		chip->adc_tm_hc = true;
 		chip->adc->adc_hc = true;
 	}
 
-	rc = qpnp_adc_get_devicetree_data(spmi, chip->adc);
+	rc = qpnp_adc_get_devicetree_data(pdev, chip->adc);
 	if (rc) {
-		dev_err(&spmi->dev, "failed to read device tree\n");
+		dev_err(&pdev->dev, "failed to read device tree\n");
 		goto fail;
 	}
 	mutex_init(&chip->adc->adc_lock);
 
 	/* Register the ADC peripheral interrupt */
 	if (!chip->adc_tm_hc) {
-		chip->adc->adc_high_thr_irq = spmi_get_irq_byname(spmi,
-						NULL, "high-thr-en-set");
+		chip->adc->adc_high_thr_irq = platform_get_irq_byname(pdev,
+				"high-thr-en-set");
 		if (chip->adc->adc_high_thr_irq < 0) {
 			pr_err("Invalid irq\n");
 			rc = -ENXIO;
 			goto fail;
 		}
-		chip->adc->adc_low_thr_irq = spmi_get_irq_byname(spmi,
-						NULL, "low-thr-en-set");
+
+		chip->adc->adc_low_thr_irq = platform_get_irq_byname(pdev,
+				"low-thr-en-set");
 		if (chip->adc->adc_low_thr_irq < 0) {
 			pr_err("Invalid irq\n");
 			rc = -ENXIO;
 			goto fail;
 		}
 	}
-	chip->vadc_dev = qpnp_get_vadc(&spmi->dev, "adc_tm");
+	chip->vadc_dev = qpnp_get_vadc(&pdev->dev, "adc_tm");
 	if (IS_ERR(chip->vadc_dev)) {
 		rc = PTR_ERR(chip->vadc_dev);
 		if (rc != -EPROBE_DEFER)
@@ -3236,17 +3164,16 @@ static int qpnp_adc_tm_probe(struct spmi_device *spmi)
 			chip->sensor[sen_idx].thermal_node = true;
 			snprintf(name, sizeof(name), "%s",
 				chip->adc->adc_channels[sen_idx].name);
-			chip->sensor[sen_idx].meas_interval =
-				QPNP_ADC_TM_MEAS_INTERVAL;
 			chip->sensor[sen_idx].low_thr =
 						QPNP_ADC_TM_M0_LOW_THR;
 			chip->sensor[sen_idx].high_thr =
 						QPNP_ADC_TM_M0_HIGH_THR;
 			chip->sensor[sen_idx].tz_dev =
-				thermal_zone_device_register(name,
-				ADC_TM_TRIP_NUM, ADC_TM_WRITABLE_TRIPS_MASK,
+				devm_thermal_zone_of_sensor_register(
+				chip->dev,
+				chip->sensor[sen_idx].vadc_channel_num,
 				&chip->sensor[sen_idx],
-				&qpnp_adc_tm_thermal_ops, NULL, 0, 0);
+				&qpnp_adc_tm_thermal_ops);
 			if (IS_ERR(chip->sensor[sen_idx].tz_dev))
 				pr_err("thermal device register failed.\n");
 		}
@@ -3260,19 +3187,21 @@ static int qpnp_adc_tm_probe(struct spmi_device *spmi)
 		INIT_LIST_HEAD(&chip->sensor[sen_idx].thr_list);
 		sen_idx++;
 	}
-	chip->max_channels_available = count_adc_channel_list;
+
 	chip->high_thr_wq = alloc_workqueue("qpnp_adc_tm_high_thr_wq",
 							WQ_HIGHPRI, 0);
 	if (!chip->high_thr_wq) {
 		pr_err("Requesting high thr priority wq failed\n");
 		goto fail;
 	}
+
 	chip->low_thr_wq = alloc_workqueue("qpnp_adc_tm_low_thr_wq",
 							WQ_HIGHPRI, 0);
 	if (!chip->low_thr_wq) {
 		pr_err("Requesting low thr priority wq failed\n");
 		goto fail;
 	}
+
 	chip->thr_wq = alloc_workqueue("qpnp_adc_tm_thr_wq",
 						WQ_HIGHPRI, 0);
 	if (!chip->thr_wq) {
@@ -3282,45 +3211,43 @@ static int qpnp_adc_tm_probe(struct spmi_device *spmi)
 
 	INIT_WORK(&chip->trigger_high_thr_work, qpnp_adc_tm_high_thr_work);
 	INIT_WORK(&chip->trigger_low_thr_work, qpnp_adc_tm_low_thr_work);
-	atomic_set(&chip->wq_cnt, 0);
 
 	if (!chip->adc_tm_hc) {
 		rc = qpnp_adc_tm_initial_setup(chip);
 		if (rc)
 			goto fail;
-
-		rc = devm_request_irq(&spmi->dev, chip->adc->adc_high_thr_irq,
+		rc = devm_request_irq(&pdev->dev, chip->adc->adc_high_thr_irq,
 				qpnp_adc_tm_high_thr_isr,
 		IRQF_TRIGGER_RISING, "qpnp_adc_tm_high_interrupt", chip);
 		if (rc) {
-			dev_err(&spmi->dev, "failed to request adc irq\n");
+			dev_err(&pdev->dev, "failed to request adc irq\n");
 			goto fail;
 		} else {
 			enable_irq_wake(chip->adc->adc_high_thr_irq);
 		}
 
-		rc = devm_request_irq(&spmi->dev, chip->adc->adc_low_thr_irq,
-					qpnp_adc_tm_low_thr_isr,
-			IRQF_TRIGGER_RISING, "qpnp_adc_tm_low_interrupt", chip);
+		rc = devm_request_irq(&pdev->dev, chip->adc->adc_low_thr_irq,
+				qpnp_adc_tm_low_thr_isr,
+				IRQF_TRIGGER_RISING,
+				"qpnp_adc_tm_low_interrupt", chip);
 		if (rc) {
-			dev_err(&spmi->dev, "failed to request adc irq\n");
+			dev_err(&pdev->dev, "failed to request adc irq\n");
 			goto fail;
 		} else {
 			enable_irq_wake(chip->adc->adc_low_thr_irq);
 		}
 	} else {
-		rc = devm_request_irq(&spmi->dev, chip->adc->adc_irq_eoc,
+		rc = devm_request_irq(&pdev->dev, chip->adc->adc_irq_eoc,
 				qpnp_adc_tm_rc_thr_isr,
 			IRQF_TRIGGER_RISING, "qpnp_adc_tm_interrupt", chip);
 		if (rc)
-			dev_err(&spmi->dev, "failed to request adc irq\n");
+			dev_err(&pdev->dev, "failed to request adc irq\n");
 		else
 			enable_irq_wake(chip->adc->adc_irq_eoc);
 	}
 
 	chip->adc_vote_enable = false;
-	dev_set_drvdata(&spmi->dev, chip);
-	list_add(&chip->list, &qpnp_adc_tm_device_list);
+	dev_set_drvdata(&pdev->dev, chip);
 	spin_lock_init(&chip->th_info.adc_tm_low_lock);
 	spin_lock_init(&chip->th_info.adc_tm_high_lock);
 
@@ -3335,31 +3262,25 @@ fail:
 			if (chip->sensor[i].req_wq)
 				destroy_workqueue(chip->sensor[sen_idx].req_wq);
 		}
-		i++;
 	}
 	if (chip->high_thr_wq)
 		destroy_workqueue(chip->high_thr_wq);
 	if (chip->low_thr_wq)
 		destroy_workqueue(chip->low_thr_wq);
-	dev_set_drvdata(&spmi->dev, NULL);
+	list_del(&chip->list);
+	dev_set_drvdata(&pdev->dev, NULL);
 	return rc;
 }
 
-static int qpnp_adc_tm_remove(struct spmi_device *spmi)
+static int qpnp_adc_tm_remove(struct platform_device *pdev)
 {
-	struct qpnp_adc_tm_chip *chip = dev_get_drvdata(&spmi->dev);
-	struct device_node *node = spmi->dev.of_node, *child;
-	bool thermal_node = false;
+	struct qpnp_adc_tm_chip *chip = dev_get_drvdata(&pdev->dev);
+	struct device_node *node = pdev->dev.of_node, *child;
 	int i = 0;
 
 	for_each_child_of_node(node, child) {
-		thermal_node = of_property_read_bool(child,
-					"qcom,thermal-node");
-		if (thermal_node) {
-			thermal_zone_device_unregister(chip->sensor[i].tz_dev);
-			if (chip->sensor[i].req_wq)
-				destroy_workqueue(chip->sensor[i].req_wq);
-		}
+		if (chip->sensor[i].req_wq)
+			destroy_workqueue(chip->sensor[i].req_wq);
 		i++;
 	}
 
@@ -3369,59 +3290,45 @@ static int qpnp_adc_tm_remove(struct spmi_device *spmi)
 		destroy_workqueue(chip->low_thr_wq);
 	if (chip->adc->hkadc_ldo && chip->adc->hkadc_ldo_ok)
 		qpnp_adc_free_voltage_resource(chip->adc);
-	dev_set_drvdata(&spmi->dev, NULL);
+	dev_set_drvdata(&pdev->dev, NULL);
 
 	return 0;
 }
 
-static void qpnp_adc_tm_shutdown(struct spmi_device *spmi)
+static void qpnp_adc_tm_shutdown(struct platform_device *pdev)
 {
-	struct qpnp_adc_tm_chip *chip = dev_get_drvdata(&spmi->dev);
-	int rc = 0;
-	u8 reg_val = 0, status1 = 0, en_ctl1 = 0;
-
-	/* Set measurement in single measurement mode */
-	reg_val = ADC_OP_NORMAL_MODE << QPNP_OP_MODE_SHIFT;
-	rc = qpnp_adc_tm_mode_select(chip, reg_val);
-	if (rc < 0)
-		pr_err("adc-tm single mode select failed\n");
+	struct qpnp_adc_tm_chip *chip = dev_get_drvdata(&pdev->dev);
+	int rc = 0, i = 0;
 
 	/* Disable bank */
 	rc = qpnp_adc_tm_disable(chip);
 	if (rc < 0)
 		pr_err("adc-tm disable failed\n");
 
-	/* Check if a conversion is in progress */
-	rc = qpnp_adc_tm_req_sts_check(chip);
-	if (rc < 0)
-		pr_err("adc-tm req_sts check failed\n");
-
-	/* Disable multimeasurement */
-	reg_val = 0;
-	rc = qpnp_adc_tm_write_reg(chip, QPNP_ADC_TM_MULTI_MEAS_EN, reg_val, 1);
-	if (rc < 0)
-		pr_err("adc-tm multi-measurement mode disable failed\n");
-
-	rc = qpnp_adc_tm_read_reg(chip, QPNP_ADC_TM_STATUS1, &status1, 1);
-	if (rc < 0)
-		pr_err("adc-tm status1 read failed\n");
-
-	rc = qpnp_adc_tm_read_reg(chip, QPNP_EN_CTL1, &en_ctl1, 1);
-	if (rc < 0)
-		pr_err("adc-tm en_ctl1 read failed\n");
-
-	pr_debug("adc-tm status1=0%x, en_ctl1=0x%x\n", status1, en_ctl1);
-	pr_debug("stopping all recurring measurements on adc-tm\n");
+	for (i = 0; i < QPNP_BTM_CHANNELS; i++) {
+		rc = qpnp_adc_tm_reg_update(chip,
+			QPNP_BTM_Mn_EN(i),
+			QPNP_BTM_Mn_MEAS_EN, false);
+		if (rc < 0)
+			pr_err("multi measurement disable failed\n");
+	}
 }
 
 static int qpnp_adc_tm_suspend_noirq(struct device *dev)
 {
 	struct qpnp_adc_tm_chip *chip = dev_get_drvdata(dev);
+	struct device_node *node = dev->of_node, *child;
+	int i = 0;
 
-	if (0 != atomic_read(&chip->wq_cnt)) {
-		pr_err(
-			"Aborting suspend, adc_tm notification running while suspending\n");
-		return -EBUSY;
+	flush_workqueue(chip->high_thr_wq);
+	flush_workqueue(chip->low_thr_wq);
+
+	for_each_child_of_node(node, child) {
+		if (chip->sensor[i].req_wq) {
+			pr_debug("flushing queue for sensor %d\n", i);
+			flush_workqueue(chip->sensor[i].req_wq);
+		}
+		i++;
 	}
 	return 0;
 }
@@ -3430,11 +3337,11 @@ static const struct dev_pm_ops qpnp_adc_tm_pm_ops = {
 	.suspend_noirq	= qpnp_adc_tm_suspend_noirq,
 };
 
-static struct spmi_driver qpnp_adc_tm_driver = {
+static struct platform_driver qpnp_adc_tm_driver = {
 	.driver		= {
-		.name	= "qcom,qpnp-adc-tm",
-		.of_match_table = qpnp_adc_tm_match_table,
-		.pm	= &qpnp_adc_tm_pm_ops,
+		.name		= "qcom,qpnp-adc-tm",
+		.of_match_table	= qpnp_adc_tm_match_table,
+		.pm		= &qpnp_adc_tm_pm_ops,
 	},
 	.probe		= qpnp_adc_tm_probe,
 	.remove		= qpnp_adc_tm_remove,
@@ -3443,13 +3350,13 @@ static struct spmi_driver qpnp_adc_tm_driver = {
 
 static int __init qpnp_adc_tm_init(void)
 {
-	return spmi_driver_register(&qpnp_adc_tm_driver);
+	return platform_driver_register(&qpnp_adc_tm_driver);
 }
 module_init(qpnp_adc_tm_init);
 
 static void __exit qpnp_adc_tm_exit(void)
 {
-	spmi_driver_unregister(&qpnp_adc_tm_driver);
+	platform_driver_unregister(&qpnp_adc_tm_driver);
 }
 module_exit(qpnp_adc_tm_exit);
 

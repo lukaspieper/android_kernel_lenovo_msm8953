@@ -1,4 +1,4 @@
-Qualcomm IPC Router
+Qualcomm Technologies, Inc. IPC Router
 
 Required properties:
 -compatible:	should be "qcom,ipc_router"

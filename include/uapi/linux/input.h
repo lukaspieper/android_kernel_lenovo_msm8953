@@ -61,9 +61,14 @@ struct input_id {
  * Note that input core does not clamp reported values to the
  * [minimum, maximum] limits, such task is left to userspace.
  *
- * Resolution for main axes (ABS_X, ABS_Y, ABS_Z) is reported in
- * units per millimeter (units/mm), resolution for rotational axes
- * (ABS_RX, ABS_RY, ABS_RZ) is reported in units per radian.
+ * The default resolution for main axes (ABS_X, ABS_Y, ABS_Z)
+ * is reported in units per millimeter (units/mm), resolution
+ * for rotational axes (ABS_RX, ABS_RY, ABS_RZ) is reported
+ * in units per radian.
+ * When INPUT_PROP_ACCELEROMETER is set the resolution changes.
+ * The main axes (ABS_X, ABS_Y, ABS_Z) are then reported in
+ * in units per g (units/g) and in units per degree per second
+ * (units/deg/s) for rotational axes (ABS_RX, ABS_RY, ABS_RZ).
  */
 struct input_absinfo {
 	__s32 value;
@@ -96,6 +101,12 @@ struct input_keymap_entry {
 	__u16 index;
 	__u32 keycode;
 	__u8  scancode[32];
+};
+
+struct input_mask {
+	__u32 type;
+	__u32 codes_size;
+	__u64 codes_ptr;
 };
 
 #define EVIOCGVERSION		_IOR('E', 0x01, int)			/* get driver version */
@@ -148,17 +159,66 @@ struct input_keymap_entry {
 #define EVIOCGABS(abs)		_IOR('E', 0x40 + (abs), struct input_absinfo)	/* get abs value/limits */
 #define EVIOCSABS(abs)		_IOW('E', 0xc0 + (abs), struct input_absinfo)	/* set abs value/limits */
 
-#define EVIOCSFF		_IOC(_IOC_WRITE, 'E', 0x80, sizeof(struct ff_effect))	/* send a force effect to a force feedback device */
+#define EVIOCSFF		_IOW('E', 0x80, struct ff_effect)	/* send a force effect to a force feedback device */
 #define EVIOCRMFF		_IOW('E', 0x81, int)			/* Erase a force effect */
 #define EVIOCGEFFECTS		_IOR('E', 0x84, int)			/* Report number of effects playable at the same time */
 
 #define EVIOCGRAB		_IOW('E', 0x90, int)			/* Grab/Release device */
+#define EVIOCREVOKE		_IOW('E', 0x91, int)			/* Revoke device access */
 
-/* HACK: disable conflicting EVIOCREVOKE until Android userspace stops using EVIOCSSUSPENDBLOCK */
-/*#define EVIOCREVOKE		_IOW('E', 0x91, int)*/			/* Revoke device access */
+/**
+ * EVIOCGMASK - Retrieve current event mask
+ *
+ * This ioctl allows user to retrieve the current event mask for specific
+ * event type. The argument must be of type "struct input_mask" and
+ * specifies the event type to query, the address of the receive buffer and
+ * the size of the receive buffer.
+ *
+ * The event mask is a per-client mask that specifies which events are
+ * forwarded to the client. Each event code is represented by a single bit
+ * in the event mask. If the bit is set, the event is passed to the client
+ * normally. Otherwise, the event is filtered and will never be queued on
+ * the client's receive buffer.
+ *
+ * Event masks do not affect global state of the input device. They only
+ * affect the file descriptor they are applied to.
+ *
+ * The default event mask for a client has all bits set, i.e. all events
+ * are forwarded to the client. If the kernel is queried for an unknown
+ * event type or if the receive buffer is larger than the number of
+ * event codes known to the kernel, the kernel returns all zeroes for those
+ * codes.
+ *
+ * At maximum, codes_size bytes are copied.
+ *
+ * This ioctl may fail with ENODEV in case the file is revoked, EFAULT
+ * if the receive-buffer points to invalid memory, or EINVAL if the kernel
+ * does not implement the ioctl.
+ */
+#define EVIOCGMASK		_IOR('E', 0x92, struct input_mask)	/* Get event-masks */
 
-#define EVIOCGSUSPENDBLOCK	_IOR('E', 0x91, int)			/* get suspend block enable */
-#define EVIOCSSUSPENDBLOCK	_IOW('E', 0x91, int)			/* set suspend block enable */
+/**
+ * EVIOCSMASK - Set event mask
+ *
+ * This ioctl is the counterpart to EVIOCGMASK. Instead of receiving the
+ * current event mask, this changes the client's event mask for a specific
+ * type.  See EVIOCGMASK for a description of event-masks and the
+ * argument-type.
+ *
+ * This ioctl provides full forward compatibility. If the passed event type
+ * is unknown to the kernel, or if the number of event codes specified in
+ * the mask is bigger than what is known to the kernel, the ioctl is still
+ * accepted and applied. However, any unknown codes are left untouched and
+ * stay cleared. That means, the kernel always filters unknown codes
+ * regardless of what the client requests.  If the new mask doesn't cover
+ * all known event-codes, all remaining codes are automatically cleared and
+ * thus filtered.
+ *
+ * This ioctl may fail with ENODEV in case the file is revoked. EFAULT is
+ * returned if the receive-buffer points to invalid memory. EINVAL is returned
+ * if the kernel does not implement the ioctl.
+ */
+#define EVIOCSMASK		_IOW('E', 0x93, struct input_mask)	/* Set event-masks */
 
 #define EVIOCSCLOCKID		_IOW('E', 0xa0, int)			/* Set clockid to be used for timestamps */
 
@@ -191,13 +251,17 @@ struct input_keymap_entry {
 #define BUS_GSC			0x1A
 #define BUS_ATARI		0x1B
 #define BUS_SPI			0x1C
+#define BUS_RMI			0x1D
+#define BUS_CEC			0x1E
+#define BUS_INTEL_ISHTP		0x1F
 
 /*
  * MT_TOOL types
  */
 #define MT_TOOL_FINGER		0
 #define MT_TOOL_PEN		1
-#define MT_TOOL_MAX		1
+#define MT_TOOL_PALM		2
+#define MT_TOOL_MAX		2
 
 /*
  * Values describing the status of a force-feedback effect
@@ -417,6 +481,14 @@ struct ff_effect {
 
 #define FF_GAIN		0x60
 #define FF_AUTOCENTER	0x61
+
+/*
+ * ff->playback(effect_id = FF_GAIN) is the first effect_id to
+ * cause a collision with another ff method, in this case ff->set_gain().
+ * Therefore the greatest safe value for effect_id is FF_GAIN - 1,
+ * and thus the total number of effects should never exceed FF_GAIN.
+ */
+#define FF_MAX_EFFECTS	FF_GAIN
 
 #define FF_MAX		0x7f
 #define FF_CNT		(FF_MAX+1)

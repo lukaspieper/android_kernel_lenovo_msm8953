@@ -1,6 +1,6 @@
 /*
- *  vl53l0x_api_def.h - Linux kernel modules for STM VL53L0 FlightSense TOF
- *						 sensor
+ *  vl53l0x_def.h - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,8 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
-
 
 /**
  * @file VL_def.h
@@ -122,10 +120,10 @@ struct VL_DeviceInfo_t {
 
 #define VL_ERROR_NONE		((int8_t)	0)
 #define VL_ERROR_CALIBRATION_WARNING	((int8_t) -1)
-	/*!< Warning invalid calibration data may be in used
-		\a	VL_InitData()
-		\a VL_GetOffsetCalibrationData
-		\a VL_SetOffsetCalibrationData */
+	/*!< Warning invalid calibration data may be in used*/
+		/*\a VL_InitData()*/
+		/*\a VL_GetOffsetCalibrationData*/
+		/*\a VL_SetOffsetCalibrationData */
 #define VL_ERROR_MIN_CLIPPED			((int8_t) -2)
 	/*!< Warning parameter passed was clipped to min before to be applied */
 
@@ -152,15 +150,15 @@ struct VL_DeviceInfo_t {
 #define VL_ERROR_CONTROL_INTERFACE			((int8_t) -20)
 	/*!< error reported from IO functions */
 #define VL_ERROR_INVALID_COMMAND			((int8_t) -30)
-	/*!< The command is not allowed in the current device state
-	 *	(power down) */
+	/*!< The command is not allowed in the current device state*/
+	/* *	(power down) */
 #define VL_ERROR_DIVISION_BY_ZERO			((int8_t) -40)
 	/*!< In the function a division by zero occurs */
 #define VL_ERROR_REF_SPAD_INIT			((int8_t) -50)
 	/*!< Error during reference SPAD initialization */
 #define VL_ERROR_NOT_IMPLEMENTED			((int8_t) -99)
-	/*!< Tells requested functionality has not been implemented yet or
-	 * not compatible with the device */
+	/*!< Tells requested functionality has not been implemented yet or*/
+	/* * not compatible with the device */
 /** @} VL_define_Error_group */
 
 
@@ -221,28 +219,28 @@ struct VL_DeviceParameters_t {
 	uint8_t DeviceMode;
 	/*!< Defines type of measurement to be done for the next measure */
 	uint8_t HistogramMode;
-	/*!< Defines type of histogram measurement to be done for the next
-	 *	measure */
+	/*!< Defines type of histogram measurement to be done for the next*/
+	/* *	measure */
 	uint32_t MeasurementTimingBudgetMicroSeconds;
 	/*!< Defines the allowed total time for a single measurement */
 	uint32_t InterMeasurementPeriodMilliSeconds;
-	/*!< Defines time between two consecutive measurements (between two
-	 *	measurement starts). If set to 0 means back-to-back mode */
+	/*!< Defines time between two consecutive measurements (between two*/
+	/* *	measurement starts). If set to 0 means back-to-back mode */
 	uint8_t XTalkCompensationEnable;
 	/*!< Tells if Crosstalk compensation shall be enable or not	 */
 	uint16_t XTalkCompensationRangeMilliMeter;
 	/*!< CrossTalk compensation range in millimeter	 */
 	unsigned int XTalkCompensationRateMegaCps;
-	/*!< CrossTalk compensation rate in Mega counts per seconds.
-	 *	Expressed in 16.16 fixed point format.	*/
+	/*!< CrossTalk compensation rate in Mega counts per seconds.*/
+	/* *	Expressed in 16.16 fixed point format.	*/
 	int32_t RangeOffsetMicroMeters;
 	/*!< Range offset adjustment (mm).	*/
 
 	uint8_t LimitChecksEnable[VL_CHECKENABLE_NUMBER_OF_CHECKS];
 	/*!< This Array store all the Limit Check enable for this device. */
 	uint8_t LimitChecksStatus[VL_CHECKENABLE_NUMBER_OF_CHECKS];
-	/*!< This Array store all the Status of the check linked to last
-	* measurement. */
+	/*!< This Array store all the Status of the check linked to last*/
+	/** measurement. */
 	unsigned int LimitChecksValue[VL_CHECKENABLE_NUMBER_OF_CHECKS];
 	/*!< This Array store all the Limit Check value for this device */
 
@@ -290,40 +288,41 @@ struct VL_DMaxData_t {
 struct VL_RangingMeasurementData_t {
 	uint32_t TimeStamp;		/*!< 32-bit time stamp. */
 	uint32_t MeasurementTimeUsec;
-		/*!< Give the Measurement time needed by the device to do the
-		 * measurement.*/
+		/*!< Give the Measurement time needed by the device to do the */
+		/** measurement.*/
 
 
 	uint16_t RangeMilliMeter;	/*!< range distance in millimeter. */
 
 	uint16_t RangeDMaxMilliMeter;
-		/*!< Tells what is the maximum detection distance of the device
-		 * in current setup and environment conditions (Filled when
-		 *	applicable) */
+		/*!< Tells what is the maximum detection distance of */
+		/* the device */
+		/* * in current setup and environment conditions (Filled when */
+		/* *	applicable) */
 
 	unsigned int SignalRateRtnMegaCps;
-		/*!< Return signal rate (MCPS)\n these is a 16.16 fix point
-		 *	value, which is effectively a measure of target
-		 *	 reflectance.*/
+		/*!< Return signal rate (MCPS)\n these is a 16.16 fix point */
+		/* *	value, which is effectively a measure of target */
+		/* *	 reflectance.*/
 	unsigned int AmbientRateRtnMegaCps;
-		/*!< Return ambient rate (MCPS)\n these is a 16.16 fix point
-		 *	value, which is effectively a measure of the ambien
-		 *	t light.*/
+		/*!< Return ambient rate (MCPS)\n these is a 16.16 fix point */
+		/* *	value, which is effectively a measure of the ambien */
+		/* *	t light.*/
 
 	uint16_t EffectiveSpadRtnCount;
-		/*!< Return the effective SPAD count for the return signal.
-		 *	To obtain Real value it should be divided by 256 */
+		/*!< Return the effective SPAD count for the return signal. */
+		/* *	To obtain Real value it should be divided by 256 */
 
 	uint8_t ZoneId;
-		/*!< Denotes which zone and range scheduler stage the range
-		 *	data relates to. */
+		/*!< Denotes which zone and range scheduler stage the range */
+		/* *	data relates to. */
 	uint8_t RangeFractionalPart;
-		/*!< Fractional part of range distance. Final value is a
-		 *	FixPoint168 value. */
+		/*!< Fractional part of range distance. Final value is a */
+		/* *	FixPoint168 value. */
 	uint8_t RangeStatus;
-		/*!< Range Status for the current measurement. This is device
-		 *	dependent. Value = 0 means value is valid.
-		 *	See \ref RangeStatusPage */
+		/*!< Range Status for the current measurement. This is device */
+		/* *	dependent. Value = 0 means value is valid. */
+		/* *	See \ref RangeStatusPage */
 };
 
 
@@ -337,16 +336,16 @@ struct VL_HistogramMeasurementData_t {
 	/* Histogram Measurement data */
 	uint32_t HistogramData[VL_HISTOGRAM_BUFFER_SIZE];
 	/*!< Histogram data */
-	uint8_t HistogramType; /*!< Indicate the types of histogram data :
-	Return only, Reference only, both Return and Reference */
+	uint8_t HistogramType; /*!< Indicate the types of histogram data : */
+	/*Return only, Reference only, both Return and Reference */
 	uint8_t FirstBin; /*!< First Bin value */
 	uint8_t BufferSize; /*!< Buffer Size - Set by the user.*/
 	uint8_t NumberOfBins;
 	/*!< Number of bins filled by the histogram measurement */
 
 	uint8_t ErrorStatus;
-	/*!< Error status of the current measurement. \n
-	see @a ::uint8_t @a VL_GetStatusErrorString() */
+	/*!< Error status of the current measurement. \n */
+	/* see @a ::uint8_t @a VL_GetStatusErrorString() */
 };
 
 #define VL_REF_SPAD_BUFFER_SIZE 6
@@ -383,15 +382,15 @@ struct VL_DeviceSpecificParameters_t {
 	uint16_t SigmaEstRefArray;
 	 /*!< Reference array sigma value in 1/100th of [mm] e.g. 100 = 1mm */
 	uint16_t SigmaEstEffPulseWidth;
-	 /*!< Effective Pulse width for sigma estimate in 1/100th
-	  * of ns e.g. 900 = 9.0ns */
+	 /*!< Effective Pulse width for sigma estimate in 1/100th */
+	 /* * of ns e.g. 900 = 9.0ns */
 	uint16_t SigmaEstEffAmbWidth;
-	 /*!< Effective Ambient width for sigma estimate in 1/100th of ns
-	  * e.g. 500 = 5.0ns */
+	 /*!< Effective Ambient width for sigma estimate in 1/100th of ns */
+	 /* * e.g. 500 = 5.0ns */
 
 
-	uint8_t ReadDataFromDeviceDone; /* Indicate if read from device has
-	been done (==1) or not (==0) */
+	uint8_t ReadDataFromDeviceDone; /* Indicate if read from device has */
+	/*been done (==1) or not (==0) */
 	uint8_t ModuleId; /* Module ID */
 	uint8_t Revision; /* test Revision */
 	char ProductId[VL_MAX_STRING_LENGTH];
@@ -401,8 +400,7 @@ struct VL_DeviceSpecificParameters_t {
 	uint8_t RefSpadsInitialised; /* reports if ref spads are initialised. */
 	uint32_t PartUIDUpper; /*!< Unique Part ID Upper */
 	uint32_t PartUIDLower; /*!< Unique Part ID Lower */
-	unsigned int SignalRateMeasFixed400mm; /*!< Peek Signal rate
-	at 400 mm*/
+	unsigned int SignalRateMeasFixed400mm; /*!< Peek Signal rate at 400 mm*/
 
 };
 
@@ -442,18 +440,18 @@ struct VL_DevData_t {
 	uint16_t SigmaEstRefArray;
 	/*!< Reference array sigma value in 1/100th of [mm] e.g. 100 = 1mm */
 	uint16_t SigmaEstEffPulseWidth;
-	/*!< Effective Pulse width for sigma estimate in 1/100th
-	* of ns e.g. 900 = 9.0ns */
+	/*!< Effective Pulse width for sigma estimate in 1/100th */
+	/* of ns e.g. 900 = 9.0ns */
 	uint16_t SigmaEstEffAmbWidth;
-	/*!< Effective Ambient width for sigma estimate in 1/100th of ns
-	* e.g. 500 = 5.0ns */
+	/*!< Effective Ambient width for sigma estimate in 1/100th of ns */
+	/* * e.g. 500 = 5.0ns */
 	uint8_t StopVariable;
 	/*!< StopVariable used during the stop sequence */
 	uint16_t targetRefRate;
 	/*!< Target Ambient Rate for Ref spad management */
 	unsigned int SigmaEstimate;
-	/*!< Sigma Estimate - based on ambient & VCSEL rates and
-	* signal_total_events */
+	/*!< Sigma Estimate - based on ambient & VCSEL rates and */
+	/** signal_total_events */
 	unsigned int SignalEstimate;
 	/*!< Signal Estimate - based on ambient & VCSEL rates and cross talk */
 	unsigned int LastSignalRefMcps;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,20 +16,44 @@
 
 #include <linux/types.h>
 
-#define FASTRPC_IOCTL_INVOKE  _IOWR('R', 1, struct fastrpc_ioctl_invoke)
-#define FASTRPC_IOCTL_MMAP    _IOWR('R', 2, struct fastrpc_ioctl_mmap)
-#define FASTRPC_IOCTL_MUNMAP  _IOWR('R', 3, struct fastrpc_ioctl_munmap)
+#define FASTRPC_IOCTL_INVOKE	_IOWR('R', 1, struct fastrpc_ioctl_invoke)
+#define FASTRPC_IOCTL_MMAP	_IOWR('R', 2, struct fastrpc_ioctl_mmap)
+#define FASTRPC_IOCTL_MUNMAP	_IOWR('R', 3, struct fastrpc_ioctl_munmap)
 #define FASTRPC_IOCTL_MMAP_64	_IOWR('R', 14, struct fastrpc_ioctl_mmap_64)
 #define FASTRPC_IOCTL_MUNMAP_64	_IOWR('R', 15, struct fastrpc_ioctl_munmap_64)
-#define FASTRPC_IOCTL_INVOKE_FD  _IOWR('R', 4, struct fastrpc_ioctl_invoke_fd)
-#define FASTRPC_IOCTL_SETMODE    _IOWR('R', 5, uint32_t)
-#define FASTRPC_IOCTL_INIT       _IOWR('R', 6, struct fastrpc_ioctl_init)
+#define FASTRPC_IOCTL_INVOKE_FD	_IOWR('R', 4, struct fastrpc_ioctl_invoke_fd)
+#define FASTRPC_IOCTL_SETMODE	_IOWR('R', 5, uint32_t)
+#define FASTRPC_IOCTL_INIT	_IOWR('R', 6, struct fastrpc_ioctl_init)
+#define FASTRPC_IOCTL_INVOKE_ATTRS \
+				_IOWR('R', 7, struct fastrpc_ioctl_invoke_attrs)
 #define FASTRPC_IOCTL_GETINFO	_IOWR('R', 8, uint32_t)
-#define FASTRPC_GLINK_GUID "fastrpcglink-apps-dsp"
-#define FASTRPC_IOCTL_CONTROL	_IOWR('R', 12, struct fastrpc_ioctl_control)
+#define FASTRPC_IOCTL_GETPERF	_IOWR('R', 9, struct fastrpc_ioctl_perf)
+#define FASTRPC_IOCTL_INIT_ATTRS _IOWR('R', 10, struct fastrpc_ioctl_init_attrs)
+#define FASTRPC_IOCTL_INVOKE_CRC _IOWR('R', 11, struct fastrpc_ioctl_invoke_crc)
+#define FASTRPC_IOCTL_CONTROL   _IOWR('R', 12, struct fastrpc_ioctl_control)
+#define FASTRPC_IOCTL_MUNMAP_FD _IOWR('R', 13, struct fastrpc_ioctl_munmap_fd)
+#define FASTRPC_IOCTL_GET_DSP_INFO \
+			_IOWR('R', 16, struct fastrpc_ioctl_dsp_capabilities)
 
+#define FASTRPC_GLINK_GUID "fastrpcglink-apps-dsp"
 #define FASTRPC_SMD_GUID "fastrpcsmd-apps-dsp"
 #define DEVICE_NAME      "adsprpc-smd"
+#define DEVICE_NAME_SECURE "adsprpc-smd-secure"
+
+/* Set for buffers that have no virtual mapping in userspace */
+#define FASTRPC_ATTR_NOVA 0x1
+
+/* Set for buffers that are NOT dma coherent */
+#define FASTRPC_ATTR_NON_COHERENT 0x2
+
+/* Set for buffers that are dma coherent */
+#define FASTRPC_ATTR_COHERENT 0x4
+
+/* Fastrpc attribute for keeping the map persistent */
+#define FASTRPC_ATTR_KEEP_MAP	0x8
+
+/* Fastrpc attribute for no map */
+#define FASTRPC_ATTR_NOMAP   (16)
 
 /* Driver should operate in parallel with the co-processor */
 #define FASTRPC_MODE_PARALLEL    0
@@ -37,9 +61,17 @@
 /* Driver should operate in serial mode with the co-processor */
 #define FASTRPC_MODE_SERIAL      1
 
+/* Driver should operate in profile mode with the co-processor */
+#define FASTRPC_MODE_PROFILE     2
+
+/* Set FastRPC session ID to 1 */
+#define FASTRPC_MODE_SESSION     4
+
 /* INIT a new process or attach to guestos */
 #define FASTRPC_INIT_ATTACH      0
 #define FASTRPC_INIT_CREATE      1
+#define FASTRPC_INIT_CREATE_STATIC  2
+#define FASTRPC_INIT_ATTACH_SENSORS 3
 
 /* Retrives number of input buffers from the scalars parameter */
 #define REMOTE_SCALARS_INBUFS(sc)        (((sc) >> 16) & 0x0ff)
@@ -86,7 +118,7 @@
 #define VERIFY(err, val) \
 do {\
 	VERIFY_IPRINTF(__FILE_LINE__"info: calling: " #val "\n");\
-	if (0 == (val)) {\
+	if ((val) == 0) {\
 		(err) = (err) == 0 ? -1 : (err);\
 		VERIFY_EPRINTF(__FILE_LINE__"error: %d: " #val "\n", (err));\
 	} else {\
@@ -95,6 +127,9 @@ do {\
 } while (0)
 #endif
 
+/* Fall back to older APIS in case API is not supported */
+#define AEE_EUNSUPPORTED    20
+
 #define remote_arg64_t    union remote_arg64
 
 struct remote_buf64 {
@@ -102,8 +137,15 @@ struct remote_buf64 {
 	uint64_t len;
 };
 
+struct remote_dma_handle64 {
+	int fd;
+	uint32_t offset;
+	uint32_t len;
+};
+
 union remote_arg64 {
 	struct remote_buf64	buf;
+	struct remote_dma_handle64 dma;
 	uint32_t h;
 };
 
@@ -114,8 +156,14 @@ struct remote_buf {
 	size_t len;		/* length of buffer */
 };
 
+struct remote_dma_handle {
+	int fd;
+	uint32_t offset;
+};
+
 union remote_arg {
 	struct remote_buf buf;	/* buffer info */
+	struct remote_dma_handle dma;
 	uint32_t h;		/* remote handle */
 };
 
@@ -130,6 +178,19 @@ struct fastrpc_ioctl_invoke_fd {
 	int *fds;		/* fd list */
 };
 
+struct fastrpc_ioctl_invoke_attrs {
+	struct fastrpc_ioctl_invoke inv;
+	int *fds;		/* fd list */
+	unsigned int *attrs;	/* attribute list */
+};
+
+struct fastrpc_ioctl_invoke_crc {
+	struct fastrpc_ioctl_invoke inv;
+	int *fds;		/* fd list */
+	unsigned int *attrs;	/* attribute list */
+	unsigned int *crc;
+};
+
 struct fastrpc_ioctl_init {
 	uint32_t flags;		/* one of FASTRPC_INIT_* macros */
 	uintptr_t file;		/* pointer to elf file */
@@ -138,6 +199,12 @@ struct fastrpc_ioctl_init {
 	uintptr_t mem;		/* mem for the PD */
 	uint32_t memlen;	/* mem length */
 	int32_t memfd;		/* ION fd for the mem */
+};
+
+struct fastrpc_ioctl_init_attrs {
+		struct fastrpc_ioctl_init init;
+		int attrs;
+		unsigned int siglen;
 };
 
 struct fastrpc_ioctl_munmap {
@@ -159,20 +226,33 @@ struct fastrpc_ioctl_mmap {
 };
 
 struct fastrpc_ioctl_mmap_64 {
-	int fd;				/* ion fd */
+	int fd;					/* ion fd */
 	uint32_t flags;			/* flags for dsp to map with */
 	uint64_t vaddrin;		/* optional virtual address */
 	size_t size;			/* size */
 	uint64_t vaddrout;		/* dsps virtual address */
 };
 
-#define FASTRPC_CONTROL_LATENCY	(1)
-struct fastrpc_ctrl_latency {
-	uint32_t enable;	/* !latency control enable */
-	uint32_t level;		/* !level of control */
+struct fastrpc_ioctl_munmap_fd {
+	int     fd;				/* fd */
+	uint32_t  flags;		/* control flags */
+	uintptr_t va;			/* va */
+	ssize_t  len;			/* length */
 };
 
-#define FASTRPC_CONTROL_SMMU	(2)
+struct fastrpc_ioctl_perf {			/* kernel performance data */
+	uintptr_t data;
+	uint32_t numkeys;
+	uintptr_t keys;
+};
+
+#define FASTRPC_CONTROL_LATENCY (1)
+struct fastrpc_ctrl_latency {
+	uint32_t enable;		/* latency control enable */
+	uint32_t level;			/* level of control */
+};
+
+#define FASTRPC_CONTROL_SMMU (2)
 struct fastrpc_ctrl_smmu {
 	uint32_t sharedcb;
 };
@@ -189,6 +269,12 @@ struct fastrpc_ioctl_control {
 		struct fastrpc_ctrl_smmu smmu;
 		struct fastrpc_ctrl_kalloc kalloc;
 	};
+};
+
+#define FASTRPC_MAX_DSP_ATTRIBUTES	(7)
+struct fastrpc_ioctl_dsp_capabilities {
+	uint32_t domain;	//! DSP domain to query capabilities
+	uint32_t dsp_attributes[FASTRPC_MAX_DSP_ATTRIBUTES];
 };
 
 struct smq_null_invoke {
@@ -226,7 +312,7 @@ struct smq_invoke_rsp {
 static inline struct smq_invoke_buf *smq_invoke_buf_start(remote_arg64_t *pra,
 							uint32_t sc)
 {
-	uint32_t len = REMOTE_SCALARS_LENGTH(sc);
+	unsigned int len = REMOTE_SCALARS_LENGTH(sc);
 
 	return (struct smq_invoke_buf *)(&pra[len]);
 }
@@ -234,8 +320,24 @@ static inline struct smq_invoke_buf *smq_invoke_buf_start(remote_arg64_t *pra,
 static inline struct smq_phy_page *smq_phy_page_start(uint32_t sc,
 						struct smq_invoke_buf *buf)
 {
-	uint32_t nTotal = REMOTE_SCALARS_INBUFS(sc)+REMOTE_SCALARS_OUTBUFS(sc);
+	unsigned int nTotal = REMOTE_SCALARS_LENGTH(sc);
+
 	return (struct smq_phy_page *)(&buf[nTotal]);
 }
+
+enum fastrpc_proc_attr {
+	/* Macro for Debug attr */
+	FASTRPC_MODE_DEBUG				= 1 << 0,
+	/* Macro for Ptrace */
+	FASTRPC_MODE_PTRACE				= 1 << 1,
+	/* Macro for CRC Check */
+	FASTRPC_MODE_CRC				= 1 << 2,
+	/* Macro for Unsigned PD */
+	FASTRPC_MODE_UNSIGNED_MODULE	= 1 << 3,
+	/* Macro for Adaptive QoS */
+	FASTRPC_MODE_ADAPTIVE_QOS		= 1 << 4,
+	/* Macro for System Process */
+	FASTRPC_MODE_SYSTEM_PROCESS		= 1 << 5,
+};
 
 #endif

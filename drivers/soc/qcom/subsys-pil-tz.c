@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,7 +25,6 @@
 #include <linux/msm-bus-board.h>
 #include <linux/msm-bus.h>
 #include <linux/dma-mapping.h>
-#include <linux/highmem.h>
 
 #include <soc/qcom/subsystem_restart.h>
 #include <soc/qcom/ramdump.h>
@@ -37,21 +36,22 @@
 
 #define XO_FREQ			19200000
 #define PROXY_TIMEOUT_MS	10000
-#define MAX_SSR_REASON_LEN	81U
+#define MAX_SSR_REASON_LEN	256U
 #define STOP_ACK_TIMEOUT_MS	1000
 #define CRASH_STOP_ACK_TO_MS	200
 
-#define COLD_BOOT_DONE	0
-#define GDSC_DONE	1
-#define RAM_WIPE_DONE	2
-#define CPU_BOOT_DONE	3
-#define WDOG_BITE	4
-#define CLR_WDOG_BITE	5
-#define ERR_READY	6
-#define PBL_DONE	7
+#define ERR_READY	0
+#define PBL_DONE	1
 
 #define desc_to_data(d) container_of(d, struct pil_tz_data, desc)
 #define subsys_to_data(d) container_of(d, struct pil_tz_data, subsys_desc)
+
+struct pil_map_fw_info {
+	void *region;
+	unsigned long attrs;
+	phys_addr_t base_addr;
+	struct device *dev;
+};
 
 /**
  * struct reg_info - regulator info
@@ -90,7 +90,7 @@ struct reg_info {
  * @desc: PIL descriptor
  * @subsys: subsystem device pointer
  * @subsys_desc: subsystem descriptor
- * @u32 bits_arr[8]: array of bit positions in SCSR registers
+ * @u32 bits_arr[2]: array of bit positions in SCSR registers
  */
 struct pil_tz_data {
 	struct reg_info *regs;
@@ -115,7 +115,8 @@ struct pil_tz_data {
 	void __iomem *irq_clear;
 	void __iomem *irq_mask;
 	void __iomem *err_status;
-	u32 bits_arr[8];
+	void __iomem *err_status_spare;
+	u32 bits_arr[2];
 };
 
 enum scm_cmd {
@@ -227,7 +228,8 @@ static void scm_pas_init(int id)
 static int of_read_clocks(struct device *dev, struct clk ***clks_ref,
 			  const char *propname)
 {
-	int clk_count, i, len;
+	long clk_count;
+	int i, len;
 	struct clk **clks;
 
 	if (!of_find_property(dev->of_node, propname, &len))
@@ -265,6 +267,7 @@ static int of_read_clocks(struct device *dev, struct clk ***clks_ref,
 		clks[i] = devm_clk_get(dev, clock_name);
 		if (IS_ERR(clks[i])) {
 			int rc = PTR_ERR(clks[i]);
+
 			if (rc != -EPROBE_DEFER)
 				dev_err(dev, "Failed to get %s clock\n",
 								clock_name);
@@ -284,7 +287,8 @@ static int of_read_clocks(struct device *dev, struct clk ***clks_ref,
 static int of_read_regs(struct device *dev, struct reg_info **regs_ref,
 			const char *propname)
 {
-	int reg_count, i, len, rc;
+	long reg_count;
+	int i, len, rc;
 	struct reg_info *regs;
 
 	if (!of_find_property(dev->of_node, propname, &len))
@@ -313,6 +317,7 @@ static int of_read_regs(struct device *dev, struct reg_info **regs_ref,
 		regs[i].reg = devm_regulator_get(dev, reg_name);
 		if (IS_ERR(regs[i].reg)) {
 			int rc = PTR_ERR(regs[i].reg);
+
 			if (rc != -EPROBE_DEFER)
 				dev_err(dev, "Failed to get %s\n regulator",
 								reg_name);
@@ -345,7 +350,8 @@ static int of_read_regs(struct device *dev, struct reg_info **regs_ref,
 		rc = of_property_read_u32_array(dev->of_node, reg_uV_uA_name,
 					vdd_uV_uA, len);
 		if (rc) {
-			dev_err(dev, "Failed to read uV/uA values\n");
+			dev_err(dev, "Failed to read uV/uA values(rc:%d)\n",
+									rc);
 			return rc;
 		}
 
@@ -361,6 +367,7 @@ static int of_read_bus_pdata(struct platform_device *pdev,
 			     struct pil_tz_data *d)
 {
 	struct msm_bus_scale_pdata *pdata;
+
 	pdata = msm_bus_cl_get_pdata(pdev);
 
 	if (!pdata)
@@ -429,16 +436,18 @@ static int enable_regulators(struct pil_tz_data *d, struct device *dev,
 			rc = regulator_set_voltage(regs[i].reg,
 					regs[i].uV, INT_MAX);
 			if (rc) {
-				dev_err(dev, "Failed to request voltage.\n");
+				dev_err(dev, "Failed to request voltage(rc:%d)\n",
+									rc);
 				goto err_voltage;
 			}
 		}
 
 		if (regs[i].uA > 0) {
-			rc = regulator_set_optimum_mode(regs[i].reg,
+			rc = regulator_set_load(regs[i].reg,
 						regs[i].uA);
 			if (rc < 0) {
-				dev_err(dev, "Failed to set regulator mode\n");
+				dev_err(dev, "Failed to set regulator mode(rc:%d)\n",
+									rc);
 				goto err_mode;
 			}
 		}
@@ -448,7 +457,7 @@ static int enable_regulators(struct pil_tz_data *d, struct device *dev,
 
 		rc = regulator_enable(regs[i].reg);
 		if (rc) {
-			dev_err(dev, "Regulator enable failed\n");
+			dev_err(dev, "Regulator enable failed(rc:%d)\n", rc);
 			goto err_enable;
 		}
 	}
@@ -457,7 +466,7 @@ static int enable_regulators(struct pil_tz_data *d, struct device *dev,
 err_enable:
 	if (regs[i].uA > 0) {
 		regulator_set_voltage(regs[i].reg, 0, INT_MAX);
-		regulator_set_optimum_mode(regs[i].reg, 0);
+		regulator_set_load(regs[i].reg, 0);
 	}
 err_mode:
 	if (regs[i].uV > 0)
@@ -468,7 +477,7 @@ err_voltage:
 			regulator_set_voltage(regs[i].reg, 0, INT_MAX);
 
 		if (regs[i].uA > 0)
-			regulator_set_optimum_mode(regs[i].reg, 0);
+			regulator_set_load(regs[i].reg, 0);
 
 		if (d->keep_proxy_regs_on && reg_no_enable)
 			continue;
@@ -488,7 +497,7 @@ static void disable_regulators(struct pil_tz_data *d, struct reg_info *regs,
 			regulator_set_voltage(regs[i].reg, 0, INT_MAX);
 
 		if (regs[i].uA > 0)
-			regulator_set_optimum_mode(regs[i].reg, 0);
+			regulator_set_load(regs[i].reg, 0);
 
 		if (d->keep_proxy_regs_on && reg_no_disable)
 			continue;
@@ -505,7 +514,7 @@ static int prepare_enable_clocks(struct device *dev, struct clk **clks,
 	for (i = 0; i < clk_count; i++) {
 		rc = clk_prepare_enable(clks[i]);
 		if (rc) {
-			dev_err(dev, "Clock enable failed\n");
+			dev_err(dev, "Clock enable failed(rc:%d)\n", rc);
 			goto err;
 		}
 	}
@@ -522,7 +531,7 @@ static void disable_unprepare_clocks(struct clk **clks, int clk_count)
 {
 	int i;
 
-	for (i = 0; i < clk_count; i++)
+	for (i = --clk_count; i >= 0; i--)
 		clk_disable_unprepare(clks[i]);
 }
 
@@ -534,6 +543,17 @@ static int pil_make_proxy_vote(struct pil_desc *pil)
 	if (d->subsys_desc.no_auth)
 		return 0;
 
+	if (d->bus_client) {
+		rc = msm_bus_scale_client_update_request(d->bus_client, 1);
+		if (rc) {
+			dev_err(pil->dev, "bandwidth request failed(rc:%d)\n",
+									rc);
+			return rc;
+		}
+	} else
+		WARN(d->enable_bus_scaling, "Bus scaling not set up for %s!\n",
+					d->subsys_desc.name);
+
 	rc = enable_regulators(d, pil->dev, d->proxy_regs,
 					d->proxy_reg_count, false);
 	if (rc)
@@ -544,19 +564,8 @@ static int pil_make_proxy_vote(struct pil_desc *pil)
 	if (rc)
 		goto err_clks;
 
-	if (d->bus_client) {
-		rc = msm_bus_scale_client_update_request(d->bus_client, 1);
-		if (rc) {
-			dev_err(pil->dev, "bandwidth request failed\n");
-			goto err_bw;
-		}
-	} else
-		WARN(d->enable_bus_scaling, "Bus scaling not set up for %s!\n",
-					d->subsys_desc.name);
-
 	return 0;
-err_bw:
-	disable_unprepare_clocks(d->proxy_clks, d->proxy_clk_count);
+
 err_clks:
 	disable_regulators(d, d->proxy_regs, d->proxy_reg_count, false);
 
@@ -570,20 +579,20 @@ static void pil_remove_proxy_vote(struct pil_desc *pil)
 	if (d->subsys_desc.no_auth)
 		return;
 
+	disable_unprepare_clocks(d->proxy_clks, d->proxy_clk_count);
+
+	disable_regulators(d, d->proxy_regs, d->proxy_reg_count, true);
+
 	if (d->bus_client)
 		msm_bus_scale_client_update_request(d->bus_client, 0);
 	else
 		WARN(d->enable_bus_scaling, "Bus scaling not set up for %s!\n",
 					d->subsys_desc.name);
-
-	disable_unprepare_clocks(d->proxy_clks, d->proxy_clk_count);
-
-	disable_regulators(d, d->proxy_regs, d->proxy_reg_count, true);
 }
 
 static int pil_init_image_trusted(struct pil_desc *pil,
-		const u8 *metadata, size_t size,
-		 phys_addr_t addr, size_t sz)
+		const u8 *metadata, size_t size, phys_addr_t mdata_phys,
+		void *region)
 {
 	struct pil_tz_data *d = desc_to_data(pil);
 	struct pas_init_image_req {
@@ -592,11 +601,15 @@ static int pil_init_image_trusted(struct pil_desc *pil,
 	} request;
 	u32 scm_ret = 0;
 	void *mdata_buf;
-	dma_addr_t mdata_phys;
 	int ret;
-	DEFINE_DMA_ATTRS(attrs);
-	struct device dev = {0};
 	struct scm_desc desc = {0};
+	struct pil_map_fw_info map_fw_info = {
+		.attrs = pil->attrs,
+		.region = region,
+		.base_addr = mdata_phys,
+		.dev = pil->dev,
+	};
+	void *map_data = pil->map_data ? pil->map_data : &map_fw_info;
 
 	if (d->subsys_desc.no_auth)
 		return 0;
@@ -604,20 +617,13 @@ static int pil_init_image_trusted(struct pil_desc *pil,
 	ret = scm_pas_enable_bw();
 	if (ret)
 		return ret;
-	dev.coherent_dma_mask =
-		DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
-	dma_set_attr(DMA_ATTR_STRONGLY_ORDERED, &attrs);
-	mdata_buf = dma_alloc_attrs(&dev, size, &mdata_phys, GFP_KERNEL,
-					&attrs);
+
+	mdata_buf = pil->map_fw_mem(mdata_phys, size, map_data);
 	if (!mdata_buf) {
-		pr_err("scm-pas: Allocation for metadata failed.\n");
+		dev_err(pil->dev, "Failed to map memory for metadata.\n");
 		scm_pas_disable_bw();
 		return -ENOMEM;
 	}
-
-	/* Make sure there are no mappings in PKMAP and fixmap */
-	kmap_flush_unused();
-	kmap_atomic_flush_unused();
 
 	memcpy(mdata_buf, metadata, size);
 
@@ -636,7 +642,7 @@ static int pil_init_image_trusted(struct pil_desc *pil,
 		scm_ret = desc.ret[0];
 	}
 
-	dma_free_attrs(&dev, size, mdata_buf, mdata_phys, &attrs);
+	pil->unmap_fw_mem(mdata_buf, size, map_data);
 	scm_pas_disable_bw();
 	if (ret)
 		return ret;
@@ -693,6 +699,10 @@ static int pil_auth_and_reset(struct pil_desc *pil)
 	desc.args[0] = proc = d->pas_id;
 	desc.arginfo = SCM_ARGS(1);
 
+	rc = scm_pas_enable_bw();
+	if (rc)
+		return rc;
+
 	rc = enable_regulators(d, pil->dev, d->regs, d->reg_count, false);
 	if (rc)
 		return rc;
@@ -700,10 +710,6 @@ static int pil_auth_and_reset(struct pil_desc *pil)
 	rc = prepare_enable_clocks(pil->dev, d->clks, d->clk_count);
 	if (rc)
 		goto err_clks;
-
-	rc = scm_pas_enable_bw();
-	if (rc)
-		goto err_reset;
 
 	if (!is_scm_armv8()) {
 		rc = scm_call(SCM_SVC_PIL, PAS_AUTH_AND_RESET_CMD, &proc,
@@ -739,10 +745,21 @@ static int pil_shutdown_trusted(struct pil_desc *pil)
 	desc.args[0] = proc = d->pas_id;
 	desc.arginfo = SCM_ARGS(1);
 
+	if (d->bus_client) {
+		rc = msm_bus_scale_client_update_request(d->bus_client, 1);
+		if (rc) {
+			dev_err(pil->dev, "bandwidth request failed(rc:%d)\n",
+									rc);
+			return rc;
+		}
+	} else
+		WARN(d->enable_bus_scaling, "Bus scaling not set up for %s!\n",
+					d->subsys_desc.name);
+
 	rc = enable_regulators(d, pil->dev, d->proxy_regs,
 					d->proxy_reg_count, true);
 	if (rc)
-		return rc;
+		goto err_regulators;
 
 	rc = prepare_enable_clocks(pil->dev, d->proxy_clks,
 						d->proxy_clk_count);
@@ -760,6 +777,11 @@ static int pil_shutdown_trusted(struct pil_desc *pil)
 
 	disable_unprepare_clocks(d->proxy_clks, d->proxy_clk_count);
 	disable_regulators(d, d->proxy_regs, d->proxy_reg_count, false);
+	if (d->bus_client)
+		msm_bus_scale_client_update_request(d->bus_client, 0);
+	else
+		WARN(d->enable_bus_scaling, "Bus scaling not set up for %s!\n",
+					d->subsys_desc.name);
 
 	if (rc)
 		return rc;
@@ -768,9 +790,43 @@ static int pil_shutdown_trusted(struct pil_desc *pil)
 	disable_regulators(d, d->regs, d->reg_count, false);
 
 	return scm_ret;
+
 err_clks:
 	disable_regulators(d, d->proxy_regs, d->proxy_reg_count, false);
+err_regulators:
+	if (d->bus_client)
+		msm_bus_scale_client_update_request(d->bus_client, 0);
+	else
+		WARN(d->enable_bus_scaling, "Bus scaling not set up for %s!\n",
+					d->subsys_desc.name);
 	return rc;
+}
+
+static int pil_deinit_image_trusted(struct pil_desc *pil)
+{
+	struct pil_tz_data *d = desc_to_data(pil);
+	u32 proc, scm_ret = 0;
+	int rc;
+	struct scm_desc desc = {0};
+
+	if (d->subsys_desc.no_auth)
+		return 0;
+
+	desc.args[0] = proc = d->pas_id;
+	desc.arginfo = SCM_ARGS(1);
+
+	if (!is_scm_armv8()) {
+		rc = scm_call(SCM_SVC_PIL, PAS_SHUTDOWN_CMD, &proc,
+			      sizeof(proc), &scm_ret, sizeof(scm_ret));
+	} else {
+		rc = scm_call2(SCM_SIP_FNID(SCM_SVC_PIL, PAS_SHUTDOWN_CMD),
+			       &desc);
+		scm_ret = desc.ret[0];
+	}
+
+	if (rc)
+		return rc;
+	return scm_ret;
 }
 
 static struct pil_reset_ops pil_ops_trusted = {
@@ -780,6 +836,7 @@ static struct pil_reset_ops pil_ops_trusted = {
 	.shutdown = pil_shutdown_trusted,
 	.proxy_vote = pil_make_proxy_vote,
 	.proxy_unvote = pil_remove_proxy_vote,
+	.deinit_image = pil_deinit_image_trusted,
 };
 
 static void log_failure_reason(const struct pil_tz_data *d)
@@ -805,9 +862,6 @@ static void log_failure_reason(const struct pil_tz_data *d)
 
 	strlcpy(reason, smem_reason, min(size, MAX_SSR_REASON_LEN));
 	pr_err("%s subsystem failure reason: %s.\n", name, reason);
-
-	smem_reason[0] = '\0';
-	wmb();
 }
 
 static int subsys_shutdown(const struct subsys_desc *subsys, bool force_stop)
@@ -851,7 +905,7 @@ static int subsys_ramdump(int enable, const struct subsys_desc *subsys)
 	if (!enable)
 		return 0;
 
-	return pil_do_ramdump(&d->desc, d->ramdump_dev);
+	return pil_do_ramdump(&d->desc, d->ramdump_dev, NULL);
 }
 
 static void subsys_free_memory(const struct subsys_desc *subsys)
@@ -882,7 +936,7 @@ static irqreturn_t subsys_err_fatal_intr_handler (int irq, void *dev_id)
 							d->subsys_desc.name);
 		return IRQ_HANDLED;
 	}
-	subsys_set_crash_status(d->subsys, true);
+	subsys_set_crash_status(d->subsys, CRASH_STATUS_ERR_FATAL);
 	log_failure_reason(d);
 	subsystem_restart_dev(d->subsys);
 
@@ -901,7 +955,7 @@ static irqreturn_t subsys_wdog_bite_irq_handler(int irq, void *dev_id)
 			!gpio_get_value(d->subsys_desc.err_fatal_gpio))
 		panic("%s: System ramdump requested. Triggering device restart!\n",
 							__func__);
-	subsys_set_crash_status(d->subsys, true);
+	subsys_set_crash_status(d->subsys, CRASH_STATUS_WDOG_BITE);
 	log_failure_reason(d);
 	subsystem_restart_dev(d->subsys);
 
@@ -917,55 +971,89 @@ static irqreturn_t subsys_stop_ack_intr_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static void clear_pbl_done(struct pil_tz_data *d)
+{
+	uint32_t err_value;
+
+	err_value =  __raw_readl(d->err_status);
+	pr_debug("PBL_DONE received from %s!\n", d->subsys_desc.name);
+	if (err_value) {
+		uint32_t rmb_err_spare0;
+		uint32_t rmb_err_spare1;
+		uint32_t rmb_err_spare2;
+
+		rmb_err_spare2 =  __raw_readl(d->err_status_spare);
+		rmb_err_spare1 =  __raw_readl(d->err_status_spare-4);
+		rmb_err_spare0 =  __raw_readl(d->err_status_spare-8);
+
+		pr_err("PBL error status register: 0x%08x\n", err_value);
+
+		pr_err("PBL error status spare0 register: 0x%08x\n",
+			rmb_err_spare0);
+		pr_err("PBL error status spare1 register: 0x%08x\n",
+			rmb_err_spare1);
+		pr_err("PBL error status spare2 register: 0x%08x\n",
+			rmb_err_spare2);
+	}
+	__raw_writel(BIT(d->bits_arr[PBL_DONE]), d->irq_clear);
+}
+
+static void clear_err_ready(struct pil_tz_data *d)
+{
+	pr_debug("Subsystem error services up received from %s\n",
+							d->subsys_desc.name);
+	__raw_writel(BIT(d->bits_arr[ERR_READY]), d->irq_clear);
+	complete_err_ready(d->subsys);
+}
+
+static void clear_wdog(struct pil_tz_data *d)
+{
+	/* Check crash status to know if device is restarting*/
+	if (!subsys_get_crash_status(d->subsys)) {
+		pr_err("wdog bite received from %s!\n", d->subsys_desc.name);
+		__raw_writel(BIT(d->bits_arr[ERR_READY]), d->irq_clear);
+		subsys_set_crash_status(d->subsys, CRASH_STATUS_WDOG_BITE);
+		log_failure_reason(d);
+		subsystem_restart_dev(d->subsys);
+	}
+}
+
 static irqreturn_t subsys_generic_handler(int irq, void *dev_id)
 {
 	struct pil_tz_data *d = subsys_to_data(dev_id);
-	uint32_t status_val, clear_val, err_value;
+	uint32_t status_val, err_value;
 
-	if (subsys_get_crash_status(d->subsys))
-		return IRQ_HANDLED;
-
-	/* Masking interrupts not handled by HLOS */
-	clear_val = __raw_readl(d->irq_mask);
-	__raw_writel(clear_val | BIT(d->bits_arr[COLD_BOOT_DONE]) |
-		BIT(d->bits_arr[GDSC_DONE]) | BIT(d->bits_arr[RAM_WIPE_DONE]) |
-		BIT(d->bits_arr[CPU_BOOT_DONE]), d->irq_mask);
+	err_value =  __raw_readl(d->err_status_spare);
 	status_val = __raw_readl(d->irq_status);
 
-	if (status_val & BIT(d->bits_arr[WDOG_BITE])) {
-		pr_err("wdog bite received from %s!\n", d->subsys_desc.name);
-		clear_val = __raw_readl(d->irq_clear);
-		__raw_writel(clear_val | BIT(d->bits_arr[CLR_WDOG_BITE]),
-							d->irq_clear);
-		subsys_set_crash_status(d->subsys, true);
-		log_failure_reason(d);
-		subsystem_restart_dev(d->subsys);
-	} else if (status_val & BIT(d->bits_arr[ERR_READY])) {
-		pr_debug("Subsystem error services up received from %s!\n",
-							d->subsys_desc.name);
-		clear_val = __raw_readl(d->irq_clear);
-		__raw_writel(clear_val | BIT(d->bits_arr[ERR_READY]),
-							d->irq_clear);
-		complete_err_ready(d->subsys);
-	} else if (status_val & BIT(d->bits_arr[PBL_DONE])) {
-		err_value =  __raw_readl(d->err_status);
-		pr_debug("PBL_DONE received from %s!\n",
-							d->subsys_desc.name);
-		if (!err_value) {
-			clear_val = __raw_readl(d->irq_clear);
-			__raw_writel(clear_val | BIT(d->bits_arr[PBL_DONE]),
-							d->irq_clear);
-		} else
-			pr_err("SP-PBL rmb error status: 0x%08x\n", err_value);
-	}
+	if ((status_val & BIT(d->bits_arr[ERR_READY])) && !err_value)
+		clear_err_ready(d);
+
+	if ((status_val & BIT(d->bits_arr[ERR_READY])) &&
+					err_value == 0x44554d50)
+		clear_wdog(d);
+
+	if (status_val & BIT(d->bits_arr[PBL_DONE]))
+		clear_pbl_done(d);
+
 	return IRQ_HANDLED;
+}
+
+static void mask_scsr_irqs(struct pil_tz_data *d)
+{
+	uint32_t mask_val;
+	/* Masking all interrupts not handled by HLOS */
+	mask_val = ~0;
+	__raw_writel(mask_val & ~BIT(d->bits_arr[ERR_READY]) &
+			~BIT(d->bits_arr[PBL_DONE]), d->irq_mask);
 }
 
 static int pil_tz_driver_probe(struct platform_device *pdev)
 {
 	struct pil_tz_data *d;
 	struct resource *res;
-	u32 proxy_timeout;
+	struct device_node *crypto_node;
+	u32 proxy_timeout, crypto_id;
 	int len, rc;
 
 	d = devm_kzalloc(&pdev->dev, sizeof(*d), GFP_KERNEL);
@@ -991,7 +1079,8 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 		rc = of_property_read_u32(pdev->dev.of_node, "qcom,smem-id",
 						&d->smem_id);
 		if (rc) {
-			dev_err(&pdev->dev, "Failed to get the smem_id.\n");
+			dev_err(&pdev->dev, "Failed to get the smem_id(rc:%d)\n",
+									rc);
 			return rc;
 		}
 	}
@@ -1011,15 +1100,26 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 	if (!d->subsys_desc.no_auth) {
 		rc = piltz_resc_init(pdev, d);
 		if (rc)
-			return -ENOENT;
+			return rc;
 
 		rc = of_property_read_u32(pdev->dev.of_node, "qcom,pas-id",
 								&d->pas_id);
 		if (rc) {
-			dev_err(&pdev->dev, "Failed to find the pas_id.\n");
+			dev_err(&pdev->dev, "Failed to find the pas_id(rc:%d)\n",
+									rc);
 			return rc;
 		}
-		scm_pas_init(MSM_BUS_MASTER_CRYPTO_CORE0);
+
+		crypto_id = MSM_BUS_MASTER_CRYPTO_CORE_0;
+		crypto_node = of_parse_phandle(pdev->dev.of_node,
+						"qcom,mas-crypto", 0);
+		if (!IS_ERR_OR_NULL(crypto_node)) {
+			of_property_read_u32(crypto_node, "cell-id",
+				&crypto_id);
+			of_node_put(crypto_node);
+		}
+
+		scm_pas_init((int)crypto_id);
 	}
 
 	rc = pil_desc_init(&d->desc);
@@ -1075,6 +1175,15 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 			goto err_ramdump;
 		}
 
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						"rmb_err_spare2");
+		d->err_status_spare = devm_ioremap_resource(&pdev->dev, res);
+		if (IS_ERR(d->err_status_spare)) {
+			dev_err(&pdev->dev, "Invalid resource for rmb_err_spare2\n");
+			rc = PTR_ERR(d->err_status_spare);
+			goto err_ramdump;
+		}
+
 		rc = of_property_read_u32_array(pdev->dev.of_node,
 		       "qcom,spss-scsr-bits", d->bits_arr, sizeof(d->bits_arr)/
 							sizeof(d->bits_arr[0]));
@@ -1082,12 +1191,30 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "Failed to read qcom,spss-scsr-bits");
 			goto err_ramdump;
 		}
+		mask_scsr_irqs(d);
+
 	} else {
 		d->subsys_desc.err_fatal_handler =
 						subsys_err_fatal_intr_handler;
 		d->subsys_desc.wdog_bite_handler = subsys_wdog_bite_irq_handler;
 		d->subsys_desc.stop_ack_handler = subsys_stop_ack_intr_handler;
 	}
+	d->desc.signal_aop = of_property_read_bool(pdev->dev.of_node,
+						"qcom,signal-aop");
+	if (d->desc.signal_aop) {
+		d->desc.cl.dev = &pdev->dev;
+		d->desc.cl.tx_block = true;
+		d->desc.cl.tx_tout = 1000;
+		d->desc.cl.knows_txdone = false;
+		d->desc.mbox = mbox_request_channel(&d->desc.cl, 0);
+		if (IS_ERR(d->desc.mbox)) {
+			rc = PTR_ERR(d->desc.mbox);
+			dev_err(&pdev->dev, "Failed to get mailbox channel %pK %d\n",
+				d->desc.mbox, rc);
+			goto err_ramdump;
+		}
+	}
+
 	d->ramdump_dev = create_ramdump_device(d->subsys_desc.name,
 								&pdev->dev);
 	if (!d->ramdump_dev) {
@@ -1122,7 +1249,7 @@ static int pil_tz_driver_exit(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id pil_tz_match_table[] = {
+static const struct of_device_id pil_tz_match_table[] = {
 	{.compatible = "qcom,pil-tz-generic"},
 	{}
 };

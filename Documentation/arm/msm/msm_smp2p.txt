@@ -181,7 +181,7 @@ added to the end of the list (Table 3).
               -------------------------------------------------
              | Wireless processor         |        4           |
               -------------------------------------------------
-             | Modem Fw                   |        5           |
+             | CDSP processor             |        5           |
               -------------------------------------------------
              | Power processor            |        6           |
               -------------------------------------------------
@@ -205,6 +205,8 @@ Item ID will be 427 + 1 = 428.
 
           ---------------------------------------------------
          | Description                    | SMEM ID value    |
+          ---------------------------------------------------
+         | CDSP SMEM Item base            |       94         |
           ---------------------------------------------------
          | Apps SMP2P SMEM Item base      |       427        |
           ---------------------------------------------------
@@ -397,14 +399,14 @@ SMP2P is unaffected by SubSystem Restart (SSR) on the high-level OS side and is
 actually used as an underlying communication mechanism for SSR.  On the
 peripheral system that is being restarted, SMP2P will zero out all existing
 state entries upon reboot as part of the SMP2P initialization process and if the
-SSR_ACK feature is enabled, then it waits for an acknowledgement as outlined in
+SSR_ACK feature is enabled, then it waits for an acknowledgment as outlined in
 the following subsections.
 
 SSR_ACK Feature - Reboot Use Case (Non-HLOS Only)
 -------------------------------------------------
 If a remote system boots up after an SSR and sees that the remote and local
 version numbers and feature flags are equal, then it zeros out entry values.  If
-the SSR_ACK feature is enabled, it will wait for an acknowledgement from the other
+the SSR_ACK feature is enabled, it will wait for an acknowledgment from the other
 processor that it has seen the zero entry before completing the negotiation
 sequence.
 

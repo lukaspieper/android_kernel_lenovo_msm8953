@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,10 +14,17 @@
 #define _USB_BAM_H_
 #include <linux/msm-sps.h>
 #include <linux/ipa.h>
-#include <linux/usb/msm_hsusb.h>
+#include <linux/usb/ch9.h>
 
 #define MAX_BAMS	NUM_CTRL	/* Bam per USB controllers */
 
+/* Supported USB controllers*/
+enum usb_ctrl {
+	DWC3_CTRL = 0,  /* DWC3 controller */
+	CI_CTRL,        /* ChipIdea controller */
+	HSIC_CTRL,      /* HSIC controller */
+	NUM_CTRL,
+};
 
 enum usb_bam_mode {
 	USB_BAM_DEVICE = 0,
@@ -55,34 +62,34 @@ enum usb_bam_pipe_type {
 	USB_BAM_MAX_PIPE_TYPES,
 };
 
-/**
-* struct usb_bam_connect_ipa_params: Connect Bam pipe to IPA peer infromation.
-* @ src_idx: Source pipe index in usb bam pipes lists.
-* @ dst_idx: Destination pipe index in usb bam pipes lists.
-* @ src_pipe: The source pipe index in the sps level.
-* @ dst_pipe: The destination pipe index in the sps level.
-* @ keep_ipa_awake: When true, IPA will not be clock gated.
-* @ ipa_cons_ep_idx: The pipe index on the IPA peer bam side, consumer.
-* @ ipa_prod_ep_idx: The pipe index on the IPA peer bam side, producer.
-* @ prod_clnt_hdl: Producer client handle returned by IPA driver
-* @ cons_clnt_hdl: Consumer client handle returned by IPA driver
-* @ src_client: Source IPA client type.
-* @ dst_client: Destination IPA client type.
-* @ ipa_ep_cfg: Configuration of IPA end-point (see struct ipa_ep_cfg)
-* @priv: Callback cookie to the notify event.
-* @notify: Callback on data path event by IPA (see enum ipa_dp_evt_type)
-*	 This call back gets back the priv cookie.
-*	 for Bam2Bam mode, this callback is in the tethering bridge.
-* @ activity_notify: Callback to be notified on and data being pushed into the
-*		 USB consumer pipe.
-* @ inactivity_notify: Callback to be notified on inactivity of all the current
-*		   open pipes between the USB bam and its peer.
-* @ skip_ep_cfg: boolean field that determines if Apps-processor
-*	            should or should not confiugre this end-point.
-*	            (Please see struct teth_bridge_init_params)
-* @ reset_pipe_after_lpm: bool to indicate if IPA should reset pipe after LPM.
-* @ usb_connection_speed: The actual speed the USB core currently works at.
-*/
+/*
+ * struct usb_bam_connect_ipa_params: Connect Bam pipe to IPA peer information.
+ * @ src_idx: Source pipe index in usb bam pipes lists.
+ * @ dst_idx: Destination pipe index in usb bam pipes lists.
+ * @ src_pipe: The source pipe index in the sps level.
+ * @ dst_pipe: The destination pipe index in the sps level.
+ * @ keep_ipa_awake: When true, IPA will not be clock gated.
+ * @ ipa_cons_ep_idx: The pipe index on the IPA peer bam side, consumer.
+ * @ ipa_prod_ep_idx: The pipe index on the IPA peer bam side, producer.
+ * @ prod_clnt_hdl: Producer client handle returned by IPA driver
+ * @ cons_clnt_hdl: Consumer client handle returned by IPA driver
+ * @ src_client: Source IPA client type.
+ * @ dst_client: Destination IPA client type.
+ * @ ipa_ep_cfg: Configuration of IPA end-point (see struct ipa_ep_cfg)
+ * @priv: Callback cookie to the notify event.
+ * @notify: Callback on data path event by IPA (see enum ipa_dp_evt_type)
+ *	 This call back gets back the priv cookie.
+ *	 for Bam2Bam mode, this callback is in the tethering bridge.
+ * @ activity_notify: Callback to be notified on and data being pushed into the
+ *		 USB consumer pipe.
+ * @ inactivity_notify: Callback to be notified on inactivity of all the current
+ *		   open pipes between the USB bam and its peer.
+ * @ skip_ep_cfg: boolean field that determines if Apps-processor
+ *	            should or should not confiugre this end-point.
+ *	            (Please see struct teth_bridge_init_params)
+ * @ reset_pipe_after_lpm: bool to indicate if IPA should reset pipe after LPM.
+ * @ usb_connection_speed: The actual speed the USB core currently works at.
+ */
 struct usb_bam_connect_ipa_params {
 	u8 src_idx;
 	u8 dst_idx;
@@ -110,14 +117,14 @@ struct usb_bam_connect_ipa_params {
 	enum usb_device_speed usb_connection_speed;
 };
 
-/**
-* struct usb_bam_event_info: suspend/resume event information.
-* @type: usb bam event type.
-* @event: holds event data.
-* @callback: suspend/resume callback.
-* @param: port num (for suspend) or NULL (for resume).
-* @event_w: holds work queue parameters.
-*/
+/*
+ * struct usb_bam_event_info: suspend/resume event information.
+ * @type: usb bam event type.
+ * @event: holds event data.
+ * @callback: suspend/resume callback.
+ * @param: port num (for suspend) or NULL (for resume).
+ * @event_w: holds work queue parameters.
+ */
 struct usb_bam_event_info {
 	enum usb_bam_event_type type;
 	struct sps_register_event event;
@@ -126,36 +133,36 @@ struct usb_bam_event_info {
 	struct work_struct event_w;
 };
 
-/**
-* struct usb_bam_pipe_connect: pipe connection information
-* between USB/HSIC BAM and another BAM. USB/HSIC BAM can be
-* either src BAM or dst BAM
-* @name: pipe description.
-* @mem_type: type of memory used for BAM FIFOs
-* @src_phy_addr: src bam physical address.
-* @src_pipe_index: src bam pipe index.
-* @dst_phy_addr: dst bam physical address.
-* @dst_pipe_index: dst bam pipe index.
-* @data_fifo_base_offset: data fifo offset.
-* @data_fifo_size: data fifo size.
-* @desc_fifo_base_offset: descriptor fifo offset.
-* @desc_fifo_size: descriptor fifo size.
-* @data_mem_buf: data fifo buffer.
-* @desc_mem_buf: descriptor fifo buffer.
-* @event: event for wakeup.
-* @enabled: true if pipe is enabled.
-* @suspended: true if pipe is suspended.
-* @cons_stopped: true is pipe has consumer requests stopped.
-* @prod_stopped: true if pipe has producer requests stopped.
-* @ipa_clnt_hdl : pipe handle to ipa api.
-* @priv: private data to return upon activity_notify
-*	or inactivity_notify callbacks.
-* @activity_notify: callback to invoke on activity on one of the in pipes.
-* @inactivity_notify: callback to invoke on inactivity on all pipes.
-* @start: callback to invoke to enqueue transfers on a pipe.
-* @stop: callback to invoke on dequeue transfers on a pipe.
-* @start_stop_param: param for the start/stop callbacks.
-*/
+/*
+ * struct usb_bam_pipe_connect: pipe connection information
+ * between USB/HSIC BAM and another BAM. USB/HSIC BAM can be
+ * either src BAM or dst BAM
+ * @name: pipe description.
+ * @mem_type: type of memory used for BAM FIFOs
+ * @src_phy_addr: src bam physical address.
+ * @src_pipe_index: src bam pipe index.
+ * @dst_phy_addr: dst bam physical address.
+ * @dst_pipe_index: dst bam pipe index.
+ * @data_fifo_base_offset: data fifo offset.
+ * @data_fifo_size: data fifo size.
+ * @desc_fifo_base_offset: descriptor fifo offset.
+ * @desc_fifo_size: descriptor fifo size.
+ * @data_mem_buf: data fifo buffer.
+ * @desc_mem_buf: descriptor fifo buffer.
+ * @event: event for wakeup.
+ * @enabled: true if pipe is enabled.
+ * @suspended: true if pipe is suspended.
+ * @cons_stopped: true is pipe has consumer requests stopped.
+ * @prod_stopped: true if pipe has producer requests stopped.
+ * @ipa_clnt_hdl : pipe handle to ipa api.
+ * @priv: private data to return upon activity_notify
+ *	or inactivity_notify callbacks.
+ * @activity_notify: callback to invoke on activity on one of the in pipes.
+ * @inactivity_notify: callback to invoke on inactivity on all pipes.
+ * @start: callback to invoke to enqueue transfers on a pipe.
+ * @stop: callback to invoke on dequeue transfers on a pipe.
+ * @start_stop_param: param for the start/stop callbacks.
+ */
 struct usb_bam_pipe_connect {
 	const char *name;
 	u32 pipe_num;
@@ -191,7 +198,7 @@ struct usb_bam_pipe_connect {
 };
 
 /**
- * struct msm_usb_bam_platform_data: pipe connection information
+ * struct msm_usb_bam_data: pipe connection information
  * between USB/HSIC BAM and another BAM. USB/HSIC BAM can be
  * either src BAM or dst BAM
  * @usb_bam_num_pipes: max number of pipes to use.
@@ -210,7 +217,7 @@ struct usb_bam_pipe_connect {
  * @max_mbps_superspeed: Maximum Mbits per seconds that the USB core
  *		can work at in bam2bam mode when connected to SS host.
  */
-struct msm_usb_bam_platform_data {
+struct msm_usb_bam_data {
 	u8 max_connections;
 	int usb_bam_num_pipes;
 	phys_addr_t usb_bam_fifo_baseaddr;
@@ -224,7 +231,7 @@ struct msm_usb_bam_platform_data {
 	enum usb_ctrl bam_type;
 };
 
-#ifdef CONFIG_USB_BAM
+#if  IS_ENABLED(CONFIG_USB_BAM)
 /**
  * Connect USB-to-Peripheral SPS connection.
  *
@@ -236,10 +243,13 @@ struct msm_usb_bam_platform_data {
  *
  * @bam_pipe_idx - allocated pipe index.
  *
+ * @iova - IPA address of USB peer BAM (i.e. QDSS BAM)
+ *
  * @return 0 on success, negative value on error
  *
  */
-int usb_bam_connect(enum usb_ctrl bam_type, int idx, u32 *bam_pipe_idx);
+int usb_bam_connect(enum usb_ctrl bam_type, int idx, u32 *bam_pipe_idx,
+						unsigned long iova);
 
 /**
  * Connect USB-to-IPA SPS connection.
@@ -369,65 +379,67 @@ int get_qdss_bam_connection_info(
 	u32 *peer_pipe_idx, struct sps_mem_buffer *desc_fifo,
 	struct sps_mem_buffer *data_fifo, enum usb_pipe_mem_type *mem_type);
 
-/**
-* Indicates if the client of the USB BAM is ready to start
-* sending/receiving transfers.
-*
-*@bam_type - USB BAM type - dwc3/CI/hsic
-*
-* @client - Usb pipe peer (a2, ipa, qdss...)
-*
-* @dir - In (from peer to usb) or out (from usb to peer)
-*
-* @num - Pipe number.
-*
-* @return 0 on success, negative value on error
-*/
+/*
+ * Indicates if the client of the USB BAM is ready to start
+ * sending/receiving transfers.
+ *
+ * @bam_type - USB BAM type - dwc3/CI/hsic
+ *
+ * @client - Usb pipe peer (a2, ipa, qdss...)
+ *
+ * @dir - In (from peer to usb) or out (from usb to peer)
+ *
+ * @num - Pipe number.
+ *
+ * @return 0 on success, negative value on error
+ */
 int usb_bam_get_connection_idx(enum usb_ctrl bam_type, enum peer_bam client,
 	enum usb_bam_pipe_dir dir, enum usb_bam_mode bam_mode, u32 num);
 
-/**
-* return the usb controller bam type used for the supplied connection index
-*
-* @core_name - Core name (ssusb/hsusb/hsic).
-*
-* @return usb control bam type
-*/
+/*
+ * return the usb controller bam type used for the supplied connection index
+ *
+ * @core_name - Core name (ssusb/hsusb/hsic).
+ *
+ * @return usb control bam type
+ */
 int usb_bam_get_bam_type(const char *core_name);
 
-/**
-* Indicates the type of connection the USB side of the connection is.
-*
-* @bam_type - USB BAM type - dwc3/CI/hsic
-*
-* @idx - Pipe number.
-*
-* @type - Type of connection
-*
-* @return 0 on success, negative value on error
-*/
+/*
+ * Indicates the type of connection the USB side of the connection is.
+ *
+ * @bam_type - USB BAM type - dwc3/CI/hsic
+ *
+ * @idx - Pipe number.
+ *
+ * @type - Type of connection
+ *
+ * @return 0 on success, negative value on error
+ */
 int usb_bam_get_pipe_type(enum usb_ctrl bam_type,
 			  u8 idx, enum usb_bam_pipe_type *type);
 
-/**
-* Indicates whether USB producer is granted to IPA resource manager.
-*
-* @return true when producer granted, false when prodcuer is released.
-*/
-bool usb_bam_get_prod_granted(enum usb_ctrl bam_type, u8 idx);
+/*
+ * Indicates whether USB producer is granted to IPA resource manager.
+ *
+ * @return true when producer granted, false when prodcuer is released.
+ */
+bool usb_bam_get_prod_granted(enum usb_ctrl bam_type);
 
-/**
-* Allocates memory for data fifo and descriptor fifos.
-*/
+/* Allocates memory for data fifo and descriptor fifos. */
 int usb_bam_alloc_fifos(enum usb_ctrl cur_bam, u8 idx);
 
-/**
-* Frees memory for data fifo and descriptor fifos.
-*/
+/* Frees memory for data fifo and descriptor fifos. */
 int usb_bam_free_fifos(enum usb_ctrl cur_bam, u8 idx);
-
+int get_qdss_bam_info(enum usb_ctrl cur_bam, u8 idx,
+			phys_addr_t *p_addr, u32 *bam_size);
+bool msm_bam_hsic_lpm_ok(void);
+bool msm_bam_hsic_host_pipe_empty(void);
+bool msm_usb_bam_enable(enum usb_ctrl ctrl, bool bam_enable);
+int msm_do_bam_disable_enable(enum usb_ctrl ctrl);
 #else
-static inline int usb_bam_connect(enum usb_ctrl bam, u8 idx, u32 *bam_pipe_idx)
+static inline int usb_bam_connect(enum usb_ctrl bam, u8 idx, u32 *bam_pipe_idx,
+							unsigned long iova)
 {
 	return -ENODEV;
 }
@@ -446,9 +458,7 @@ static inline int usb_bam_disconnect_ipa(enum usb_ctrl bam_type,
 
 static inline void usb_bam_wait_for_cons_granted(
 			struct usb_bam_connect_ipa_params *ipa_params)
-{
-	return;
-}
+{ }
 
 static inline int usb_bam_register_wake_cb(enum usb_ctrl bam_type, u8 idx,
 	int (*callback)(void *), void *param)
@@ -508,7 +518,7 @@ static inline int usb_bam_get_pipe_type(enum usb_ctrl bam_type, u8 idx,
 	return -ENODEV;
 }
 
-static inline bool usb_bam_get_prod_granted(enum usb_ctrl bam_type, u8 idx)
+static inline bool usb_bam_get_prod_granted(enum usb_ctrl bam_type)
 {
 	return false;
 }
@@ -523,5 +533,39 @@ int usb_bam_free_fifos(enum usb_ctrl cur_bam, u8 idx)
 	return false;
 }
 
+static int get_qdss_bam_info(enum usb_ctrl cur_bam, u8 idx,
+				phys_addr_t *p_addr, u32 *bam_size)
+{
+	return false;
+}
+static inline bool msm_bam_hsic_lpm_ok(void) { return true; }
+static inline bool msm_bam_hsic_host_pipe_empty(void) { return true; }
+static inline bool msm_usb_bam_enable(enum usb_ctrl ctrl, bool bam_enable)
+{ return true; }
+int msm_do_bam_disable_enable(enum usb_ctrl ctrl) { return true; }
+
+#endif
+
+#ifdef CONFIG_USB_CI13XXX_MSM
+void msm_hw_bam_disable(bool bam_disable);
+void msm_usb_irq_disable(bool disable);
+#else
+static inline void msm_hw_bam_disable(bool bam_disable)
+{ }
+
+static inline void msm_usb_irq_disable(bool disable)
+{ }
+#endif
+
+/* CONFIG_PM */
+#ifdef CONFIG_PM
+static inline int get_pm_runtime_counter(struct device *dev)
+{
+	return atomic_read(&dev->power.usage_count);
+}
+#else
+/* !CONFIG_PM */
+static inline int get_pm_runtime_counter(struct device *dev)
+{ return -EOPNOTSUPP; }
 #endif
 #endif				/* _USB_BAM_H_ */

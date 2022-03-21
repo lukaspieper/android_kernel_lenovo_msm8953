@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -162,6 +162,9 @@
 
 #define PM8950_V2P0_REV4	0x02
 
+/* PM8953 */
+#define PM8953_SUBTYPE		0x16
+
 /* PMI8950 */
 #define PMI8950_SUBTYPE		0x11
 
@@ -178,8 +181,16 @@
 #define PMI8998_SUBTYPE	0x15
 
 /* PM660 */
-#define PM660L_SUBTYPE		0x1A
-#define PM660_SUBTYPE		0x1B
+#define PM660L_SUBTYPE	0x1A
+#define PM660_SUBTYPE	0x1B
+
+/* PMI632 */
+#define PMI632_SUBTYPE	0x25
+
+/* PM855 */
+#define PM855_SUBTYPE		0x1E
+#define PM855L_SUBTYPE		0x1F
+#define PM855B_SUBTYPE		0x20
 
 /* PMI8998 REV_ID */
 #define PMI8998_V1P0_REV1	0x00
@@ -214,6 +225,17 @@
 #define PM660L_V1P1_REV3	0x01
 #define PM660L_V1P1_REV4	0x01
 
+#define PM660L_V2P0_REV1	0x00
+#define PM660L_V2P0_REV2	0x00
+#define PM660L_V2P0_REV3	0x00
+#define PM660L_V2P0_REV4	0x02
+
+/* PMI632 REV_ID */
+#define PMI632_V1P0_REV1	0x00
+#define PMI632_V1P0_REV2	0x00
+#define PMI632_V1P0_REV3	0x00
+#define PMI632_V1P0_REV4	0x01
+
 /* PMI8998 FAB_ID */
 #define PMI8998_FAB_ID_SMIC	0x11
 #define PMI8998_FAB_ID_GF	0x30
@@ -232,8 +254,11 @@
 /* PMI8937 */
 #define PMI8937_SUBTYPE		0x37
 
-/* PMI8940 */
-#define PMI8940_SUBTYPE		0x40
+/* SMB1381 */
+#define SMB1381_SUBTYPE		0x17
+
+/* SMB1355 */
+#define SMB1355_SUBTYPE		0x1C
 
 struct pmic_revid_data {
 	u8		rev1;
@@ -244,6 +269,7 @@ struct pmic_revid_data {
 	u8		pmic_subtype;
 	const char	*pmic_name;
 	int		fab_id;
+	int		tp_rev;
 };
 
 #ifdef CONFIG_QPNP_REVID

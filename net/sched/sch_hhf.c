@@ -345,7 +345,7 @@ static void bucket_add(struct wdrr_bucket *bucket, struct sk_buff *skb)
 	skb->next = NULL;
 }
 
-static unsigned int hhf_drop(struct Qdisc *sch)
+static unsigned int hhf_drop(struct Qdisc *sch, struct sk_buff **to_free)
 {
 	struct hhf_sched_data *q = qdisc_priv(sch);
 	struct wdrr_bucket *bucket;
@@ -359,16 +359,16 @@ static unsigned int hhf_drop(struct Qdisc *sch)
 		struct sk_buff *skb = dequeue_head(bucket);
 
 		sch->q.qlen--;
-		qdisc_qstats_drop(sch);
 		qdisc_qstats_backlog_dec(sch, skb);
-		kfree_skb(skb);
+		qdisc_drop(skb, sch, to_free);
 	}
 
 	/* Return id of the bucket from which the packet was dropped. */
 	return bucket - q->buckets;
 }
 
-static int hhf_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+static int hhf_enqueue(struct sk_buff *skb, struct Qdisc *sch,
+		       struct sk_buff **to_free)
 {
 	struct hhf_sched_data *q = qdisc_priv(sch);
 	enum wdrr_bucket_idx idx;
@@ -406,7 +406,7 @@ static int hhf_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	/* Return Congestion Notification only if we dropped a packet from this
 	 * bucket.
 	 */
-	if (hhf_drop(sch) == idx)
+	if (hhf_drop(sch, to_free) == idx)
 		return NET_XMIT_CN;
 
 	/* As we dropped a packet, better let upper stack know this. */
@@ -464,7 +464,7 @@ static void hhf_reset(struct Qdisc *sch)
 	struct sk_buff *skb;
 
 	while ((skb = hhf_dequeue(sch)) != NULL)
-		kfree_skb(skb);
+		rtnl_kfree_skbs(skb, skb);
 }
 
 static void *hhf_zalloc(size_t sz)
@@ -491,6 +491,9 @@ static void hhf_destroy(struct Qdisc *sch)
 		hhf_free(q->hhf_arrays[i]);
 		hhf_free(q->hhf_valid_bits[i]);
 	}
+
+	if (!q->hh_flows)
+		return;
 
 	for (i = 0; i < HH_FLOWS_CNT; i++) {
 		struct hh_flow_state *flow, *next;
@@ -574,7 +577,7 @@ static int hhf_change(struct Qdisc *sch, struct nlattr *opt)
 	while (sch->q.qlen > sch->limit) {
 		struct sk_buff *skb = hhf_dequeue(sch);
 
-		kfree_skb(skb);
+		rtnl_kfree_skbs(skb, skb);
 	}
 	qdisc_tree_reduce_backlog(sch, qlen - sch->q.qlen,
 				  prev_backlog - sch->qstats.backlog);
@@ -704,7 +707,6 @@ static struct Qdisc_ops hhf_qdisc_ops __read_mostly = {
 	.enqueue	=	hhf_enqueue,
 	.dequeue	=	hhf_dequeue,
 	.peek		=	qdisc_peek_dequeued,
-	.drop		=	hhf_drop,
 	.init		=	hhf_init,
 	.reset		=	hhf_reset,
 	.destroy	=	hhf_destroy,

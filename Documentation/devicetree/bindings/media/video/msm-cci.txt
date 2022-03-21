@@ -1,4 +1,4 @@
-* Qualcomm MSM CCI
+* Qualcomm Technologies, Inc. MSM CCI
 
 [First level nodes]
 Required properties:
@@ -40,7 +40,7 @@ Optional properties:
 	  like default
 
 [Second level nodes]
-* Qualcomm CCI clock settings
+* Qualcomm Technologies, Inc. CCI clock settings
 
 Optional properties:
 - qcom,hw-thigh : should contain high period of the SCL clock in terms of CCI
@@ -56,7 +56,7 @@ Optional properties:
 - qcom,hw-trdhld : should contain internal hold time for SDA
 - qcom,hw-tsp : should contain filtering of glitches
 
-* Qualcomm MSM Sensor
+* Qualcomm Technologies, Inc. MSM Sensor
 
 MSM sensor node contains properties of camera sensor
 
@@ -172,8 +172,10 @@ Optional properties:
    should contain phandle of respective ir-led node
 - qcom,ir-cut-src : if ir cut is supported by this sensor, this property
    should contain phandle of respective ir-cut node
+- qcom,special-support-sensors: if only some special sensors are supported
+   on this board, add sensor name in this property.
 
-* Qualcomm MSM ACTUATOR
+* Qualcomm Technologies, Inc. MSM ACTUATOR
 
 Required properties:
 - cell-index : should contain unique identifier to differentiate
@@ -200,7 +202,32 @@ Optional properties:
    (in the same order).
 - cam_vaf-supply : should contain regulator from which AF voltage is supplied
 
-* Qualcomm MSM OIS
+* Qualcomm Technologies, Inc. MSM LASER LED
+
+Required properties:
+- cell-index : should contain unique identifier to differentiate
+    between multiple laser led modules
+- reg : should contain i2c slave address of the laser led and length of
+    data field which is 0x0
+- compatible :
+    - "qcom,laser-led"
+- qcom,cci-master : should contain i2c master id to be used for this camera
+    sensor
+    - 0 -> MASTER 0
+    - 1 -> MASTER 1
+
+Optional properties:
+- qcom,cam-vreg-name : should contain names of all regulators needed by this
+   laser led
+- qcom,cam-vreg-min-voltage : should contain minimum voltage level in microvolts
+   for regulators mentioned in qcom,cam-vreg-name property (in the same order)
+- qcom,cam-vreg-max-voltage : should contain maximum voltage level in microvolts
+   for regulators mentioned in qcom,cam-vreg-name property (in the same order)
+- qcom,cam-vreg-op-mode : should contain the maximum current in microamps
+   required from the regulators mentioned in the qcom,cam-vreg-name property
+   (in the same order).
+
+* Qualcomm Technologies, Inc. MSM OIS
 
 Required properties:
 - cell-index : should contain unique identifier to differentiate
@@ -311,6 +338,7 @@ Example:
 		clocks = <&clock_mmss clk_mclk0_clk_src>,
 				<&clock_mmss clk_camss_mclk0_clk>;
 		clock-names = "cam_src_clk", "cam_clk";
+		qcom,clock-rates = <24000000 0>;
 	};
 
 &i2c_freq_100Khz {

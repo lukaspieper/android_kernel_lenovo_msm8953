@@ -18,6 +18,8 @@ int multi_counter(void)
 	struct event events[6];
 	int i, group_fd;
 
+	SKIP_IF(!ebb_is_supported());
+
 	event_init_named(&events[0], 0x1001C, "PM_CMPLU_STALL_THRD");
 	event_init_named(&events[1], 0x2D016, "PM_CMPLU_STALL_FXU");
 	event_init_named(&events[2], 0x30006, "PM_CMPLU_STALL_OTHER_CMPL");
@@ -67,6 +69,13 @@ int multi_counter(void)
 
 	ebb_global_disable();
 	ebb_freeze_pmcs();
+
+	count_pmc(1, sample_period);
+	count_pmc(2, sample_period);
+	count_pmc(3, sample_period);
+	count_pmc(4, sample_period);
+	count_pmc(5, sample_period);
+	count_pmc(6, sample_period);
 
 	dump_ebb_state();
 

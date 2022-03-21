@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -32,7 +32,7 @@
 
 #include "clock.h"
 
-DEFINE_VDD_REGS_INIT(vdd_cpu, 1);
+static DEFINE_VDD_REGS_INIT(vdd_cpu, 1);
 
 static struct mux_div_clk a7ssmux = {
 	.ops = &rcg_mux_div_ops,
@@ -88,51 +88,50 @@ static void print_opp_table(int a7_cpu)
 	rcu_read_unlock();
 }
 
-static int add_opp(struct clk *c, struct device *cpudev, struct device *vregdev,
-			unsigned long max_rate)
+static int add_opp(struct clk *c, struct device *dev,
+					unsigned long max_rate)
 {
 	unsigned long rate = 0;
 	int level;
-	long ret, uv, corner;
+	int uv;
+	long ret;
+	bool first = true;
+	int j = 1;
 
 	while (1) {
-		ret = clk_round_rate(c, rate + 1);
-		if (ret < 0) {
-			pr_warn("clock-cpu: round_rate failed at %lu\n", rate);
-			return ret;
-		}
-
-		rate = ret;
+		rate = c->fmax[j++];
 
 		level = find_vdd_level(c, rate);
 		if (level <= 0) {
-			pr_warn("clock-cpu: no uv for %lu.\n", rate);
+			pr_warn("clock-cpu: no corner for %lu\n", rate);
 			return -EINVAL;
 		}
 
-		uv = corner = c->vdd_class->vdd_uv[level];
+		uv = c->vdd_class->vdd_uv[level];
+		if (uv < 0) {
+			pr_warn("clock-cpu: no uv for %lu\n", rate);
+			return -EINVAL;
+		}
+
+		ret = dev_pm_opp_add(dev, rate, uv);
+		if (ret) {
+			pr_warn("clock-cpu: failed to add OPP for %lu\n",
+					rate);
+			return ret;
+		}
 
 		/*
-		 * Populate both CPU and regulator devices with the
-		 * freq-to-corner OPP table to maintain backward
-		 * compatibility.
+		 * The OPP pair for the lowest and highest frequency for
+		 * each device that we're populating. This is important since
+		 * this information will be used by thermal mitigation and the
+		 * scheduler.
 		 */
-		ret = dev_pm_opp_add(cpudev, rate, corner);
-		if (ret) {
-			pr_warn("clock-cpu: couldn't add OPP for %lu\n",
-					rate);
-			return ret;
+		if ((rate >= max_rate) || first) {
+			if (first)
+				first = false;
+			else
+				break;
 		}
-
-		ret = dev_pm_opp_add(vregdev, rate, corner);
-		if (ret) {
-			pr_warn("clock-cpu: couldn't add OPP for %lu\n",
-					rate);
-			return ret;
-		}
-
-		if (rate >= max_rate)
-			break;
 	}
 
 	return 0;
@@ -142,6 +141,7 @@ static void populate_opp_table(struct platform_device *pdev)
 {
 	struct platform_device *apc_dev;
 	struct device_node *apc_node;
+	struct device *dev;
 	unsigned long apc_fmax;
 	int cpu, a7_cpu = 0;
 
@@ -161,8 +161,13 @@ static void populate_opp_table(struct platform_device *pdev)
 
 	for_each_possible_cpu(cpu) {
 		a7_cpu = cpu;
-		WARN(add_opp(&a7ssmux.c, get_cpu_device(cpu),
-					&apc_dev->dev, apc_fmax),
+		dev = get_cpu_device(cpu);
+		if (!dev) {
+			pr_err("can't find cpu device for attaching OPPs\n");
+			return;
+		}
+
+		WARN(add_opp(&a7ssmux.c, dev, apc_fmax),
 				"Failed to add OPP levels for A7\n");
 	}
 
@@ -269,7 +274,6 @@ static void get_speed_bin(struct platform_device *pdev, int *bin, int *version)
 
 	dev_info(&pdev->dev, "PVS version: %d\n", *version);
 
-	return;
 }
 
 static void get_speed_bin_b(struct platform_device *pdev, int *bin,
@@ -469,11 +473,7 @@ static int clock_a7_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id clock_a7_match_table[] = {
-	{.compatible = "qcom,clock-a7-8226"},
-	{.compatible = "qcom,clock-a7-krypton"},
-	{.compatible = "qcom,clock-a7-9630"},
-	{.compatible = "qcom,clock-a7-9640"},
+static const struct of_device_id clock_a7_match_table[] = {
 	{.compatible = "qcom,clock-a53-8916"},
 	{.compatible = "qcom,clock-a7-9650"},
 	{.compatible = "qcom,clock-a7-mdm9607"},

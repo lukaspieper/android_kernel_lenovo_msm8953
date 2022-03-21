@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -33,6 +33,7 @@ int of_register_slim_devices(struct slim_controller *ctrl)
 		struct property *prop;
 		struct slim_device *slim;
 		char *name;
+
 		prop = of_find_property(node, "elemental-addr", NULL);
 		if (!prop || prop->length != 6) {
 			dev_err(&ctrl->dev, "of_slim: invalid E-addr");
@@ -40,7 +41,6 @@ int of_register_slim_devices(struct slim_controller *ctrl)
 		}
 		name = kzalloc(SLIMBUS_NAME_SIZE, GFP_KERNEL);
 		if (!name) {
-			dev_err(&ctrl->dev, "of_slim: out of memory");
 			ret = -ENOMEM;
 			goto of_slim_err;
 		}
@@ -52,7 +52,6 @@ int of_register_slim_devices(struct slim_controller *ctrl)
 		}
 		slim = kzalloc(sizeof(struct slim_device), GFP_KERNEL);
 		if (!slim) {
-			dev_err(&ctrl->dev, "of_slim: out of memory");
 			ret = -ENOMEM;
 			kfree(name);
 			goto of_slim_err;

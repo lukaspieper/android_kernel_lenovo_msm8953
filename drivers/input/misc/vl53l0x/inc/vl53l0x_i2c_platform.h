@@ -1,6 +1,6 @@
 /*
- *  vl53l0x_i2c_platform.h - Linux kernel modules for STM VL53L0 FlightSense TOF
- *						 sensor
+ *  vl53l0x_i2c_platform.h - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,8 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
-
 
 /**
  * @file   VL_i2c_platform.h
@@ -371,25 +369,25 @@ int32_t VL_release_gpio(void);
 
 
 /**
-* @brief Get the frequency of the timer used for ranging results time stamps
-*
-* @param[out] ptimer_freq_hz : pointer for timer frequency
-*
-* @return status : 0 = ok, 1 = error
-*
-*/
+ * @brief Get the frequency of the timer used for ranging results time stamps
+ *
+ * @param[out] ptimer_freq_hz : pointer for timer frequency
+ *
+ * @return status : 0 = ok, 1 = error
+ *
+ */
 
 int32_t VL_get_timer_frequency(int32_t *ptimer_freq_hz);
 
 /**
-* @brief Get the timer value in units of timer_freq_hz
-* (see VL_get_timestamp_frequency())
-*
-* @param[out] ptimer_count : pointer for timer count value
-*
-* @return status : 0 = ok, 1 = error
-*
-*/
+ * @brief Get the timer value in units of timer_freq_hz
+ * (see VL_get_timestamp_frequency())
+ *
+ * @param[out] ptimer_count : pointer for timer count value
+ *
+ * @return status : 0 = ok, 1 = error
+ *
+ */
 
 int32_t VL_get_timer_value(int32_t *ptimer_count);
 int VL_I2CWrite(struct vl_data *dev, uint8_t *buff, uint8_t len);

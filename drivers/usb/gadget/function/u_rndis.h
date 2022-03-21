@@ -26,6 +26,7 @@ struct f_rndis_opts {
 	bool				bound;
 	bool				borrowed_net;
 
+	struct config_group		*rndis_interf_group;
 	struct usb_os_desc		rndis_os_desc;
 	char				rndis_ext_compat_id[16];
 
@@ -37,10 +38,11 @@ struct f_rndis_opts {
 	 */
 	struct mutex			lock;
 	int				refcnt;
+
+	/* "Wireless" RNDIS; auto-detected by Windows */
+	bool	wceis;
 };
 
-int rndis_init(void);
-void rndis_exit(void);
 void rndis_borrow_net(struct usb_function_instance *f, struct net_device *net);
 
 #endif /* U_RNDIS_H */

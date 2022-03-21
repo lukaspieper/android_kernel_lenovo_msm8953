@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -95,6 +95,7 @@ static void _rbbm_debug_bus_read(struct kgsl_device *device,
 	unsigned int block_id, unsigned int index, unsigned int *val)
 {
 	unsigned int block = (block_id << 8) | 1 << 16;
+
 	kgsl_regwrite(device, A3XX_RBBM_DEBUG_BUS_CTL, block | index);
 	kgsl_regread(device, A3XX_RBBM_DEBUG_BUS_DATA_STATUS, val);
 }

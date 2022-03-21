@@ -47,8 +47,8 @@ struct msm_serial_hs_platform_data {
 	int uart_rx_gpio;
 	int uart_cts_gpio;
 	int uart_rfr_gpio;
-	unsigned bam_tx_ep_pipe_index;
-	unsigned bam_rx_ep_pipe_index;
+	unsigned int bam_tx_ep_pipe_index;
+	unsigned int bam_rx_ep_pipe_index;
 	bool no_suspend_delay;
 	bool obs;
 };

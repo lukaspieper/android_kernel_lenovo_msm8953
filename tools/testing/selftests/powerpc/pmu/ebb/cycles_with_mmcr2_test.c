@@ -26,6 +26,8 @@ int cycles_with_mmcr2(void)
 	int i;
 	bool bad_mmcr2;
 
+	SKIP_IF(!ebb_is_supported());
+
 	event_init_named(&event, 0x1001e, "cycles");
 	event_leader_ebb_init(&event);
 
@@ -68,6 +70,8 @@ int cycles_with_mmcr2(void)
 
 	ebb_global_disable();
 	ebb_freeze_pmcs();
+
+	count_pmc(1, sample_period);
 
 	dump_ebb_state();
 

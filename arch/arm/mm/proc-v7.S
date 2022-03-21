@@ -9,6 +9,7 @@
  *
  *  This is the "shell" of the ARMv7 processor support.
  */
+#include <linux/arm-smccc.h>
 #include <linux/init.h>
 #include <linux/linkage.h>
 #include <asm/assembler.h>
@@ -16,6 +17,8 @@
 #include <asm/hwcap.h>
 #include <asm/pgtable-hwdef.h>
 #include <asm/pgtable.h>
+#include <asm/memory.h>
+#include <asm/cache.h>
 
 #include "proc-macros.S"
 
@@ -87,6 +90,37 @@ ENTRY(cpu_v7_dcache_clean_area)
 	ret	lr
 ENDPROC(cpu_v7_dcache_clean_area)
 
+#ifdef CONFIG_ARM_PSCI
+	.arch_extension sec
+ENTRY(cpu_v7_smc_switch_mm)
+	stmfd	sp!, {r0 - r3}
+	movw	r0, #:lower16:ARM_SMCCC_ARCH_WORKAROUND_1
+	movt	r0, #:upper16:ARM_SMCCC_ARCH_WORKAROUND_1
+	smc	#0
+	ldmfd	sp!, {r0 - r3}
+	b	cpu_v7_switch_mm
+ENDPROC(cpu_v7_smc_switch_mm)
+	.arch_extension virt
+ENTRY(cpu_v7_hvc_switch_mm)
+	stmfd	sp!, {r0 - r3}
+	movw	r0, #:lower16:ARM_SMCCC_ARCH_WORKAROUND_1
+	movt	r0, #:upper16:ARM_SMCCC_ARCH_WORKAROUND_1
+	hvc	#0
+	ldmfd	sp!, {r0 - r3}
+	b	cpu_v7_switch_mm
+ENDPROC(cpu_v7_hvc_switch_mm)
+#endif
+ENTRY(cpu_v7_iciallu_switch_mm)
+	mov	r3, #0
+	mcr	p15, 0, r3, c7, c5, 0		@ ICIALLU
+	b	cpu_v7_switch_mm
+ENDPROC(cpu_v7_iciallu_switch_mm)
+ENTRY(cpu_v7_bpiall_switch_mm)
+	mov	r3, #0
+	mcr	p15, 0, r3, c7, c5, 6		@ flush BTAC/BTB
+	b	cpu_v7_switch_mm
+ENDPROC(cpu_v7_bpiall_switch_mm)
+
 	string	cpu_v7_name, "ARMv7 Processor"
 	.align
 
@@ -95,7 +129,7 @@ ENDPROC(cpu_v7_dcache_clean_area)
 .equ	cpu_v7_suspend_size, 4 * 9
 #ifdef CONFIG_ARM_CPU_SUSPEND
 ENTRY(cpu_v7_do_suspend)
-	stmfd	sp!, {r4 - r10, lr}
+	stmfd	sp!, {r4 - r11, lr}
 	mrc	p15, 0, r4, c13, c0, 0	@ FCSE/PID
 	mrc	p15, 0, r5, c13, c0, 3	@ User r/o thread ID
 	stmia	r0!, {r4 - r5}
@@ -112,7 +146,7 @@ ENTRY(cpu_v7_do_suspend)
 	mrc	p15, 0, r9, c1, c0, 1	@ Auxiliary control register
 	mrc	p15, 0, r10, c1, c0, 2	@ Co-processor access control
 	stmia	r0, {r5 - r11}
-	ldmfd	sp!, {r4 - r10, pc}
+	ldmfd	sp!, {r4 - r11, pc}
 ENDPROC(cpu_v7_do_suspend)
 
 ENTRY(cpu_v7_do_resume)
@@ -152,16 +186,6 @@ ENTRY(cpu_v7_do_resume)
 ENDPROC(cpu_v7_do_resume)
 #endif
 
-/*
- * Cortex-A9 processor functions
- */
-	globl_equ	cpu_ca9mp_proc_init,	cpu_v7_proc_init
-	globl_equ	cpu_ca9mp_proc_fin,	cpu_v7_proc_fin
-	globl_equ	cpu_ca9mp_reset,	cpu_v7_reset
-	globl_equ	cpu_ca9mp_do_idle,	cpu_v7_do_idle
-	globl_equ	cpu_ca9mp_dcache_clean_area, cpu_v7_dcache_clean_area
-	globl_equ	cpu_ca9mp_switch_mm,	cpu_v7_switch_mm
-	globl_equ	cpu_ca9mp_set_pte_ext,	cpu_v7_set_pte_ext
 .globl	cpu_ca9mp_suspend_size
 .equ	cpu_ca9mp_suspend_size, cpu_v7_suspend_size + 4 * 2
 #ifdef CONFIG_ARM_CPU_SUSPEND
@@ -237,6 +261,12 @@ ENDPROC(cpu_pj4b_do_resume)
  *	Initialise TLB, Caches, and MMU state ready to switch the MMU
  *	on.  Return in r0 the new CP15 C1 control register setting.
  *
+ *	r1, r2, r4, r5, r9, r13 must be preserved - r13 is not a stack
+ *	r4: TTBR0 (low word)
+ *	r5: TTBR0 (high word if LPAE)
+ *	r8: TTBR1
+ *	r9: Main ID register
+ *
  *	This should be able to cover all ARMv7 cores.
  *
  *	It is assumed that:
@@ -253,16 +283,126 @@ __v7_ca15mp_setup:
 __v7_b15mp_setup:
 __v7_ca17mp_setup:
 	mov	r10, #0
-1:
+1:	adr	r0, __v7_setup_stack_ptr
+	ldr	r12, [r0]
+	add	r12, r12, r0			@ the local stack
+	stmia	r12, {r1-r6, lr}		@ v7_invalidate_l1 touches r0-r6
+	bl      v7_invalidate_l1
+	ldmia	r12, {r1-r6, lr}
 #ifdef CONFIG_SMP
+	orr	r10, r10, #(1 << 6)		@ Enable SMP/nAMP mode
 	ALT_SMP(mrc	p15, 0, r0, c1, c0, 1)
-	ALT_UP(mov	r0, #(1 << 6))		@ fake it for UP
-	tst	r0, #(1 << 6)			@ SMP/nAMP mode enabled?
-	orreq	r0, r0, #(1 << 6)		@ Enable SMP/nAMP mode
-	orreq	r0, r0, r10			@ Enable CPU-specific SMP bits
-	mcreq	p15, 0, r0, c1, c0, 1
+	ALT_UP(mov	r0, r10)		@ fake it for UP
+	orr	r10, r10, r0			@ Set required bits
+	teq	r10, r0				@ Were they already set?
+	mcrne	p15, 0, r10, c1, c0, 1		@ No, update register
 #endif
-	b	__v7_setup
+	b	__v7_setup_cont
+
+/*
+ * Errata:
+ *  r0, r10 available for use
+ *  r1, r2, r4, r5, r9, r13: must be preserved
+ *  r3: contains MIDR rX number in bits 23-20
+ *  r6: contains MIDR rXpY as 8-bit XY number
+ *  r9: MIDR
+ */
+__ca8_errata:
+#if defined(CONFIG_ARM_ERRATA_430973) && !defined(CONFIG_ARCH_MULTIPLATFORM)
+	teq	r3, #0x00100000			@ only present in r1p*
+	mrceq	p15, 0, r0, c1, c0, 1		@ read aux control register
+	orreq	r0, r0, #(1 << 6)		@ set IBE to 1
+	mcreq	p15, 0, r0, c1, c0, 1		@ write aux control register
+#endif
+#ifdef CONFIG_ARM_ERRATA_458693
+	teq	r6, #0x20			@ only present in r2p0
+	mrceq	p15, 0, r0, c1, c0, 1		@ read aux control register
+	orreq	r0, r0, #(1 << 5)		@ set L1NEON to 1
+	orreq	r0, r0, #(1 << 9)		@ set PLDNOP to 1
+	mcreq	p15, 0, r0, c1, c0, 1		@ write aux control register
+#endif
+#ifdef CONFIG_ARM_ERRATA_460075
+	teq	r6, #0x20			@ only present in r2p0
+	mrceq	p15, 1, r0, c9, c0, 2		@ read L2 cache aux ctrl register
+	tsteq	r0, #1 << 22
+	orreq	r0, r0, #(1 << 22)		@ set the Write Allocate disable bit
+	mcreq	p15, 1, r0, c9, c0, 2		@ write the L2 cache aux ctrl register
+#endif
+	b	__errata_finish
+
+__ca9_errata:
+#ifdef CONFIG_ARM_ERRATA_742230
+	cmp	r6, #0x22			@ only present up to r2p2
+	mrcle	p15, 0, r0, c15, c0, 1		@ read diagnostic register
+	orrle	r0, r0, #1 << 4			@ set bit #4
+	mcrle	p15, 0, r0, c15, c0, 1		@ write diagnostic register
+#endif
+#ifdef CONFIG_ARM_ERRATA_742231
+	teq	r6, #0x20			@ present in r2p0
+	teqne	r6, #0x21			@ present in r2p1
+	teqne	r6, #0x22			@ present in r2p2
+	mrceq	p15, 0, r0, c15, c0, 1		@ read diagnostic register
+	orreq	r0, r0, #1 << 12		@ set bit #12
+	orreq	r0, r0, #1 << 22		@ set bit #22
+	mcreq	p15, 0, r0, c15, c0, 1		@ write diagnostic register
+#endif
+#ifdef CONFIG_ARM_ERRATA_743622
+	teq	r3, #0x00200000			@ only present in r2p*
+	mrceq	p15, 0, r0, c15, c0, 1		@ read diagnostic register
+	orreq	r0, r0, #1 << 6			@ set bit #6
+	mcreq	p15, 0, r0, c15, c0, 1		@ write diagnostic register
+#endif
+#if defined(CONFIG_ARM_ERRATA_751472) && defined(CONFIG_SMP)
+	ALT_SMP(cmp r6, #0x30)			@ present prior to r3p0
+	ALT_UP_B(1f)
+	mrclt	p15, 0, r0, c15, c0, 1		@ read diagnostic register
+	orrlt	r0, r0, #1 << 11		@ set bit #11
+	mcrlt	p15, 0, r0, c15, c0, 1		@ write diagnostic register
+1:
+#endif
+	b	__errata_finish
+
+__ca15_errata:
+#ifdef CONFIG_ARM_ERRATA_773022
+	cmp	r6, #0x4			@ only present up to r0p4
+	mrcle	p15, 0, r0, c1, c0, 1		@ read aux control register
+	orrle	r0, r0, #1 << 1			@ disable loop buffer
+	mcrle	p15, 0, r0, c1, c0, 1		@ write aux control register
+#endif
+	b	__errata_finish
+
+__ca12_errata:
+#ifdef CONFIG_ARM_ERRATA_818325_852422
+	mrc	p15, 0, r10, c15, c0, 1		@ read diagnostic register
+	orr	r10, r10, #1 << 12		@ set bit #12
+	mcr	p15, 0, r10, c15, c0, 1		@ write diagnostic register
+#endif
+#ifdef CONFIG_ARM_ERRATA_821420
+	mrc	p15, 0, r10, c15, c0, 2		@ read internal feature reg
+	orr	r10, r10, #1 << 1		@ set bit #1
+	mcr	p15, 0, r10, c15, c0, 2		@ write internal feature reg
+#endif
+#ifdef CONFIG_ARM_ERRATA_825619
+	mrc	p15, 0, r10, c15, c0, 1		@ read diagnostic register
+	orr	r10, r10, #1 << 24		@ set bit #24
+	mcr	p15, 0, r10, c15, c0, 1		@ write diagnostic register
+#endif
+	b	__errata_finish
+
+__ca17_errata:
+#ifdef CONFIG_ARM_ERRATA_852421
+	cmp	r6, #0x12			@ only present up to r1p2
+	mrcle	p15, 0, r10, c15, c0, 1		@ read diagnostic register
+	orrle	r10, r10, #1 << 24		@ set bit #24
+	mcrle	p15, 0, r10, c15, c0, 1		@ write diagnostic register
+#endif
+#ifdef CONFIG_ARM_ERRATA_852423
+	cmp	r6, #0x12			@ only present up to r1p2
+	mrcle	p15, 0, r10, c15, c0, 1		@ read diagnostic register
+	orrle	r10, r10, #1 << 12		@ set bit #12
+	mcrle	p15, 0, r10, c15, c0, 1		@ write diagnostic register
+#endif
+	b	__errata_finish
 
 __v7_pj4b_setup:
 #ifdef CONFIG_CPU_PJ4B
@@ -319,94 +459,49 @@ __v7_pj4b_setup:
 #endif /* CONFIG_CPU_PJ4B */
 
 __v7_setup:
-	adr	r12, __v7_setup_stack		@ the local stack
-	stmia	r12, {r0-r5, r7, r9, r11, lr}
-	bl      v7_flush_dcache_louis
-	ldmia	r12, {r0-r5, r7, r9, r11, lr}
+	adr	r0, __v7_setup_stack_ptr
+	ldr	r12, [r0]
+	add	r12, r12, r0			@ the local stack
+	stmia	r12, {r1-r6, lr}		@ v7_invalidate_l1 touches r0-r6
+	bl      v7_invalidate_l1
+	ldmia	r12, {r1-r6, lr}
 
-	mrc	p15, 0, r0, c0, c0, 0		@ read main ID register
-	and	r10, r0, #0xff000000		@ ARM?
-	teq	r10, #0x41000000
-	bne	3f
-	and	r3, r0, #0x00f00000		@ variant
-	and	r6, r0, #0x0000000f		@ revision
+__v7_setup_cont:
+	and	r0, r9, #0xff000000		@ ARM?
+	teq	r0, #0x41000000
+	bne	__errata_finish
+	and	r3, r9, #0x00f00000		@ variant
+	and	r6, r9, #0x0000000f		@ revision
 	orr	r6, r6, r3, lsr #20-4		@ combine variant and revision
-	ubfx	r0, r0, #4, #12			@ primary part number
+	ubfx	r0, r9, #4, #12			@ primary part number
 
 	/* Cortex-A8 Errata */
 	ldr	r10, =0x00000c08		@ Cortex-A8 primary part number
 	teq	r0, r10
-	bne	2f
-#if defined(CONFIG_ARM_ERRATA_430973) && !defined(CONFIG_ARCH_MULTIPLATFORM)
-
-	teq	r3, #0x00100000			@ only present in r1p*
-	mrceq	p15, 0, r10, c1, c0, 1		@ read aux control register
-	orreq	r10, r10, #(1 << 6)		@ set IBE to 1
-	mcreq	p15, 0, r10, c1, c0, 1		@ write aux control register
-#endif
-#ifdef CONFIG_ARM_ERRATA_458693
-	teq	r6, #0x20			@ only present in r2p0
-	mrceq	p15, 0, r10, c1, c0, 1		@ read aux control register
-	orreq	r10, r10, #(1 << 5)		@ set L1NEON to 1
-	orreq	r10, r10, #(1 << 9)		@ set PLDNOP to 1
-	mcreq	p15, 0, r10, c1, c0, 1		@ write aux control register
-#endif
-#ifdef CONFIG_ARM_ERRATA_460075
-	teq	r6, #0x20			@ only present in r2p0
-	mrceq	p15, 1, r10, c9, c0, 2		@ read L2 cache aux ctrl register
-	tsteq	r10, #1 << 22
-	orreq	r10, r10, #(1 << 22)		@ set the Write Allocate disable bit
-	mcreq	p15, 1, r10, c9, c0, 2		@ write the L2 cache aux ctrl register
-#endif
-	b	3f
+	beq	__ca8_errata
 
 	/* Cortex-A9 Errata */
-2:	ldr	r10, =0x00000c09		@ Cortex-A9 primary part number
+	ldr	r10, =0x00000c09		@ Cortex-A9 primary part number
 	teq	r0, r10
-	bne	3f
-#ifdef CONFIG_ARM_ERRATA_742230
-	cmp	r6, #0x22			@ only present up to r2p2
-	mrcle	p15, 0, r10, c15, c0, 1		@ read diagnostic register
-	orrle	r10, r10, #1 << 4		@ set bit #4
-	mcrle	p15, 0, r10, c15, c0, 1		@ write diagnostic register
-#endif
-#ifdef CONFIG_ARM_ERRATA_742231
-	teq	r6, #0x20			@ present in r2p0
-	teqne	r6, #0x21			@ present in r2p1
-	teqne	r6, #0x22			@ present in r2p2
-	mrceq	p15, 0, r10, c15, c0, 1		@ read diagnostic register
-	orreq	r10, r10, #1 << 12		@ set bit #12
-	orreq	r10, r10, #1 << 22		@ set bit #22
-	mcreq	p15, 0, r10, c15, c0, 1		@ write diagnostic register
-#endif
-#ifdef CONFIG_ARM_ERRATA_743622
-	teq	r3, #0x00200000			@ only present in r2p*
-	mrceq	p15, 0, r10, c15, c0, 1		@ read diagnostic register
-	orreq	r10, r10, #1 << 6		@ set bit #6
-	mcreq	p15, 0, r10, c15, c0, 1		@ write diagnostic register
-#endif
-#if defined(CONFIG_ARM_ERRATA_751472) && defined(CONFIG_SMP)
-	ALT_SMP(cmp r6, #0x30)			@ present prior to r3p0
-	ALT_UP_B(1f)
-	mrclt	p15, 0, r10, c15, c0, 1		@ read diagnostic register
-	orrlt	r10, r10, #1 << 11		@ set bit #11
-	mcrlt	p15, 0, r10, c15, c0, 1		@ write diagnostic register
-1:
-#endif
+	beq	__ca9_errata
+
+	/* Cortex-A12 Errata */
+	ldr	r10, =0x00000c0d		@ Cortex-A12 primary part number
+	teq	r0, r10
+	beq	__ca12_errata
+
+	/* Cortex-A17 Errata */
+	ldr	r10, =0x00000c0e		@ Cortex-A17 primary part number
+	teq	r0, r10
+	beq	__ca17_errata
 
 	/* Cortex-A15 Errata */
-3:	ldr	r10, =0x00000c0f		@ Cortex-A15 primary part number
+	ldr	r10, =0x00000c0f		@ Cortex-A15 primary part number
 	teq	r0, r10
-	bne	4f
+	beq	__ca15_errata
 
-#ifdef CONFIG_ARM_ERRATA_773022
-	cmp	r6, #0x4			@ only present up to r0p4
-	mrcle	p15, 0, r10, c1, c0, 1		@ read aux control register
-	orrle	r10, r10, #1 << 1		@ disable loop buffer
-	mcrle	p15, 0, r10, c1, c0, 1		@ write aux control register
-#endif
-
-4:	mov	r10, #0
+__errata_finish:
+	mov	r10, #0
 	mcr	p15, 0, r10, c7, c5, 0		@ I+BTB cache invalidate
 #ifdef CONFIG_MMU
 	mcr	p15, 0, r10, c8, c7, 0		@ invalidate I + D TLBs
@@ -441,17 +536,92 @@ __v7_setup:
 	orr	r0, r0, r6			@ set them
  THUMB(	orr	r0, r0, #1 << 30	)	@ Thumb exceptions
 	ret	lr				@ return to head.S:__ret
-ENDPROC(__v7_setup)
 
 	.align	2
-__v7_setup_stack:
-	.space	4 * 11				@ 11 registers
+__v7_setup_stack_ptr:
+	.word	PHYS_RELATIVE(__v7_setup_stack, .)
+ENDPROC(__v7_setup)
 
+	.bss
+	.align	L1_CACHE_SHIFT
+__v7_setup_stack:
+	.space	4 * 7				@ 7 registers
+	.align	L1_CACHE_SHIFT
 	__INITDATA
 
+	.weak cpu_v7_bugs_init
+
 	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
-	define_processor_functions v7, dabort=v7_early_abort, pabort=v7_pabort, suspend=1
-	define_processor_functions ca9mp, dabort=v7_early_abort, pabort=v7_pabort, suspend=1
+	define_processor_functions v7, dabort=v7_early_abort, pabort=v7_pabort, suspend=1, bugs=cpu_v7_bugs_init
+
+#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
+	@ generic v7 bpiall on context switch
+	globl_equ	cpu_v7_bpiall_proc_init,	cpu_v7_proc_init
+	globl_equ	cpu_v7_bpiall_proc_fin,		cpu_v7_proc_fin
+	globl_equ	cpu_v7_bpiall_reset,		cpu_v7_reset
+	globl_equ	cpu_v7_bpiall_do_idle,		cpu_v7_do_idle
+	globl_equ	cpu_v7_bpiall_dcache_clean_area, cpu_v7_dcache_clean_area
+	globl_equ	cpu_v7_bpiall_set_pte_ext,	cpu_v7_set_pte_ext
+	globl_equ	cpu_v7_bpiall_suspend_size,	cpu_v7_suspend_size
+#ifdef CONFIG_ARM_CPU_SUSPEND
+	globl_equ	cpu_v7_bpiall_do_suspend,	cpu_v7_do_suspend
+	globl_equ	cpu_v7_bpiall_do_resume,	cpu_v7_do_resume
+#endif
+	define_processor_functions v7_bpiall, dabort=v7_early_abort, pabort=v7_pabort, suspend=1, bugs=cpu_v7_bugs_init
+
+#define HARDENED_BPIALL_PROCESSOR_FUNCTIONS v7_bpiall_processor_functions
+#else
+#define HARDENED_BPIALL_PROCESSOR_FUNCTIONS v7_processor_functions
+#endif
+
+#ifndef CONFIG_ARM_LPAE
+	@ Cortex-A8 - always needs bpiall switch_mm implementation
+	globl_equ	cpu_ca8_proc_init,	cpu_v7_proc_init
+	globl_equ	cpu_ca8_proc_fin,	cpu_v7_proc_fin
+	globl_equ	cpu_ca8_reset,		cpu_v7_reset
+	globl_equ	cpu_ca8_do_idle,	cpu_v7_do_idle
+	globl_equ	cpu_ca8_dcache_clean_area, cpu_v7_dcache_clean_area
+	globl_equ	cpu_ca8_set_pte_ext,	cpu_v7_set_pte_ext
+	globl_equ	cpu_ca8_switch_mm,	cpu_v7_bpiall_switch_mm
+	globl_equ	cpu_ca8_suspend_size,	cpu_v7_suspend_size
+#ifdef CONFIG_ARM_CPU_SUSPEND
+	globl_equ	cpu_ca8_do_suspend,	cpu_v7_do_suspend
+	globl_equ	cpu_ca8_do_resume,	cpu_v7_do_resume
+#endif
+	define_processor_functions ca8, dabort=v7_early_abort, pabort=v7_pabort, suspend=1, bugs=cpu_v7_ca8_ibe
+
+	@ Cortex-A9 - needs more registers preserved across suspend/resume
+	@ and bpiall switch_mm for hardening
+	globl_equ	cpu_ca9mp_proc_init,	cpu_v7_proc_init
+	globl_equ	cpu_ca9mp_proc_fin,	cpu_v7_proc_fin
+	globl_equ	cpu_ca9mp_reset,	cpu_v7_reset
+	globl_equ	cpu_ca9mp_do_idle,	cpu_v7_do_idle
+	globl_equ	cpu_ca9mp_dcache_clean_area, cpu_v7_dcache_clean_area
+#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
+	globl_equ	cpu_ca9mp_switch_mm,	cpu_v7_bpiall_switch_mm
+#else
+	globl_equ	cpu_ca9mp_switch_mm,	cpu_v7_switch_mm
+#endif
+	globl_equ	cpu_ca9mp_set_pte_ext,	cpu_v7_set_pte_ext
+	define_processor_functions ca9mp, dabort=v7_early_abort, pabort=v7_pabort, suspend=1, bugs=cpu_v7_bugs_init
+#endif
+
+	@ Cortex-A15 - needs iciallu switch_mm for hardening
+	globl_equ	cpu_ca15_proc_init,	cpu_v7_proc_init
+	globl_equ	cpu_ca15_proc_fin,	cpu_v7_proc_fin
+	globl_equ	cpu_ca15_reset,		cpu_v7_reset
+	globl_equ	cpu_ca15_do_idle,	cpu_v7_do_idle
+	globl_equ	cpu_ca15_dcache_clean_area, cpu_v7_dcache_clean_area
+#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
+	globl_equ	cpu_ca15_switch_mm,	cpu_v7_iciallu_switch_mm
+#else
+	globl_equ	cpu_ca15_switch_mm,	cpu_v7_switch_mm
+#endif
+	globl_equ	cpu_ca15_set_pte_ext,	cpu_v7_set_pte_ext
+	globl_equ	cpu_ca15_suspend_size,	cpu_v7_suspend_size
+	globl_equ	cpu_ca15_do_suspend,	cpu_v7_do_suspend
+	globl_equ	cpu_ca15_do_resume,	cpu_v7_do_resume
+	define_processor_functions ca15, dabort=v7_early_abort, pabort=v7_pabort, suspend=1, bugs=cpu_v7_ca15_ibe
 #ifdef CONFIG_CPU_PJ4B
 	define_processor_functions pj4b, dabort=v7_early_abort, pabort=v7_pabort, suspend=1
 #endif
@@ -507,6 +677,16 @@ __v7_ca9mp_proc_info:
 	__v7_proc __v7_ca9mp_proc_info, __v7_ca9mp_setup, proc_fns = ca9mp_processor_functions
 	.size	__v7_ca9mp_proc_info, . - __v7_ca9mp_proc_info
 
+	/*
+	 * ARM Ltd. Cortex A8 processor.
+	 */
+	.type	__v7_ca8_proc_info, #object
+__v7_ca8_proc_info:
+	.long	0x410fc080
+	.long	0xff0ffff0
+	__v7_proc __v7_ca8_proc_info, __v7_setup, proc_fns = ca8_processor_functions
+	.size	__v7_ca8_proc_info, . - __v7_ca8_proc_info
+
 #endif	/* CONFIG_ARM_LPAE */
 
 	/*
@@ -548,7 +728,7 @@ __v7_ca7mp_proc_info:
 __v7_ca12mp_proc_info:
 	.long	0x410fc0d0
 	.long	0xff0ffff0
-	__v7_proc __v7_ca12mp_proc_info, __v7_ca12mp_setup
+	__v7_proc __v7_ca12mp_proc_info, __v7_ca12mp_setup, proc_fns = HARDENED_BPIALL_PROCESSOR_FUNCTIONS
 	.size	__v7_ca12mp_proc_info, . - __v7_ca12mp_proc_info
 
 	/*
@@ -558,7 +738,7 @@ __v7_ca12mp_proc_info:
 __v7_ca15mp_proc_info:
 	.long	0x410fc0f0
 	.long	0xff0ffff0
-	__v7_proc __v7_ca15mp_proc_info, __v7_ca15mp_setup
+	__v7_proc __v7_ca15mp_proc_info, __v7_ca15mp_setup, proc_fns = ca15_processor_functions
 	.size	__v7_ca15mp_proc_info, . - __v7_ca15mp_proc_info
 
 	/*
@@ -568,7 +748,7 @@ __v7_ca15mp_proc_info:
 __v7_b15mp_proc_info:
 	.long	0x420f00f0
 	.long	0xff0ffff0
-	__v7_proc __v7_b15mp_proc_info, __v7_b15mp_setup
+	__v7_proc __v7_b15mp_proc_info, __v7_b15mp_setup, proc_fns = ca15_processor_functions
 	.size	__v7_b15mp_proc_info, . - __v7_b15mp_proc_info
 
 	/*
@@ -578,8 +758,24 @@ __v7_b15mp_proc_info:
 __v7_ca17mp_proc_info:
 	.long	0x410fc0e0
 	.long	0xff0ffff0
-	__v7_proc __v7_ca17mp_proc_info, __v7_ca17mp_setup
+	__v7_proc __v7_ca17mp_proc_info, __v7_ca17mp_setup, proc_fns = HARDENED_BPIALL_PROCESSOR_FUNCTIONS
 	.size	__v7_ca17mp_proc_info, . - __v7_ca17mp_proc_info
+
+	/* ARM Ltd. Cortex A73 processor */
+	.type	__v7_ca73_proc_info, #object
+__v7_ca73_proc_info:
+	.long	0x410fd090
+	.long	0xff0ffff0
+	__v7_proc __v7_ca73_proc_info, __v7_setup, proc_fns = HARDENED_BPIALL_PROCESSOR_FUNCTIONS
+	.size	__v7_ca73_proc_info, . - __v7_ca73_proc_info
+
+	/* ARM Ltd. Cortex A75 processor */
+	.type	__v7_ca75_proc_info, #object
+__v7_ca75_proc_info:
+	.long	0x410fd0a0
+	.long	0xff0ffff0
+	__v7_proc __v7_ca75_proc_info, __v7_setup, proc_fns = HARDENED_BPIALL_PROCESSOR_FUNCTIONS
+	.size	__v7_ca75_proc_info, . - __v7_ca75_proc_info
 
 	/*
 	 * Qualcomm Inc. Krait processors.

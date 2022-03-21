@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2016, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,6 +22,7 @@ enum {
 	SMEM_DSPS,
 	SMEM_WCNSS,
 	SMEM_MODEM_Q6_FW,
+	SMEM_CDSP = SMEM_MODEM_Q6_FW,
 	SMEM_RPM,
 	SMEM_TZ,
 	SMEM_SPSS,
@@ -78,6 +79,7 @@ enum {
 	SMEM_SMEM_LOG_EVENTS,
 	SMEM_XBL_LOADER_CORE_INFO,
 	SMEM_SMEM_STATIC_LOG_EVENTS,
+	SMEM_CHARGER_BATTERY_INFO = SMEM_SMEM_STATIC_LOG_EVENTS,
 	SMEM_SMEM_SLOW_CLOCK_SYNC,
 	SMEM_SMEM_SLOW_CLOCK_VALUE,
 	SMEM_BIO_LED_BUF,
@@ -90,15 +92,8 @@ enum {
 	SMEM_KEYPAD_STATE_UPDATED,
 	SMEM_KEYPAD_STATE_IDX,
 	SMEM_GPIO_INT,
-	SMEM_MDDI_LCD_IDX,
-	SMEM_MDDI_HOST_DRIVER_STATE,
-	SMEM_MDDI_LCD_DISP_STATE,
-	SMEM_LCD_CUR_PANEL,
-	SMEM_MARM_BOOT_SEGMENT_INFO,
-	SMEM_AARM_BOOT_SEGMENT_INFO,
-	SMEM_SLEEP_STATIC,
-	SMEM_SCORPION_FREQUENCY,
-	SMEM_SMD_PROFILES,
+	SMEM_SMP2P_CDSP_BASE,
+	SMEM_SMD_PROFILES = SMEM_SMP2P_CDSP_BASE + 8,
 	SMEM_TSSC_BUSY,
 	SMEM_HS_SUSPEND_FILTER_INFO,
 	SMEM_BATT_INFO,
@@ -181,12 +176,12 @@ enum {
 };
 
 #ifdef CONFIG_MSM_SMEM
-void *smem_alloc(unsigned id, unsigned size_in, unsigned to_proc,
-								unsigned flags);
-void *smem_find(unsigned id, unsigned size_in, unsigned to_proc,
-								unsigned flags);
-void *smem_get_entry(unsigned id, unsigned *size, unsigned to_proc,
-								unsigned flags);
+void *smem_alloc(unsigned int id, unsigned int size_in, unsigned int to_proc,
+						unsigned int flags);
+void *smem_find(unsigned int id, unsigned int size_in, unsigned int to_proc,
+						unsigned int flags);
+void *smem_get_entry(unsigned int id, unsigned int *size, unsigned int to_proc,
+						unsigned int flags);
 
 /**
  * smem_get_entry_no_rlock - Get existing item without using remote spinlock
@@ -201,8 +196,8 @@ void *smem_get_entry(unsigned id, unsigned *size, unsigned to_proc,
  * failure-recover cases such as retrieving the subsystem failure reason during
  * subsystem restart.
  */
-void *smem_get_entry_no_rlock(unsigned id, unsigned *size_out, unsigned to_proc,
-								unsigned flags);
+void *smem_get_entry_no_rlock(unsigned int id, unsigned int *size_out, unsigned int to_proc,
+							unsigned int flags);
 
 /**
  * smem_virt_to_phys() - Convert SMEM address to physical address.
@@ -223,23 +218,25 @@ phys_addr_t smem_virt_to_phys(void *smem_address);
 int __init msm_smem_init(void);
 
 #else
-static inline void *smem_alloc(unsigned id, unsigned size_in, unsigned to_proc,
-								unsigned flags)
+static inline void *smem_alloc(unsigned int id, unsigned int size_in,
+				unsigned int to_proc, unsigned int flags)
 {
 	return NULL;
 }
-static inline void *smem_find(unsigned id, unsigned size_in,
-					unsigned to_proc, unsigned flags)
+static inline void *smem_find(unsigned int id, unsigned int size_in,
+				unsigned int to_proc, unsigned int flags)
 {
 	return NULL;
 }
-static inline void *smem_get_entry(unsigned id, unsigned *size,
-					unsigned to_proc, unsigned flags)
+static inline void *smem_get_entry(unsigned int id, unsigned int *size,
+				unsigned int to_proc, unsigned int flags)
 {
 	return NULL;
 }
-static inline void *smem_get_entry_no_rlock(unsigned id, unsigned *size_out,
-					unsigned to_proc, unsigned flags)
+static inline void *smem_get_entry_no_rlock(unsigned int id,
+						unsigned int *size_out,
+						unsigned int to_proc,
+					       unsigned int flags)
 {
 	return NULL;
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2011-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
  *
  * This file is based on include/net/bluetooth/hci_core.h
  *
@@ -34,6 +34,7 @@
 #include <linux/mutex.h>
 #include <linux/atomic.h>
 
+#define RDS_PS_SIMPLE_OFFSET 2
 extern struct mutex fm_smd_enable;
 
 struct radio_hci_dev {
@@ -86,13 +87,18 @@ void radio_hci_event_packet(struct radio_hci_dev *hdev, struct sk_buff *skb);
 #define hci_req_lock(d)		mutex_lock(&d->req_lock)
 #define hci_req_unlock(d)	mutex_unlock(&d->req_lock)
 
-#define FMDBG(fmt, args...) pr_debug(fmt "\n", ##args)
+#undef FMDBG
+#ifdef FM_DEBUG
+#define FMDBG(fmt, args...) pr_info("iris_radio: " fmt, ##args)
+#else
+#define FMDBG(fmt, args...)
+#endif
 
 #undef FMDERR
 #define FMDERR(fmt, args...) pr_err("iris_radio: " fmt, ##args)
 
 /* HCI timeouts */
-#define RADIO_HCI_TIMEOUT	(1500)	/* 1.5 seconds */
+#define RADIO_HCI_TIMEOUT	(10000)	/* 10 seconds */
 
 int hci_def_data_read(struct hci_fm_def_data_rd_req *arg,
 	struct radio_hci_dev *hdev);

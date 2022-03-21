@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -76,6 +76,10 @@ struct sdhci_pinctrl_data {
 	struct pinctrl          *pctrl;
 	struct pinctrl_state    *pins_active;
 	struct pinctrl_state    *pins_sleep;
+	struct pinctrl_state    *pins_drv_type_400KHz;
+	struct pinctrl_state    *pins_drv_type_50MHz;
+	struct pinctrl_state    *pins_drv_type_100MHz;
+	struct pinctrl_state    *pins_drv_type_200MHz;
 };
 
 struct sdhci_msm_bus_voting_data {
@@ -149,10 +153,14 @@ struct sdhci_msm_pltfm_data {
 	int sdiowakeup_irq;
 	u32 *sup_ice_clk_table;
 	unsigned char sup_ice_clk_cnt;
-	u32 ice_clk_max;
-	u32 ice_clk_min;
 	struct sdhci_msm_pm_qos_data pm_qos_data;
 	bool sdr104_wa;
+	u32 ice_clk_max;
+	u32 ice_clk_min;
+	u32 ddr_config;
+	bool rclk_wa;
+	u32 *bus_clk_table;
+	unsigned char bus_clk_cnt;
 };
 
 struct sdhci_msm_bus_vote {
@@ -171,12 +179,56 @@ struct sdhci_msm_ice_data {
 	int state;
 };
 
+struct sdhci_msm_regs_restore {
+	bool is_supported;
+	bool is_valid;
+	u32 vendor_pwrctl_mask;
+	u32 vendor_pwrctl_ctl;
+	u32 vendor_caps_0;
+	u32 vendor_func;
+	u32 vendor_func2;
+	u32 vendor_func3;
+	u32 hc_2c_2e;
+	u32 hc_28_2a;
+	u32 hc_34_36;
+	u32 hc_38_3a;
+	u32 hc_3c_3e;
+	u32 hc_caps_1;
+	u32 testbus_config;
+	u32 dll_config;
+	u32 dll_config2;
+	u32 dll_config3;
+	u32 dll_usr_ctl;
+};
+
+/*
+ * DLL registers which needs be programmed with HSR settings.
+ * Add any new register only at the end and don't change the
+ * seqeunce.
+ */
+struct sdhci_msm_dll_hsr {
+	u32 dll_config;
+	u32 dll_config_2;
+	u32 dll_config_3;
+	u32 dll_usr_ctl;
+	u32 ddr_config;
+};
+
+struct sdhci_msm_debug_data {
+	struct mmc_host copy_mmc;
+	struct mmc_card copy_card;
+	struct sdhci_host copy_host;
+};
+
 struct sdhci_msm_host {
 	struct platform_device	*pdev;
 	void __iomem *core_mem;    /* MSM SDCC mapped address */
+	void __iomem *cryptoio;    /* ICE HCI mapped address */
+	bool ice_hci_support;
 	int	pwr_irq;	/* power irq */
 	struct clk	 *clk;     /* main SD/MMC bus clock */
 	struct clk	 *pclk;    /* SDHC peripheral bus clock */
+	struct clk	 *bus_aggr_clk; /* Axi clock shared with UFS */
 	struct clk	 *bus_clk; /* SDHC bus voter clock */
 	struct clk	 *ff_clk; /* CDC calibration fixed feedback clock */
 	struct clk	 *sleep_clk; /* CDC calibration sleep clock */
@@ -184,6 +236,7 @@ struct sdhci_msm_host {
 	atomic_t clks_on; /* Set if clocks are enabled */
 	struct sdhci_msm_pltfm_data *pdata;
 	struct mmc_host  *mmc;
+	struct sdhci_msm_debug_data cached_data;
 	struct sdhci_pltfm_data sdhci_msm_pdata;
 	u32 curr_pwr_state;
 	u32 curr_io_level;
@@ -214,8 +267,15 @@ struct sdhci_msm_host {
 	bool pm_qos_group_enable;
 	struct sdhci_msm_pm_qos_irq pm_qos_irq;
 	bool tuning_in_progress;
+	bool mci_removed;
+	const struct sdhci_msm_offset *offset;
 	bool core_3_0v_support;
 	bool pltfm_init_done;
+	struct sdhci_msm_regs_restore regs_restore;
+	int soc_min_rev;
+	struct workqueue_struct *pm_qos_wq;
+	bool need_dll_user_ctl;
+	struct sdhci_msm_dll_hsr *dll_hsr;
 };
 
 extern char *saved_command_line;

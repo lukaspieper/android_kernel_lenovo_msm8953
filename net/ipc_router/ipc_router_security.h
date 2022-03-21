@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014,2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -51,7 +51,7 @@ int msm_ipc_config_sec_rules(void *arg);
  * This function is used when the service comes up and gets registered with
  * the IPC Router.
  */
-void *msm_ipc_get_security_rule(uint32_t service_id, uint32_t instance_id);
+void *msm_ipc_get_security_rule(u32 service_id, u32 instance_id);
 
 /**
  * msm_ipc_check_send_permissions() - Check if the sendng process has
@@ -96,8 +96,8 @@ static inline int msm_ipc_config_sec_rules(void *arg)
 	return -ENODEV;
 }
 
-static inline void *msm_ipc_get_security_rule(uint32_t service_id,
-					      uint32_t instance_id)
+static inline void *msm_ipc_get_security_rule(u32 service_id,
+					      u32 instance_id)
 {
 	return NULL;
 }

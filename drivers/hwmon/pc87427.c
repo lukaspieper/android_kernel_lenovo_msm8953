@@ -1161,7 +1161,6 @@ static int pc87427_remove(struct platform_device *pdev)
 
 static struct platform_driver pc87427_driver = {
 	.driver = {
-		.owner	= THIS_MODULE,
 		.name	= DRVNAME,
 	},
 	.probe		= pc87427_probe,

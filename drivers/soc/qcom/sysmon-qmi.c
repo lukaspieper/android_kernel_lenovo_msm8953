@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015, 2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -88,6 +88,7 @@ static void sysmon_clnt_svc_arrive(struct work_struct *work);
 static void sysmon_clnt_svc_exit(struct work_struct *work);
 
 static const int notif_map[SUBSYS_NOTIF_TYPE_COUNT] = {
+	[0 ... SUBSYS_NOTIF_TYPE_COUNT - 1] = SSCTL_SSR_EVENT_INVALID,
 	[SUBSYS_BEFORE_POWERUP] = SSCTL_SSR_EVENT_BEFORE_POWERUP,
 	[SUBSYS_AFTER_POWERUP] = SSCTL_SSR_EVENT_AFTER_POWERUP,
 	[SUBSYS_BEFORE_SHUTDOWN] = SSCTL_SSR_EVENT_BEFORE_SHUTDOWN,
@@ -147,16 +148,23 @@ static void sysmon_clnt_notify(struct qmi_handle *handle,
 	}
 }
 
+static bool is_ssctl_event(enum subsys_notif_type notif)
+{
+	return notif_map[notif] != SSCTL_SSR_EVENT_INVALID;
+}
+
 static void sysmon_clnt_svc_arrive(struct work_struct *work)
 {
 	int rc;
 	struct sysmon_qmi_data *data = container_of(work,
 					struct sysmon_qmi_data, svc_arrive);
 
+	mutex_lock(&sysmon_lock);
 	/* Create a Local client port for QMI communication */
 	data->clnt_handle = qmi_handle_create(sysmon_clnt_notify, work);
 	if (!data->clnt_handle) {
 		pr_err("QMI client handle alloc failed for %s\n", data->name);
+		mutex_unlock(&sysmon_lock);
 		return;
 	}
 
@@ -167,6 +175,7 @@ static void sysmon_clnt_svc_arrive(struct work_struct *work)
 								data->name);
 		qmi_handle_destroy(data->clnt_handle);
 		data->clnt_handle = NULL;
+		mutex_unlock(&sysmon_lock);
 		return;
 	}
 	pr_info("Connection established between QMI handle and %s's SSCTL service\n"
@@ -177,6 +186,7 @@ static void sysmon_clnt_svc_arrive(struct work_struct *work)
 	if (rc < 0)
 		pr_warn("%s: Could not register the indication callback\n",
 								data->name);
+	mutex_unlock(&sysmon_lock);
 }
 
 static void sysmon_clnt_svc_exit(struct work_struct *work)
@@ -184,8 +194,10 @@ static void sysmon_clnt_svc_exit(struct work_struct *work)
 	struct sysmon_qmi_data *data = container_of(work,
 					struct sysmon_qmi_data, svc_exit);
 
+	mutex_lock(&sysmon_lock);
 	qmi_handle_destroy(data->clnt_handle);
 	data->clnt_handle = NULL;
+	mutex_unlock(&sysmon_lock);
 }
 
 static void sysmon_clnt_recv_msg(struct work_struct *work)
@@ -295,8 +307,8 @@ static struct elem_info qmi_ssctl_subsys_event_resp_msg_ei[] = {
  *
  * Returns 0 for success, -EINVAL for invalid destination or notification IDs,
  * -ENODEV if the transport channel is not open, -ETIMEDOUT if the destination
- * subsystem does not respond, and -ENOSYS if the destination subsystem
- * responds, but with something other than an acknowledgement.
+ * subsystem does not respond, and -EPROTO if the destination subsystem
+ * responds, but with something other than an acknowledgment.
  *
  * If CONFIG_MSM_SYSMON_COMM is not defined, always return success (0).
  */
@@ -312,8 +324,8 @@ int sysmon_send_event(struct subsys_desc *dest_desc,
 	const char *dest_ss = dest_desc->name;
 	int ret;
 
-	if (notif < 0 || notif >= SUBSYS_NOTIF_TYPE_COUNT || event_ss == NULL
-		|| dest_ss == NULL)
+	if (notif < 0 || notif >= SUBSYS_NOTIF_TYPE_COUNT ||
+	    !is_ssctl_event(notif) || event_ss == NULL || dest_ss == NULL)
 		return -EINVAL;
 
 	mutex_lock(&sysmon_list_lock);
@@ -404,7 +416,7 @@ static struct elem_info qmi_ssctl_shutdown_resp_msg_ei[] = {
  *
  * Returns 0 for success, -EINVAL for an invalid destination, -ENODEV if
  * the SMD transport channel is not open, -ETIMEDOUT if the destination
- * subsystem does not respond, and -ENOSYS if the destination subsystem
+ * subsystem does not respond, and -EPROTO if the destination subsystem
  * responds with something unexpected.
  *
  * If CONFIG_MSM_SYSMON_COMM is not defined, always return success (0).
@@ -561,7 +573,7 @@ static struct elem_info qmi_ssctl_get_failure_reason_resp_msg_ei[] = {
  *
  * Returns 0 for success, -EINVAL for an invalid destination, -ENODEV if
  * the SMD transport channel is not open, -ETIMEDOUT if the destination
- * subsystem does not respond, and -ENOSYS if the destination subsystem
+ * subsystem does not respond, and -EPROTO if the destination subsystem
  * responds with something unexpected.
  *
  * If CONFIG_MSM_SYSMON_COMM is not defined, always return success (0).
@@ -624,7 +636,7 @@ int sysmon_get_reason(struct subsys_desc *dest_desc, char *buf, size_t len)
 
 	if (!strcmp(resp.error_message, expect)) {
 		pr_err("Unexpected response %s\n", resp.error_message);
-		ret = -ENOSYS;
+		ret = -EPROTO;
 		goto out;
 	}
 	strlcpy(buf, resp.error_message, resp.error_message_len);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014,2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -162,6 +162,7 @@ static inline int adreno_cp_parser_regindex(struct adreno_device *adreno_dev,
 {
 	int i;
 	const unsigned int *regs;
+
 	if (adreno_is_a4xx(adreno_dev))
 		regs = a4xx_cp_addr_regs;
 	else if (adreno_is_a3xx(adreno_dev))

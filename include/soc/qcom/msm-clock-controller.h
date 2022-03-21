@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -88,7 +88,7 @@ void *msmclk_generic_clk_init(struct device *dev, struct device_node *np,
  *      Registers a parser which will be matched with a node from dt
  *      according to the compatible string.
  */
-void msmclk_parser_register(struct msmclk_parser *);
+void msmclk_parser_register(struct msmclk_parser *p);
 
 /*
  * msmclk_parse_phandle

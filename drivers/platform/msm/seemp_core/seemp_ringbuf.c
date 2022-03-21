@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,7 +9,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
-*/
+ */
 
 #define pr_fmt(fmt) "seemp: %s: " fmt, __func__
 
@@ -36,7 +36,7 @@ int ringbuf_init(struct seemp_logk_dev *sdev)
 		for (virt_addr = (unsigned long)buf;
 				virt_addr < (unsigned long)buf + sdev->ring_sz;
 				virt_addr += PAGE_SIZE) {
-				SetPageReserved(virt_to_page((virt_addr)));
+			SetPageReserved(virt_to_page((virt_addr)));
 		}
 	} else {
 		sdev->ring = vmalloc(sdev->ring_sz);

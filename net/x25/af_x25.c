@@ -100,7 +100,7 @@ int x25_parse_address_block(struct sk_buff *skb,
 	}
 
 	len = *skb->data;
-	needed = 1 + (len >> 4) + (len & 0x0f);
+	needed = 1 + ((len >> 4) + (len & 0x0f) + 1) / 2;
 
 	if (!pskb_may_pull(skb, needed)) {
 		/* packet is too short to hold the addresses it claims
@@ -288,7 +288,7 @@ static struct sock *x25_find_listener(struct x25_address *addr,
 	sk_for_each(s, &x25_list)
 		if ((!strcmp(addr->x25_addr,
 			x25_sk(s)->source_addr.x25_addr) ||
-				!strcmp(addr->x25_addr,
+				!strcmp(x25_sk(s)->source_addr.x25_addr,
 					null_x25_address.x25_addr)) &&
 					s->sk_state == TCP_LISTEN) {
 			/*
@@ -513,10 +513,10 @@ static struct proto x25_proto = {
 	.obj_size = sizeof(struct x25_sock),
 };
 
-static struct sock *x25_alloc_socket(struct net *net)
+static struct sock *x25_alloc_socket(struct net *net, int kern)
 {
 	struct x25_sock *x25;
-	struct sock *sk = sk_alloc(net, AF_X25, GFP_ATOMIC, &x25_proto);
+	struct sock *sk = sk_alloc(net, AF_X25, GFP_ATOMIC, &x25_proto, kern);
 
 	if (!sk)
 		goto out;
@@ -551,7 +551,7 @@ static int x25_create(struct net *net, struct socket *sock, int protocol,
 		goto out;
 
 	rc = -ENOBUFS;
-	if ((sk = x25_alloc_socket(net)) == NULL)
+	if ((sk = x25_alloc_socket(net, kern)) == NULL)
 		goto out;
 
 	x25 = x25_sk(sk);
@@ -600,7 +600,7 @@ static struct sock *x25_make_new(struct sock *osk)
 	if (osk->sk_type != SOCK_SEQPACKET)
 		goto out;
 
-	if ((sk = x25_alloc_socket(sock_net(osk))) == NULL)
+	if ((sk = x25_alloc_socket(sock_net(osk), 0)) == NULL)
 		goto out;
 
 	x25 = x25_sk(sk);
@@ -684,11 +684,15 @@ static int x25_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		goto out;
 	}
 
-	len = strlen(addr->sx25_addr.x25_addr);
-	for (i = 0; i < len; i++) {
-		if (!isdigit(addr->sx25_addr.x25_addr[i])) {
-			rc = -EINVAL;
-			goto out;
+	/* check for the null_x25_address */
+	if (strcmp(addr->sx25_addr.x25_addr, null_x25_address.x25_addr)) {
+
+		len = strlen(addr->sx25_addr.x25_addr);
+		for (i = 0; i < len; i++) {
+			if (!isdigit(addr->sx25_addr.x25_addr[i])) {
+				rc = -EINVAL;
+				goto out;
+			}
 		}
 	}
 
@@ -1087,8 +1091,7 @@ out_clear_request:
 	goto out;
 }
 
-static int x25_sendmsg(struct kiocb *iocb, struct socket *sock,
-		       struct msghdr *msg, size_t len)
+static int x25_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 {
 	struct sock *sk = sock->sk;
 	struct x25_sock *x25 = x25_sk(sk);
@@ -1180,7 +1183,7 @@ static int x25_sendmsg(struct kiocb *iocb, struct socket *sock,
 	skb_reset_transport_header(skb);
 	skb_put(skb, len);
 
-	rc = memcpy_fromiovec(skb_transport_header(skb), msg->msg_iov, len);
+	rc = memcpy_from_msg(skb_transport_header(skb), msg, len);
 	if (rc)
 		goto out_kfree_skb;
 
@@ -1262,8 +1265,7 @@ out_kfree_skb:
 }
 
 
-static int x25_recvmsg(struct kiocb *iocb, struct socket *sock,
-		       struct msghdr *msg, size_t size,
+static int x25_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 		       int flags)
 {
 	struct sock *sk = sock->sk;
@@ -1345,7 +1347,7 @@ static int x25_recvmsg(struct kiocb *iocb, struct socket *sock,
 	/* Currently, each datagram always contains a complete record */
 	msg->msg_flags |= MSG_EOR;
 
-	rc = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, copied);
+	rc = skb_copy_datagram_msg(skb, 0, msg, copied);
 	if (rc)
 		goto out_free_dgram;
 
@@ -1512,11 +1514,7 @@ out_fac_release:
 			goto out_dtefac_release;
 		if (dtefacs.calling_len > X25_MAX_AE_LEN)
 			goto out_dtefac_release;
-		if (dtefacs.calling_ae == NULL)
-			goto out_dtefac_release;
 		if (dtefacs.called_len > X25_MAX_AE_LEN)
-			goto out_dtefac_release;
-		if (dtefacs.called_ae == NULL)
 			goto out_dtefac_release;
 		x25->dte_facilities = dtefacs;
 		rc = 0;

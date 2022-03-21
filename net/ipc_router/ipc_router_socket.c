@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2016, 2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,7 +22,6 @@
 #include <linux/msm_ipc.h>
 #include <linux/sched.h>
 #include <linux/thread_info.h>
-#include <linux/qmi_encdec.h>
 #include <linux/slab.h>
 #include <linux/kmemleak.h>
 #include <linux/ipc_logging.h>
@@ -48,78 +47,70 @@ static const struct proto_ops msm_ipc_proto_ops;
 static RAW_NOTIFIER_HEAD(ipcrtr_af_init_chain);
 static DEFINE_MUTEX(ipcrtr_af_init_lock);
 
-static struct sk_buff_head *msm_ipc_router_build_msg(unsigned int num_sect,
-					  struct iovec const *msg_sect,
-					  size_t total_len)
+static struct sk_buff_head *msm_ipc_router_build_msg(struct msghdr *m,
+						     size_t total_len)
 {
 	struct sk_buff_head *msg_head;
 	struct sk_buff *msg;
-	int i, copied, first = 1;
-	int data_size = 0, request_size, offset;
+	int first = 1;
+	int last = 1;
+	size_t data_size = 0;
+	size_t alloc_size, align_size;
 	void *data;
-	int last = 0;
-	int align_size;
+	size_t total_copied_size = 0, copied_size;
 
-	for (i = 0; i < num_sect; i++)
-		data_size += msg_sect[i].iov_len;
+	if (iov_iter_count(&m->msg_iter) == total_len)
+		data_size = total_len;
 
 	if (!data_size)
 		return NULL;
 	align_size = ALIGN_SIZE(data_size);
 
-	msg_head = kmalloc(sizeof(struct sk_buff_head), GFP_KERNEL);
+	msg_head = kmalloc(sizeof(*msg_head), GFP_KERNEL);
 	if (!msg_head) {
 		IPC_RTR_ERR("%s: cannot allocate skb_head\n", __func__);
 		return NULL;
 	}
 	skb_queue_head_init(msg_head);
 
-	for (copied = 1, i = 0; copied && (i < num_sect); i++) {
-		data_size = msg_sect[i].iov_len;
-		offset = 0;
-		if (i == (num_sect - 1))
-			last = 1;
-		while (offset != msg_sect[i].iov_len) {
-			request_size = data_size;
-			if (first)
-				request_size += IPC_ROUTER_HDR_SIZE;
-			if (last)
-				request_size += align_size;
+	while (total_copied_size < total_len) {
+		alloc_size = data_size;
+		if (first)
+			alloc_size += IPC_ROUTER_HDR_SIZE;
+		if (last)
+			alloc_size += align_size;
 
-			msg = alloc_skb(request_size, GFP_KERNEL);
-			if (!msg) {
-				if (request_size <= (PAGE_SIZE/2)) {
-					IPC_RTR_ERR(
-					"%s: cannot allocated skb\n",
-					__func__);
-					goto msg_build_failure;
-				}
-				data_size = data_size / 2;
-				last = 0;
-				continue;
-			}
-
-			if (first) {
-				skb_reserve(msg, IPC_ROUTER_HDR_SIZE);
-				first = 0;
-			}
-
-			data = skb_put(msg, data_size);
-			copied = !copy_from_user(msg->data,
-					msg_sect[i].iov_base + offset,
-					data_size);
-			if (!copied) {
-				IPC_RTR_ERR("%s: copy_from_user failed\n",
-					__func__);
-				kfree_skb(msg);
+		msg = alloc_skb(alloc_size, GFP_KERNEL);
+		if (!msg) {
+			if (alloc_size <= (PAGE_SIZE / 2)) {
+				IPC_RTR_ERR("%s: cannot allocated skb\n",
+					    __func__);
 				goto msg_build_failure;
 			}
-			skb_queue_tail(msg_head, msg);
-			offset += data_size;
-			data_size = msg_sect[i].iov_len - offset;
-			if (i == (num_sect - 1))
-				last = 1;
+			data_size = data_size / 2;
+			last = 0;
+			continue;
 		}
+
+		if (first) {
+			skb_reserve(msg, IPC_ROUTER_HDR_SIZE);
+			first = 0;
+		}
+
+		data = skb_put(msg, data_size);
+		copied_size = copy_from_iter(msg->data, data_size,
+					     &m->msg_iter);
+		if (copied_size != data_size) {
+			IPC_RTR_ERR("%s: copy_from_iter failed %zu %zu %zu\n",
+				    __func__, alloc_size, data_size,
+				    copied_size);
+			kfree_skb(msg);
+			goto msg_build_failure;
+		}
+		skb_queue_tail(msg_head, msg);
+		total_copied_size += data_size;
+		data_size = total_len - total_copied_size;
+		last = 1;
 	}
 	return msg_head;
 
@@ -139,7 +130,7 @@ static int msm_ipc_router_extract_msg(struct msghdr *m,
 	struct rr_header_v1 *hdr;
 	struct sk_buff *temp;
 	union rr_control_msg *ctl_msg;
-	int offset = 0, data_len = 0, copy_len;
+	int offset = 0, data_len = 0, copy_len, copied_len;
 
 	if (!m || !pkt) {
 		IPC_RTR_ERR("%s: Invalid pointers passed\n", __func__);
@@ -147,7 +138,7 @@ static int msm_ipc_router_extract_msg(struct msghdr *m,
 	}
 	addr = (struct sockaddr_msm_ipc *)m->msg_name;
 
-	hdr = &(pkt->hdr);
+	hdr = &pkt->hdr;
 	if (addr && (hdr->type == IPC_ROUTER_CTRL_CMD_RESUME_TX)) {
 		temp = skb_peek(pkt->pkt_fragment_q);
 		if (!temp || !temp->data) {
@@ -175,8 +166,8 @@ static int msm_ipc_router_extract_msg(struct msghdr *m,
 	data_len = hdr->size;
 	skb_queue_walk(pkt->pkt_fragment_q, temp) {
 		copy_len = data_len < temp->len ? data_len : temp->len;
-		if (copy_to_user(m->msg_iov->iov_base + offset, temp->data,
-				 copy_len)) {
+		copied_len = copy_to_iter(temp->data, copy_len, &m->msg_iter);
+		if (copy_len != copied_len) {
 			IPC_RTR_ERR("%s: Copy to user failed\n", __func__);
 			return -EFAULT;
 		}
@@ -207,7 +198,7 @@ static int msm_ipc_router_create(struct net *net,
 		return -EPROTOTYPE;
 	}
 
-	sk = sk_alloc(net, AF_MSM_IPC, GFP_KERNEL, &msm_ipc_proto);
+	sk = sk_alloc(net, AF_MSM_IPC, GFP_KERNEL, &msm_ipc_proto, kern);
 	if (!sk) {
 		IPC_RTR_ERR("%s: sk_alloc failed\n", __func__);
 		return -ENOMEM;
@@ -236,7 +227,7 @@ static int msm_ipc_router_create(struct net *net,
 }
 
 int msm_ipc_router_bind(struct socket *sock, struct sockaddr *uaddr,
-			       int uaddr_len)
+			int uaddr_len)
 {
 	struct sockaddr_msm_ipc *addr = (struct sockaddr_msm_ipc *)uaddr;
 	struct sock *sk = sock->sk;
@@ -248,7 +239,7 @@ int msm_ipc_router_bind(struct socket *sock, struct sockaddr *uaddr,
 
 	if (!check_permissions()) {
 		IPC_RTR_ERR("%s: %s Do not have permissions\n",
-			__func__, current->comm);
+			    __func__, current->comm);
 		return -EPERM;
 	}
 
@@ -318,7 +309,7 @@ static int ipc_router_connect(struct socket *sock, struct sockaddr *uaddr,
 	return ret;
 }
 
-static int msm_ipc_router_sendmsg(struct kiocb *iocb, struct socket *sock,
+static int msm_ipc_router_sendmsg(struct socket *sock,
 				  struct msghdr *m, size_t total_len)
 {
 	struct sock *sk = sock->sk;
@@ -335,15 +326,13 @@ static int msm_ipc_router_sendmsg(struct kiocb *iocb, struct socket *sock,
 			return -EINVAL;
 		memcpy(&dest_addr, &dest->address, sizeof(dest_addr));
 	} else {
-		if (port_ptr->conn_status == NOT_CONNECTED) {
+		if (port_ptr->conn_status == NOT_CONNECTED)
 			return -EDESTADDRREQ;
-		} else if (port_ptr->conn_status < CONNECTION_RESET) {
+		if (port_ptr->conn_status < CONNECTION_RESET)
 			return -ENETRESET;
-		} else {
-			memcpy(&dest_addr.addr.port_addr, &port_ptr->dest_addr,
-				sizeof(struct msm_ipc_port_addr));
-			dest_addr.addrtype = MSM_IPC_ADDR_ID;
-		}
+		memcpy(&dest_addr.addr.port_addr, &port_ptr->dest_addr,
+		       sizeof(struct msm_ipc_port_addr));
+		dest_addr.addrtype = MSM_IPC_ADDR_ID;
 	}
 
 	if (total_len > MAX_IPC_PKT_SIZE)
@@ -351,7 +340,7 @@ static int msm_ipc_router_sendmsg(struct kiocb *iocb, struct socket *sock,
 
 	lock_sock(sk);
 	timeout = sock_sndtimeo(sk, m->msg_flags & MSG_DONTWAIT);
-	msg = msm_ipc_router_build_msg(m->msg_iovlen, m->msg_iov, total_len);
+	msg = msm_ipc_router_build_msg(m, total_len);
 	if (!msg) {
 		IPC_RTR_ERR("%s: Msg build failure\n", __func__);
 		ret = -ENOMEM;
@@ -366,7 +355,7 @@ static int msm_ipc_router_sendmsg(struct kiocb *iocb, struct socket *sock,
 		if (ret < 0) {
 			if (ret != -EAGAIN)
 				IPC_RTR_ERR("%s: Send_to failure %d\n",
-							__func__, ret);
+					    __func__, ret);
 			msm_ipc_router_free_skb(msg);
 		} else if (ret >= 0) {
 			ret = -EFAULT;
@@ -378,7 +367,7 @@ out_sendmsg:
 	return ret;
 }
 
-static int msm_ipc_router_recvmsg(struct kiocb *iocb, struct socket *sock,
+static int msm_ipc_router_recvmsg(struct socket *sock,
 				  struct msghdr *m, size_t buf_len, int flags)
 {
 	struct sock *sk = sock->sk;
@@ -387,8 +376,6 @@ static int msm_ipc_router_recvmsg(struct kiocb *iocb, struct socket *sock,
 	long timeout;
 	int ret;
 
-	if (m->msg_iovlen != 1)
-		return -EOPNOTSUPP;
 	lock_sock(sk);
 	if (!buf_len) {
 		if (flags & MSG_PEEK)
@@ -476,7 +463,7 @@ static int msm_ipc_router_ioctl(struct socket *sock,
 			if (server_arg.num_entries_in_array >
 				(SIZE_MAX / sizeof(*srv_info))) {
 				IPC_RTR_ERR("%s: Integer Overflow %zu * %d\n",
-					__func__, sizeof(*srv_info),
+					    __func__, sizeof(*srv_info),
 					server_arg.num_entries_in_array);
 				ret = -EINVAL;
 				break;
@@ -489,8 +476,9 @@ static int msm_ipc_router_ioctl(struct socket *sock,
 				break;
 			}
 		}
-		ret = msm_ipc_router_lookup_server_name(&server_arg.port_name,
-				srv_info, server_arg.num_entries_in_array,
+		ret = msm_ipc_router_lookup_server_name
+				(&server_arg.port_name, srv_info,
+				server_arg.num_entries_in_array,
 				server_arg.lookup_mask);
 		if (ret < 0) {
 			IPC_RTR_ERR("%s: Server not found\n", __func__);
@@ -533,12 +521,12 @@ static int msm_ipc_router_ioctl(struct socket *sock,
 	return ret;
 }
 
-static unsigned int msm_ipc_router_poll(struct file *file,
-			struct socket *sock, poll_table *wait)
+static unsigned int msm_ipc_router_poll(struct file *file, struct socket *sock,
+					poll_table *wait)
 {
 	struct sock *sk = sock->sk;
 	struct msm_ipc_port *port_ptr;
-	uint32_t mask = 0;
+	u32 mask = 0;
 
 	if (!sk)
 		return -EINVAL;
@@ -671,14 +659,14 @@ int msm_ipc_router_init_sockets(void)
 	ret = proto_register(&msm_ipc_proto, 1);
 	if (ret) {
 		IPC_RTR_ERR("%s: Failed to register MSM_IPC protocol type\n",
-								__func__);
+			    __func__);
 		goto out_init_sockets;
 	}
 
 	ret = sock_register(&msm_ipc_family_ops);
 	if (ret) {
 		IPC_RTR_ERR("%s: Failed to register MSM_IPC socket type\n",
-								__func__);
+			    __func__);
 		proto_unregister(&msm_ipc_proto);
 		goto out_init_sockets;
 	}

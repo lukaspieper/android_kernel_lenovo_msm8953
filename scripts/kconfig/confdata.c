@@ -16,6 +16,11 @@
 
 #include "lkc.h"
 
+struct conf_printer {
+	void (*print_symbol)(FILE *, struct symbol *, const char *, void *);
+	void (*print_comment)(FILE *, const char *, void *);
+};
+
 static void conf_warning(const char *fmt, ...)
 	__attribute__ ((format (printf, 1, 2)));
 
@@ -59,6 +64,7 @@ static void conf_message(const char *fmt, ...)
 	va_start(ap, fmt);
 	if (conf_message_callback)
 		conf_message_callback(fmt, ap);
+	va_end(ap);
 }
 
 const char *conf_get_configname(void)
@@ -369,7 +375,9 @@ load:
 				continue;
 		} else {
 			if (line[0] != '\r' && line[0] != '\n')
-				conf_warning("unexpected data");
+				conf_warning("unexpected data: %.*s",
+					     (int)strcspn(line, "\r\n"), line);
+
 			continue;
 		}
 setsym:

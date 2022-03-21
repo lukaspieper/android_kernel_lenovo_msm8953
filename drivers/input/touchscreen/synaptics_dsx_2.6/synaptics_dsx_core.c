@@ -5,6 +5,7 @@
  *
  * Copyright (C) 2012 Alexandra Chin <alexandra.chin@tw.synaptics.com>
  * Copyright (C) 2012 Scott Lin <scott.lin@tw.synaptics.com>
+ * Copyright (C) 2018 The Linux Foundation.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -67,8 +68,6 @@
 #define IGNORE_FN_INIT_FAILURE
 
 #define FB_READY_RESET
-#define SDW2500_I2C_ADDR 0x20
-
 #define FB_READY_WAIT_MS 100
 #define FB_READY_TIMEOUT_S 30
 
@@ -616,32 +615,32 @@ static struct synaptics_rmi4_exp_fn_data exp_data;
 static struct synaptics_dsx_button_map *vir_button_map;
 
 static struct device_attribute attrs[] = {
-	__ATTR(reset, S_IWUSR | S_IWGRP,
+	__ATTR(reset, 0220,
 			NULL,
 			synaptics_rmi4_f01_reset_store),
-	__ATTR(productinfo, S_IRUGO,
+	__ATTR(productinfo, 0444,
 			synaptics_rmi4_f01_productinfo_show,
 			NULL),
-	__ATTR(buildid, S_IRUGO,
+	__ATTR(buildid, 0444,
 			synaptics_rmi4_f01_buildid_show,
 			NULL),
-	__ATTR(flashprog, S_IRUGO,
+	__ATTR(flashprog, 0444,
 			synaptics_rmi4_f01_flashprog_show,
 			NULL),
-	__ATTR(0dbutton, (S_IRUGO | S_IWUSR | S_IWGRP),
+	__ATTR(0dbutton, 0664,
 			synaptics_rmi4_0dbutton_show,
 			synaptics_rmi4_0dbutton_store),
-	__ATTR(suspend, S_IWUSR | S_IWGRP,
+	__ATTR(suspend, 0220,
 			NULL,
 			synaptics_rmi4_suspend_store),
-	__ATTR(wake_gesture, (S_IRUGO | S_IWUSR | S_IWGRP),
+	__ATTR(wake_gesture, 0664,
 			synaptics_rmi4_wake_gesture_show,
 			synaptics_rmi4_wake_gesture_store),
 #if defined(CONFIG_SECURE_TOUCH_SYNAPTICS_DSX_V26)
-	__ATTR(secure_touch_enable, (S_IRUGO | S_IWUSR | S_IWGRP),
+	__ATTR(secure_touch_enable, 0664,
 			synaptics_rmi4_secure_touch_enable_show,
 			synaptics_rmi4_secure_touch_enable_store),
-	__ATTR(secure_touch, S_IRUGO ,
+	__ATTR(secure_touch, 0444,
 			synaptics_rmi4_secure_touch_show,
 			NULL),
 #endif
@@ -1472,7 +1471,7 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 		input_mt_sync(rmi4_data->input_dev);
 #endif
 
-		if (rmi4_data->stylus_enable) {
+		if (rmi4_data->stylus_enable && rmi4_data->stylus_dev) {
 			stylus_presence = 0;
 			input_report_key(rmi4_data->stylus_dev,
 					BTN_TOUCH, 0);
@@ -1733,7 +1732,7 @@ static irqreturn_t synaptics_rmi4_irq(int irq, void *data)
 	const struct synaptics_dsx_board_data *bdata =
 			rmi4_data->hw_if->board_data;
 
-	if (IRQ_HANDLED == synaptics_filter_interrupt(data))
+	if (synaptics_filter_interrupt(data) == IRQ_HANDLED)
 		return IRQ_HANDLED;
 
 	if (gpio_get_value(bdata->irq_gpio) != bdata->irq_on_state)
@@ -3418,7 +3417,7 @@ err_gpio_irq:
 static int reg_set_optimum_mode_check(struct regulator *reg, int load_uA)
 {
 	return (regulator_count_voltages(reg) > 0) ?
-		regulator_set_optimum_mode(reg, load_uA) : 0;
+		regulator_set_load(reg, load_uA) : 0;
 }
 
 static int synaptics_rmi4_configure_reg(struct synaptics_rmi4_data *rmi4_data,
@@ -3625,7 +3624,7 @@ static int synaptics_rmi4_free_fingers(struct synaptics_rmi4_data *rmi4_data)
 #endif
 	input_sync(rmi4_data->input_dev);
 
-	if (rmi4_data->stylus_enable) {
+	if (rmi4_data->stylus_enable && rmi4_data->stylus_dev) {
 		input_report_key(rmi4_data->stylus_dev,
 				BTN_TOUCH, 0);
 		input_report_key(rmi4_data->stylus_dev,
@@ -4092,10 +4091,10 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
 	retval = synaptics_dsx_pinctrl_init(rmi4_data);
 	if (!retval && rmi4_data->ts_pinctrl) {
 		/*
-		* Pinctrl handle is optional. If pinctrl handle is found
-		* let pins to be configured in active state. If not
-		* found continue further without error.
-		*/
+		 * Pinctrl handle is optional. If pinctrl handle is found
+		 * let pins to be configured in active state. If not
+		 * found continue further without error.
+		 */
 		retval = pinctrl_select_state(rmi4_data->ts_pinctrl,
 		rmi4_data->pinctrl_state_active);
 		if (retval < 0) {
@@ -4778,14 +4777,12 @@ static int synaptics_rmi4_resume(struct device *dev)
 	}
 
 exit:
- #ifdef FB_READY_RESET
-	if (rmi4_data->hw_if->board_data->i2c_addr != SDW2500_I2C_ADDR) {
-		retval = synaptics_rmi4_reset_device(rmi4_data, false);
-		if (retval < 0) {
-			dev_err(rmi4_data->pdev->dev.parent,
-					"%s: Failed to issue reset command\n",
-					__func__);
-		}
+#ifdef FB_READY_RESET
+	retval = synaptics_rmi4_reset_device(rmi4_data, false);
+	if (retval < 0) {
+		dev_err(rmi4_data->pdev->dev.parent,
+				"%s: Failed to issue reset command\n",
+				__func__);
 	}
 #endif
 	mutex_lock(&exp_data.mutex);

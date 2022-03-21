@@ -214,7 +214,7 @@ typedef enum {
 	SCTP_SS_LISTENING      = TCP_LISTEN,
 	SCTP_SS_ESTABLISHING   = TCP_SYN_SENT,
 	SCTP_SS_ESTABLISHED    = TCP_ESTABLISHED,
-	SCTP_SS_CLOSING        = TCP_CLOSING,
+	SCTP_SS_CLOSING        = TCP_CLOSE_WAIT,
 } sctp_sock_state_t;
 
 /* These functions map various type to printable names.  */
@@ -357,13 +357,11 @@ typedef enum {
 	 ipv4_is_anycast_6to4(a))
 
 /* Flags used for the bind address copy functions.  */
-#define SCTP_ADDR4_ALLOWED	0x00000001	/* IPv4 address is allowed by
+#define SCTP_ADDR6_ALLOWED	0x00000001	/* IPv6 address is allowed by
 						   local sock family */
-#define SCTP_ADDR6_ALLOWED	0x00000002	/* IPv6 address is allowed by
-						   local sock family */
-#define SCTP_ADDR4_PEERSUPP	0x00000004	/* IPv4 address is supported by
+#define SCTP_ADDR4_PEERSUPP	0x00000002	/* IPv4 address is supported by
 						   peer */
-#define SCTP_ADDR6_PEERSUPP	0x00000008	/* IPv6 address is supported by
+#define SCTP_ADDR6_PEERSUPP	0x00000004	/* IPv6 address is supported by
 						   peer */
 
 /* Reasons to retransmit. */

@@ -1,7 +1,7 @@
 /* include/soc/qcom/smd.h
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2009-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2014, 2017, The Linux Foundation. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -86,18 +86,18 @@ int smd_read(smd_channel_t *ch, void *data, int len);
 int smd_read_from_cb(smd_channel_t *ch, void *data, int len);
 
 /* Write to stream channels may do a partial write and return
-** the length actually written.
-** Write to packet channels will never do a partial write --
-** it will return the requested length written or an error.
-*/
+ * the length actually written.
+ * Write to packet channels will never do a partial write --
+ * it will return the requested length written or an error.
+ */
 int smd_write(smd_channel_t *ch, const void *data, int len);
 
 int smd_write_avail(smd_channel_t *ch);
 int smd_read_avail(smd_channel_t *ch);
 
 /* Returns the total size of the current packet being read.
-** Returns 0 if no packets available or a stream channel.
-*/
+ * Returns 0 if no packets available or a stream channel.
+ */
 int smd_cur_packet_size(smd_channel_t *ch);
 
 /* these are used to get and set the IF sigs of a channel.
@@ -108,12 +108,12 @@ int smd_tiocmset(smd_channel_t *ch, unsigned int set, unsigned int clear);
 int
 smd_tiocmset_from_cb(smd_channel_t *ch, unsigned int set, unsigned int clear);
 int smd_named_open_on_edge(const char *name, uint32_t edge, smd_channel_t **_ch,
-			   void *priv, void (*notify)(void *, unsigned));
+			   void *priv, void (*notify)(void *, unsigned int));
 
-/* Tells the other end of the smd channel that this end wants to recieve
+/* Tells the other end of the smd channel that this end wants to receive
  * interrupts when the written data is read.  Read interrupts should only
  * enabled when there is no space left in the buffer to write to, thus the
- * interrupt acts as notification that space may be avaliable.  If the
+ * interrupt acts as notification that space may be available.  If the
  * other side does not support enabling/disabling interrupts on demand,
  * then this function has no effect if called.
  */
@@ -155,7 +155,7 @@ int smd_mask_receive_interrupt(smd_channel_t *ch, bool mask,
  *      -EINVAL - invalid length
  *      -EBUSY - transaction already in progress
  *      -EAGAIN - no enough memory in ring buffer to start transaction
- *      -EPERM - unable to sucessfully start transaction due to write error
+ *      -EPERM - unable to successfully start transaction due to write error
  */
 int smd_write_start(smd_channel_t *ch, int len);
 
@@ -307,7 +307,7 @@ smd_tiocmset_from_cb(smd_channel_t *ch, unsigned int set, unsigned int clear)
 
 static inline int
 smd_named_open_on_edge(const char *name, uint32_t edge, smd_channel_t **_ch,
-			   void *priv, void (*notify)(void *, unsigned))
+			   void *priv, void (*notify)(void *, unsigned int))
 {
 	return -ENODEV;
 }

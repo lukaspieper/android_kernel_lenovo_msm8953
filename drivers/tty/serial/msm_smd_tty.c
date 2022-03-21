@@ -1,5 +1,5 @@
 /* Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2009-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2015, 2017, 2019-2020, The Linux Foundation. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -37,7 +37,7 @@
 #define MODULE_NAME "msm_smdtty"
 #define MAX_SMD_TTYS 37
 #define MAX_TTY_BUF_SIZE 2048
-#define TTY_PUSH_WS_DELAY 500
+#define TTY_PUSH_WS_DELAY 100
 #define TTY_PUSH_WS_POST_SUSPEND_DELAY 100
 #define MAX_RA_WAKE_LOCK_NAME_LEN 32
 #define SMD_TTY_LOG_PAGES 2
@@ -162,6 +162,7 @@ static ssize_t open_timeout_store(struct device *dev,
 {
 	unsigned int num_dev;
 	unsigned long wait;
+
 	if (dev == NULL) {
 		SMD_TTY_INFO("%s: Invalid Device passed", __func__);
 		return -EINVAL;
@@ -179,11 +180,12 @@ static ssize_t open_timeout_store(struct device *dev,
 		smd_tty[num_dev].open_wait = wait;
 		mutex_unlock(&smd_tty[num_dev].open_lock_lha1);
 		return n;
-	} else {
-		SMD_TTY_INFO("[%s]: Unable to convert %s to an int",
-			__func__, buf);
-		return -EINVAL;
 	}
+
+	SMD_TTY_INFO("[%s]: Unable to convert %s to an int",
+			__func__, buf);
+	return -EINVAL;
+
 }
 
 static ssize_t open_timeout_show(struct device *dev,
@@ -258,9 +260,9 @@ static void smd_tty_read(unsigned long param)
 
 		if (smd_read(info->ch, ptr, avail) != avail) {
 			/* shouldn't be possible since we're in interrupt
-			** context here and nobody else could 'steal' our
-			** characters.
-			*/
+			 * context here and nobody else could 'steal' our
+			 * characters.
+			 */
 			SMD_TTY_ERR(
 				"%s - Possible smd_tty_buffer mismatch for %s",
 				__func__, info->ch_name);
@@ -284,7 +286,7 @@ static void smd_tty_read(unsigned long param)
 	tty_kref_put(tty);
 }
 
-static void smd_tty_notify(void *priv, unsigned event)
+static void smd_tty_notify(void *priv, unsigned int event)
 {
 	struct smd_tty_info *info = priv;
 	struct tty_struct *tty;
@@ -368,6 +370,9 @@ static int smd_tty_dummy_probe(struct platform_device *pdev)
 	int n;
 
 	for (n = 0; n < MAX_SMD_TTYS; ++n) {
+		if (smd_tty[n].dev_name == NULL)
+			continue;
+
 		if (pdev->id == smd_tty[n].edge &&
 			!strcmp(pdev->name, smd_tty[n].dev_name)) {
 			complete_all(&smd_tty[n].ch_allocated);
@@ -499,7 +504,7 @@ static int smd_tty_port_activate(struct tty_port *tport,
 	struct smd_tty_info *info;
 	const char *peripheral = NULL;
 
-	if (n >= MAX_SMD_TTYS)
+	if (n >= MAX_SMD_TTYS || smd_tty[n].ch_name == NULL)
 		return -ENODEV;
 
 	info = smd_tty + n;
@@ -681,15 +686,15 @@ static int smd_tty_write(struct tty_struct *tty, const unsigned char *buf,
 	int avail;
 
 	/* if we're writing to a packet channel we will
-	** never be able to write more data than there
-	** is currently space for
-	*/
+	 * never be able to write more data than there
+	 * is currently space for
+	 */
 	if (is_in_reset(info))
 		return -ENETRESET;
 
 	avail = smd_write_avail(info->ch);
 	/* if no space, we'll have to setup a notification later to wake up the
-	 * tty framework when space becomes avaliable
+	 * tty framework when space becomes available
 	 */
 	if (!avail) {
 		smd_enable_read_intr(info->ch);
@@ -706,12 +711,14 @@ static int smd_tty_write(struct tty_struct *tty, const unsigned char *buf,
 static int smd_tty_write_room(struct tty_struct *tty)
 {
 	struct smd_tty_info *info = tty->driver_data;
+
 	return smd_write_avail(info->ch);
 }
 
 static int smd_tty_chars_in_buffer(struct tty_struct *tty)
 {
 	struct smd_tty_info *info = tty->driver_data;
+
 	return smd_read_avail(info->ch);
 }
 
@@ -1008,7 +1015,7 @@ static int msm_smd_tty_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msm_smd_tty_match_table[] = {
+static const struct of_device_id msm_smd_tty_match_table[] = {
 	{ .compatible = "qcom,smdtty" },
 	{},
 };

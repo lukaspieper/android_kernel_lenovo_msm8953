@@ -1,15 +1,15 @@
 /*
-*Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
-*
-*This program is free software; you can redistribute it and/or modify
-*it under the terms of the GNU General Public License version 2 and
-*only version 2 as published by the Free Software Foundation.
-*
-*This program is distributed in the hope that it will be useful,
-*but WITHOUT ANY WARRANTY; without even the implied warranty of
-*MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-*GNU General Public License for more details.
-*/
+ *Copyright (c) 2014-2015, 2017, The Linux Foundation. All rights reserved.
+ *
+ *This program is free software; you can redistribute it and/or modify
+ *it under the terms of the GNU General Public License version 2 and
+ *only version 2 as published by the Free Software Foundation.
+ *
+ *This program is distributed in the hope that it will be useful,
+ *but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *GNU General Public License for more details.
+ */
 #include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/devfreq.h>
@@ -106,7 +106,9 @@ static int get_dev_status(struct device *dev, struct devfreq_dev_status *status)
 	if (!data)
 		return -EINVAL;
 
-	/* determine if we want to go up or down based on the notification */
+	/*
+	 * determine if we want to go up or down based on the notification.
+	 */
 	if (data->action == SPDM_UP)
 		status->busy_time = 255;
 	else
@@ -244,6 +246,7 @@ no_pdata:
 	return ret;
 }
 
+#ifdef CONFIG_MSM_HVC
 int __spdm_hyp_call(struct spdm_args *args, int num_args)
 {
 	struct hvc_desc desc = { { 0 } };
@@ -263,6 +266,7 @@ int __spdm_hyp_call(struct spdm_args *args, int num_args)
 			desc.ret[0], desc.ret[1]);
 	return status;
 }
+#endif
 
 int __spdm_scm_call(struct spdm_args *args, int num_args)
 {

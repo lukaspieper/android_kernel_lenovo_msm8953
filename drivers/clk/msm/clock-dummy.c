@@ -31,7 +31,7 @@ static int dummy_clk_set_max_rate(struct clk *clk, unsigned long rate)
 	return 0;
 }
 
-static int dummy_clk_set_flags(struct clk *clk, unsigned flags)
+static int dummy_clk_set_flags(struct clk *clk, unsigned long flags)
 {
 	return 0;
 }
@@ -46,7 +46,7 @@ static long dummy_clk_round_rate(struct clk *clk, unsigned long rate)
 	return rate;
 }
 
-struct clk_ops clk_ops_dummy = {
+const struct clk_ops clk_ops_dummy = {
 	.reset = dummy_clk_reset,
 	.set_rate = dummy_clk_set_rate,
 	.set_max_rate = dummy_clk_set_max_rate,
@@ -64,11 +64,11 @@ struct clk dummy_clk = {
 static void *dummy_clk_dt_parser(struct device *dev, struct device_node *np)
 {
 	struct clk *c;
+
 	c = devm_kzalloc(dev, sizeof(*c), GFP_KERNEL);
-	if (!c) {
-		dev_err(dev, "failed to map memory for %s\n", np->name);
+	if (!c)
 		return ERR_PTR(-ENOMEM);
-	}
+
 	c->ops = &clk_ops_dummy;
 	return msmclk_generic_clk_init(dev, np, c);
 }
@@ -80,7 +80,7 @@ static struct clk *of_dummy_get(struct of_phandle_args *clkspec,
 	return &dummy_clk;
 }
 
-static struct of_device_id msm_clock_dummy_match_table[] = {
+static const struct of_device_id msm_clock_dummy_match_table[] = {
 	{ .compatible = "qcom,dummycc" },
 	{}
 };
@@ -111,4 +111,3 @@ int __init msm_dummy_clk_init(void)
 	return platform_driver_register(&msm_clock_dummy_driver);
 }
 arch_initcall(msm_dummy_clk_init);
-

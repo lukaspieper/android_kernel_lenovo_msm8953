@@ -19,7 +19,7 @@
 #include <net/dst.h>
 #include <net/xfrm.h>
 
-static int xfrm_output2(struct sk_buff *skb);
+static int xfrm_output2(struct net *net, struct sock *sk, struct sk_buff *skb);
 
 static int xfrm_skb_check_space(struct sk_buff *skb)
 {
@@ -38,6 +38,18 @@ static int xfrm_skb_check_space(struct sk_buff *skb)
 	return pskb_expand_head(skb, nhead, ntail, GFP_ATOMIC);
 }
 
+/* Children define the path of the packet through the
+ * Linux networking.  Thus, destinations are stackable.
+ */
+
+static struct dst_entry *skb_dst_pop(struct sk_buff *skb)
+{
+	struct dst_entry *child = dst_clone(skb_dst(skb)->child);
+
+	skb_dst_drop(skb);
+	return child;
+}
+
 static int xfrm_output_one(struct sk_buff *skb, int err)
 {
 	struct dst_entry *dst = skb_dst(skb);
@@ -54,8 +66,7 @@ static int xfrm_output_one(struct sk_buff *skb, int err)
 			goto error_nolock;
 		}
 
-		if (x->props.output_mark)
-			skb->mark = x->props.output_mark;
+		skb->mark = xfrm_smark_get(skb->mark, x);
 
 		err = x->outer_mode->output(x, skb);
 		if (err) {
@@ -90,6 +101,9 @@ static int xfrm_output_one(struct sk_buff *skb, int err)
 
 		skb_dst_force(skb);
 
+		/* Inner headers are invalid now. */
+		skb->encapsulation = 0;
+
 		err = x->type->output(x, skb);
 		if (err == -EINPROGRESS)
 			goto out;
@@ -122,18 +136,20 @@ out:
 
 int xfrm_output_resume(struct sk_buff *skb, int err)
 {
+	struct net *net = xs_net(skb_dst(skb)->xfrm);
+
 	while (likely((err = xfrm_output_one(skb, err)) == 0)) {
 		nf_reset(skb);
 
-		err = skb_dst(skb)->ops->local_out(skb);
+		err = skb_dst(skb)->ops->local_out(net, skb->sk, skb);
 		if (unlikely(err != 1))
 			goto out;
 
 		if (!skb_dst(skb)->xfrm)
-			return dst_output(skb);
+			return dst_output(net, skb->sk, skb);
 
 		err = nf_hook(skb_dst(skb)->ops->family,
-			      NF_INET_POST_ROUTING, skb,
+			      NF_INET_POST_ROUTING, net, skb->sk, skb,
 			      NULL, skb_dst(skb)->dev, xfrm_output2);
 		if (unlikely(err != 1))
 			goto out;
@@ -147,12 +163,12 @@ out:
 }
 EXPORT_SYMBOL_GPL(xfrm_output_resume);
 
-static int xfrm_output2(struct sk_buff *skb)
+static int xfrm_output2(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	return xfrm_output_resume(skb, 1);
 }
 
-static int xfrm_output_gso(struct sk_buff *skb)
+static int xfrm_output_gso(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	struct sk_buff *segs;
 
@@ -170,7 +186,7 @@ static int xfrm_output_gso(struct sk_buff *skb)
 		int err;
 
 		segs->next = NULL;
-		err = xfrm_output2(segs);
+		err = xfrm_output2(net, sk, segs);
 
 		if (unlikely(err)) {
 			kfree_skb_list(nskb);
@@ -183,13 +199,13 @@ static int xfrm_output_gso(struct sk_buff *skb)
 	return 0;
 }
 
-int xfrm_output(struct sk_buff *skb)
+int xfrm_output(struct sock *sk, struct sk_buff *skb)
 {
 	struct net *net = dev_net(skb_dst(skb)->dev);
 	int err;
 
 	if (skb_is_gso(skb))
-		return xfrm_output_gso(skb);
+		return xfrm_output_gso(net, sk, skb);
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		err = skb_checksum_help(skb);
@@ -200,7 +216,7 @@ int xfrm_output(struct sk_buff *skb)
 		}
 	}
 
-	return xfrm_output2(skb);
+	return xfrm_output2(net, sk, skb);
 }
 EXPORT_SYMBOL_GPL(xfrm_output);
 

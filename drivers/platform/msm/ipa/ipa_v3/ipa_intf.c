@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2019,2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -226,6 +226,7 @@ int ipa3_query_intf(struct ipa_ioc_query_intf *lookup)
 		return result;
 	}
 
+	lookup->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	if (strnlen(lookup->name, IPA_RESOURCE_NAME_MAX) ==
 			IPA_RESOURCE_NAME_MAX) {
 		IPAERR_RL("Interface name too long. (%s)\n", lookup->name);
@@ -268,6 +269,7 @@ int ipa3_query_intf_tx_props(struct ipa_ioc_query_intf_tx_props *tx)
 		return result;
 	}
 
+	tx->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	if (strnlen(tx->name, IPA_RESOURCE_NAME_MAX) == IPA_RESOURCE_NAME_MAX) {
 		IPAERR_RL("Interface name too long. (%s)\n", tx->name);
 		return result;
@@ -278,7 +280,7 @@ int ipa3_query_intf_tx_props(struct ipa_ioc_query_intf_tx_props *tx)
 		if (!strcmp(entry->name, tx->name)) {
 			/* add the entry check */
 			if (entry->num_tx_props != tx->num_tx_props) {
-				IPAERR_RL("invalid entry number(%u %u)\n",
+				IPAERR("invalid entry number(%u %u)\n",
 					entry->num_tx_props,
 						tx->num_tx_props);
 				mutex_unlock(&ipa3_ctx->lock);
@@ -291,6 +293,7 @@ int ipa3_query_intf_tx_props(struct ipa_ioc_query_intf_tx_props *tx)
 		}
 	}
 	mutex_unlock(&ipa3_ctx->lock);
+
 	return result;
 }
 
@@ -314,6 +317,7 @@ int ipa3_query_intf_rx_props(struct ipa_ioc_query_intf_rx_props *rx)
 		return result;
 	}
 
+	rx->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	if (strnlen(rx->name, IPA_RESOURCE_NAME_MAX) == IPA_RESOURCE_NAME_MAX) {
 		IPAERR_RL("Interface name too long. (%s)\n", rx->name);
 		return result;
@@ -324,7 +328,7 @@ int ipa3_query_intf_rx_props(struct ipa_ioc_query_intf_rx_props *rx)
 		if (!strcmp(entry->name, rx->name)) {
 			/* add the entry check */
 			if (entry->num_rx_props != rx->num_rx_props) {
-				IPAERR_RL("invalid entry number(%u %u)\n",
+				IPAERR("invalid entry number(%u %u)\n",
 					entry->num_rx_props,
 						rx->num_rx_props);
 				mutex_unlock(&ipa3_ctx->lock);
@@ -337,6 +341,7 @@ int ipa3_query_intf_rx_props(struct ipa_ioc_query_intf_rx_props *rx)
 		}
 	}
 	mutex_unlock(&ipa3_ctx->lock);
+
 	return result;
 }
 
@@ -365,7 +370,7 @@ int ipa3_query_intf_ext_props(struct ipa_ioc_query_intf_ext_props *ext)
 		if (!strcmp(entry->name, ext->name)) {
 			/* add the entry check */
 			if (entry->num_ext_props != ext->num_ext_props) {
-				IPAERR_RL("invalid entry number(%u %u)\n",
+				IPAERR("invalid entry number(%u %u)\n",
 					entry->num_ext_props,
 						ext->num_ext_props);
 				mutex_unlock(&ipa3_ctx->lock);
@@ -543,7 +548,7 @@ int ipa3_send_msg(struct ipa_msg_meta *meta, void *buff,
 	mutex_lock(&ipa3_ctx->msg_lock);
 	list_add_tail(&msg->link, &ipa3_ctx->msg_list);
 	/* support for softap client event cache */
-	if (wlan_msg_process(meta, buff))
+	if (buff != NULL && wlan_msg_process(meta, buff))
 		IPAERR("wlan_msg_process failed\n");
 
 	/* unlock only after process */
@@ -758,7 +763,7 @@ ssize_t ipa3_read(struct file *filp, char __user *buf, size_t count,
 			if (msg->buff) {
 				if (count >= msg->meta.msg_len) {
 					if (copy_to_user(buf, msg->buff,
-							  msg->meta.msg_len)) {
+							msg->meta.msg_len)) {
 						ret = -EFAULT;
 						kfree(msg);
 						msg = NULL;

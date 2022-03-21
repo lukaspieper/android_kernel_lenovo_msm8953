@@ -1,5 +1,4 @@
-/* Copyright (c) 2011-2015, 2017, 2019, The Linux Foundation.
- * All rights reserved.
+/* Copyright (c) 2011-2015, 2017, 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -617,6 +616,7 @@ static int sps_rm_alloc(struct sps_pipe *pipe)
 		unsigned long destination = pipe->connect.destination;
 		enum sps_mode mode = pipe->connect.mode;
 		u32 config = pipe->connect.config;
+
 		memset(&pipe->connect, SPSRM_CLEAR,
 			      sizeof(pipe->connect));
 		pipe->connect.source = source;
@@ -735,6 +735,7 @@ int sps_rm_state_change(struct sps_pipe *pipe, u32 state)
 	    state == SPS_STATE_CONNECT) {
 		/* Connect the BAM pipe */
 		struct sps_bam_connect_param params;
+
 		memset(&params, 0, sizeof(params));
 		params.mode = pipe->connect.mode;
 		if (pipe->connect.options != SPSRM_CLEAR) {
@@ -783,8 +784,8 @@ int sps_rm_state_change(struct sps_pipe *pipe, u32 state)
 						     pipe->pipe_index);
 			if (result) {
 				SPS_ERR(pipe->bam,
-					"sps:Failed to activate BAM-DMA"
-					" pipe: %d", pipe->pipe_index);
+					"sps:Failed to activate BAM-DMA pipe: %d",
+					pipe->pipe_index);
 				return SPS_ERROR;
 			}
 		}

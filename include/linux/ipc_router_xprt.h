@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, 2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018,2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -127,6 +127,8 @@ struct rr_packet {
  * @close: Method to close the XPRT.
  * @sft_close_done: Method to indicate to the XPRT that handling of reset
  *                  event is complete.
+ * @get_ws_info: Method to get the wakeup soruce inforamtion of the XPRT
+ * @get_ws_info: Method to get the latency inforamtion of the XPRT.
  */
 struct msm_ipc_router_xprt {
 	char *name;
@@ -136,7 +138,7 @@ struct msm_ipc_router_xprt {
 	int (*get_version)(struct msm_ipc_router_xprt *xprt);
 	int (*get_option)(struct msm_ipc_router_xprt *xprt);
 	void (*set_version)(struct msm_ipc_router_xprt *xprt,
-			    unsigned version);
+			    unsigned int version);
 	int (*read_avail)(struct msm_ipc_router_xprt *xprt);
 	int (*read)(void *data, uint32_t len,
 		    struct msm_ipc_router_xprt *xprt);
@@ -145,10 +147,14 @@ struct msm_ipc_router_xprt {
 		     struct msm_ipc_router_xprt *xprt);
 	int (*close)(struct msm_ipc_router_xprt *xprt);
 	void (*sft_close_done)(struct msm_ipc_router_xprt *xprt);
+	bool (*get_ws_info)(struct msm_ipc_router_xprt *xprt);
+	bool (*get_latency_info)(struct msm_ipc_router_xprt *xprt);
+
+	struct completion xprt_init_complete;
 };
 
 void msm_ipc_router_xprt_notify(struct msm_ipc_router_xprt *xprt,
-				unsigned event,
+				unsigned int event,
 				void *data);
 
 /**
@@ -162,7 +168,8 @@ struct rr_packet *clone_pkt(struct rr_packet *pkt);
 void release_pkt(struct rr_packet *pkt);
 
 /**
- * ipc_router_peek_pkt_size() - Peek into the packet header to get potential packet size
+ * ipc_router_peek_pkt_size() - Peek into the packet header to get potential
+ *				packet size
  * @data: Starting address of the packet which points to router header.
  *
  * @returns: potential packet size on success, < 0 on error.

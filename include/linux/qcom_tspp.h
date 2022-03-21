@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,6 +16,7 @@
 struct tspp_data_descriptor {
 	void *virt_base;   /* logical address of the actual data */
 	phys_addr_t phys_base; /* physical address of the actual data */
+	dma_addr_t dma_base; /* DMA address of the actual data */
 	u32 size;          /* size of buffer in bytes */
 	int id;            /* unique identifier */
 	void *user;        /* user-defined data */
@@ -70,9 +71,22 @@ struct tspp_select_source {
 	int enable_inverse;
 };
 
+enum tsif_tts_source {
+	TSIF_TTS_TCR = 0,	/* Time stamps from TCR counter */
+	TSIF_TTS_LPASS_TIMER	/* Time stamps from AV/Qtimer Timer  */
+};
+
+struct tspp_ion_dma_buf_info {
+	struct dma_buf *dbuf;
+	struct dma_buf_attachment *attach;
+	struct sg_table *table;
+	bool smmu_map;
+	dma_addr_t dma_map_base;
+};
+
 typedef void (tspp_notifier)(int channel_id, void *user);
 typedef void* (tspp_allocator)(int channel_id, u32 size,
-	phys_addr_t *phys_base, void *user);
+	      phys_addr_t *phys_base, dma_addr_t *dma_base, void *user);
 typedef void (tspp_memfree)(int channel_id, u32 size,
 	void *virt_base, phys_addr_t phys_base, void *user);
 
@@ -96,5 +110,13 @@ int tspp_allocate_buffers(u32 dev, u32 channel_id, u32 count,
 	u32 size, u32 int_freq, tspp_allocator *alloc,
 	tspp_memfree *memfree, void *user);
 
-#endif /* _MSM_TSPP_H_ */
+int tspp_get_tts_source(u32 dev, int *tts_source);
+int tspp_get_lpass_time_counter(u32 dev, enum tspp_source source,
+			u64 *lpass_time_counter);
 
+int tspp_attach_ion_dma_buff(u32 dev,
+	struct tspp_ion_dma_buf_info *ion_dma_buf);
+
+int tspp_detach_ion_dma_buff(u32 dev,
+	struct tspp_ion_dma_buf_info *ion_dma_buf);
+#endif /* _MSM_TSPP_H_ */

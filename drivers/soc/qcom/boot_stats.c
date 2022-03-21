@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014,2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014,2019 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,7 +15,6 @@
 #include <linux/io.h>
 #include <linux/init.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
@@ -23,11 +22,10 @@
 #include <linux/sched.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/export.h>
-#include <linux/types.h>
 #include <soc/qcom/boot_stats.h>
 
 static void __iomem *mpm_counter_base;
+static phys_addr_t mpm_counter_pa;
 static uint32_t mpm_counter_freq;
 struct boot_stats __iomem *boot_stats;
 
@@ -72,17 +70,17 @@ static int mpm_parse_dt(void)
 static void print_boot_stats(void)
 {
 	pr_info("KPI: Bootloader start count = %u\n",
-		readl_relaxed(&boot_stats->bootloader_start));
+			readl_relaxed(&boot_stats->bootloader_start));
 	pr_info("KPI: Bootloader end count = %u\n",
-		readl_relaxed(&boot_stats->bootloader_end));
+			readl_relaxed(&boot_stats->bootloader_end));
 	pr_info("KPI: Bootloader display count = %u\n",
-		readl_relaxed(&boot_stats->bootloader_display));
+			readl_relaxed(&boot_stats->bootloader_display));
 	pr_info("KPI: Bootloader load kernel count = %u\n",
-		readl_relaxed(&boot_stats->bootloader_load_kernel));
+			readl_relaxed(&boot_stats->bootloader_load_kernel));
 	pr_info("KPI: Kernel MPM timestamp = %u\n",
-		readl_relaxed(mpm_counter_base));
+			readl_relaxed(mpm_counter_base));
 	pr_info("KPI: Kernel MPM Clock frequency = %u\n",
-		mpm_counter_freq);
+			mpm_counter_freq);
 }
 
 unsigned long long int msm_timer_get_sclk_ticks(void)
@@ -90,7 +88,7 @@ unsigned long long int msm_timer_get_sclk_ticks(void)
 	unsigned long long int t1, t2;
 	int loop_count = 10;
 	int loop_zero_count = 3;
-	int tmp = USEC_PER_SEC;
+	u64 tmp = USEC_PER_SEC;
 	void __iomem *sclk_tick;
 
 	do_div(tmp, TIMER_KHZ);
@@ -121,6 +119,11 @@ unsigned long long int msm_timer_get_sclk_ticks(void)
 	return t1;
 }
 
+phys_addr_t msm_timer_get_pa(void)
+{
+	return mpm_counter_pa;
+}
+
 int boot_stats_init(void)
 {
 	int ret;
@@ -133,6 +136,7 @@ int boot_stats_init(void)
 
 	if (!(boot_marker_enabled()))
 		boot_stats_exit();
+
 	return 0;
 }
 

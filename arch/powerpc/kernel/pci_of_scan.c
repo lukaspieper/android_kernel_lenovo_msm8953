@@ -45,6 +45,8 @@ static unsigned int pci_parse_of_flags(u32 addr0, int bridge)
 	if (addr0 & 0x02000000) {
 		flags = IORESOURCE_MEM | PCI_BASE_ADDRESS_SPACE_MEMORY;
 		flags |= (addr0 >> 22) & PCI_BASE_ADDRESS_MEM_TYPE_64;
+		if (flags & PCI_BASE_ADDRESS_MEM_TYPE_64)
+			flags |= IORESOURCE_MEM_64;
 		flags |= (addr0 >> 28) & PCI_BASE_ADDRESS_MEM_TYPE_1M;
 		if (addr0 & 0x40000000)
 			flags |= IORESOURCE_PREFETCH
@@ -80,10 +82,16 @@ static void of_pci_parse_addrs(struct device_node *node, struct pci_dev *dev)
 	const __be32 *addrs;
 	u32 i;
 	int proplen;
+	bool mark_unset = false;
 
 	addrs = of_get_property(node, "assigned-addresses", &proplen);
-	if (!addrs)
-		return;
+	if (!addrs || !proplen) {
+		addrs = of_get_property(node, "reg", &proplen);
+		if (!addrs || !proplen)
+			return;
+		mark_unset = true;
+	}
+
 	pr_debug("    parse addresses (%d bytes) @ %p\n", proplen, addrs);
 	for (; proplen >= 20; proplen -= 20, addrs += 5) {
 		flags = pci_parse_of_flags(of_read_number(addrs, 1), 0);
@@ -102,12 +110,14 @@ static void of_pci_parse_addrs(struct device_node *node, struct pci_dev *dev)
 			res = &dev->resource[(i - PCI_BASE_ADDRESS_0) >> 2];
 		} else if (i == dev->rom_base_reg) {
 			res = &dev->resource[PCI_ROM_RESOURCE];
-			flags |= IORESOURCE_READONLY | IORESOURCE_CACHEABLE;
+			flags |= IORESOURCE_READONLY;
 		} else {
 			printk(KERN_ERR "PCI: bad cfg reg num 0x%x\n", i);
 			continue;
 		}
 		res->flags = flags;
+		if (mark_unset)
+			res->flags |= IORESOURCE_UNSET;
 		res->name = pci_name(dev);
 		region.start = base;
 		region.end = base + size - 1;
@@ -126,7 +136,6 @@ struct pci_dev *of_create_pci_dev(struct device_node *node,
 {
 	struct pci_dev *dev;
 	const char *type;
-	struct pci_slot *slot;
 
 	dev = pci_alloc_dev(bus);
 	if (!dev)
@@ -145,10 +154,7 @@ struct pci_dev *of_create_pci_dev(struct device_node *node,
 	dev->needs_freset = 0;		/* pcie fundamental reset required */
 	set_pcie_port_type(dev);
 
-	list_for_each_entry(slot, &dev->bus->slots, list)
-		if (PCI_SLOT(dev->devfn) == slot->number)
-			dev->slot = slot;
-
+	pci_dev_assign_slot(dev);
 	dev->vendor = get_int_prop(node, "vendor-id", 0xffff);
 	dev->device = get_int_prop(node, "device-id", 0xffff);
 	dev->subsystem_vendor = get_int_prop(node, "subsystem-vendor-id", 0);
@@ -182,7 +188,7 @@ struct pci_dev *of_create_pci_dev(struct device_node *node,
 		dev->hdr_type = PCI_HEADER_TYPE_NORMAL;
 		dev->rom_base_reg = PCI_ROM_ADDRESS;
 		/* Maybe do a default OF mapping here */
-		dev->irq = NO_IRQ;
+		dev->irq = 0;
 	}
 
 	of_pci_parse_addrs(node, dev);
@@ -207,6 +213,7 @@ void of_scan_pci_bridge(struct pci_dev *dev)
 {
 	struct device_node *node = dev->dev.of_node;
 	struct pci_bus *bus;
+	struct pci_controller *phb;
 	const __be32 *busrange, *ranges;
 	int len, i, mode;
 	struct pci_bus_region region;
@@ -286,9 +293,11 @@ void of_scan_pci_bridge(struct pci_dev *dev)
 		bus->number);
 	pr_debug("    bus name: %s\n", bus->name);
 
+	phb = pci_bus_to_host(bus);
+
 	mode = PCI_PROBE_NORMAL;
-	if (ppc_md.pci_probe_mode)
-		mode = ppc_md.pci_probe_mode(bus);
+	if (phb->controller_ops.probe_mode)
+		mode = phb->controller_ops.probe_mode(bus);
 	pr_debug("    probe mode: %d\n", mode);
 
 	if (mode == PCI_PROBE_DEVTREE)
@@ -305,7 +314,7 @@ static struct pci_dev *of_scan_pci_dev(struct pci_bus *bus,
 	const __be32 *reg;
 	int reglen, devfn;
 #ifdef CONFIG_EEH
-	struct eeh_dev *edev = of_node_to_eeh_dev(dn);
+	struct eeh_dev *edev = pdn_to_eeh_dev(PCI_DN(dn));
 #endif
 
 	pr_debug("  * %s\n", dn->full_name);

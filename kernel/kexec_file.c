@@ -9,6 +9,8 @@
  * Version 2.  See the file COPYING for more details.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/capability.h>
 #include <linux/mm.h>
 #include <linux/file.h>
@@ -16,6 +18,7 @@
 #include <linux/kexec.h>
 #include <linux/mutex.h>
 #include <linux/list.h>
+#include <linux/fs.h>
 #include <crypto/hash.h>
 #include <crypto/sha.h>
 #include <linux/syscalls.h>
@@ -23,65 +26,6 @@
 #include "kexec_internal.h"
 
 static int kexec_calculate_store_digests(struct kimage *image);
-
-static int copy_file_from_fd(int fd, void **buf, unsigned long *buf_len)
-{
-	struct fd f = fdget(fd);
-	int ret;
-	struct kstat stat;
-	loff_t pos;
-	ssize_t bytes = 0;
-
-	if (!f.file)
-		return -EBADF;
-
-	ret = vfs_getattr(&f.file->f_path, &stat);
-	if (ret)
-		goto out;
-
-	if (stat.size > INT_MAX) {
-		ret = -EFBIG;
-		goto out;
-	}
-
-	/* Don't hand 0 to vmalloc, it whines. */
-	if (stat.size == 0) {
-		ret = -EINVAL;
-		goto out;
-	}
-
-	*buf = vmalloc(stat.size);
-	if (!*buf) {
-		ret = -ENOMEM;
-		goto out;
-	}
-
-	pos = 0;
-	while (pos < stat.size) {
-		bytes = kernel_read(f.file, pos, (char *)(*buf) + pos,
-				    stat.size - pos);
-		if (bytes < 0) {
-			vfree(*buf);
-			ret = bytes;
-			goto out;
-		}
-
-		if (bytes == 0)
-			break;
-		pos += bytes;
-	}
-
-	if (pos != stat.size) {
-		ret = -EBADF;
-		vfree(*buf);
-		goto out;
-	}
-
-	*buf_len = pos;
-out:
-	fdput(f);
-	return ret;
-}
 
 /* Architectures can provide this probe function */
 int __weak arch_kexec_kernel_image_probe(struct kimage *image, void *buf,
@@ -100,11 +44,13 @@ int __weak arch_kimage_file_post_load_cleanup(struct kimage *image)
 	return -EINVAL;
 }
 
+#ifdef CONFIG_KEXEC_VERIFY_SIG
 int __weak arch_kexec_kernel_verify_sig(struct kimage *image, void *buf,
 					unsigned long buf_len)
 {
 	return -EKEYREJECTED;
 }
+#endif
 
 /* Apply relocations of type RELA */
 int __weak
@@ -125,7 +71,7 @@ arch_kexec_apply_relocations(const Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
 }
 
 /*
- * Free up memory used by kernel, initrd, and comand line. This is temporary
+ * Free up memory used by kernel, initrd, and command line. This is temporary
  * memory allocation which is not needed any more after these buffers have
  * been loaded into separate segments and have been copied elsewhere.
  */
@@ -171,16 +117,17 @@ kimage_file_prepare_segments(struct kimage *image, int kernel_fd, int initrd_fd,
 {
 	int ret = 0;
 	void *ldata;
+	loff_t size;
 
-	ret = copy_file_from_fd(kernel_fd, &image->kernel_buf,
-				&image->kernel_buf_len);
+	ret = kernel_read_file_from_fd(kernel_fd, &image->kernel_buf,
+				       &size, INT_MAX, READING_KEXEC_IMAGE);
 	if (ret)
 		return ret;
+	image->kernel_buf_len = size;
 
 	/* Call arch image probe handlers */
 	ret = arch_kexec_kernel_image_probe(image, image->kernel_buf,
 					    image->kernel_buf_len);
-
 	if (ret)
 		goto out;
 
@@ -195,10 +142,12 @@ kimage_file_prepare_segments(struct kimage *image, int kernel_fd, int initrd_fd,
 #endif
 	/* It is possible that there no initramfs is being loaded */
 	if (!(flags & KEXEC_FILE_NO_INITRAMFS)) {
-		ret = copy_file_from_fd(initrd_fd, &image->initrd_buf,
-					&image->initrd_buf_len);
+		ret = kernel_read_file_from_fd(initrd_fd, &image->initrd_buf,
+					       &size, INT_MAX,
+					       READING_KEXEC_INITRAMFS);
 		if (ret)
 			goto out;
+		image->initrd_buf_len = size;
 	}
 
 	if (cmdline_len) {
@@ -281,7 +230,7 @@ kimage_file_alloc_init(struct kimage **rimage, int kernel_fd,
 	if (!kexec_on_panic) {
 		image->swap_page = kimage_alloc_control_pages(image, 0);
 		if (!image->swap_page) {
-			pr_err(KERN_ERR "Could not allocate swap buffer\n");
+			pr_err("Could not allocate swap buffer\n");
 			goto out_free_control_pages;
 		}
 	}
@@ -318,8 +267,11 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 		return -EBUSY;
 
 	dest_image = &kexec_image;
-	if (flags & KEXEC_FILE_ON_CRASH)
+	if (flags & KEXEC_FILE_ON_CRASH) {
 		dest_image = &kexec_crash_image;
+		if (kexec_crash_image)
+			arch_kexec_unprotect_crashkres();
+	}
 
 	if (flags & KEXEC_FILE_UNLOAD)
 		goto exchange;
@@ -368,6 +320,9 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 exchange:
 	image = xchg(dest_image, image);
 out:
+	if ((flags & KEXEC_FILE_ON_CRASH) && kexec_crash_image)
+		arch_kexec_protect_crashkres();
+
 	mutex_unlock(&kexec_mutex);
 	kimage_free(image);
 	return ret;
@@ -513,10 +468,10 @@ int kexec_add_buffer(struct kimage *image, char *buffer, unsigned long bufsz,
 
 	/* Walk the RAM ranges and allocate a suitable range for the buffer */
 	if (image->type == KEXEC_TYPE_CRASH)
-		ret = walk_iomem_res("Crash kernel",
-				     IORESOURCE_MEM | IORESOURCE_BUSY,
-				     crashk_res.start, crashk_res.end, kbuf,
-				     locate_mem_hole_callback);
+		ret = walk_iomem_res_desc(crashk_res.desc,
+				IORESOURCE_SYSTEM_RAM | IORESOURCE_BUSY,
+				crashk_res.start, crashk_res.end, kbuf,
+				locate_mem_hole_callback);
 	else
 		ret = walk_system_ram_res(0, -1, kbuf,
 					  locate_mem_hole_callback);
@@ -870,7 +825,7 @@ static int kexec_apply_relocations(struct kimage *image)
 			continue;
 
 		/*
-		 * Respective archicture needs to provide support for applying
+		 * Respective architecture needs to provide support for applying
 		 * relocations of type SHT_RELA/SHT_REL.
 		 */
 		if (sechdrs[i].sh_type == SHT_RELA)

@@ -31,13 +31,17 @@ struct pt_regs {
 #else /* __i386__ */
 
 struct pt_regs {
+/*
+ * C ABI says these regs are callee-preserved. They aren't saved on kernel entry
+ * unless syscall needs a complete, fully filled "struct pt_regs".
+ */
 	unsigned long r15;
 	unsigned long r14;
 	unsigned long r13;
 	unsigned long r12;
 	unsigned long bp;
 	unsigned long bx;
-/* arguments: non interrupts/non tracing syscalls only save up to here*/
+/* These regs are callee-clobbered. Always saved on kernel entry. */
 	unsigned long r11;
 	unsigned long r10;
 	unsigned long r9;
@@ -47,9 +51,12 @@ struct pt_regs {
 	unsigned long dx;
 	unsigned long si;
 	unsigned long di;
+/*
+ * On syscall entry, this is syscall#. On CPU exception, this is error code.
+ * On hw interrupt, it's IRQ number:
+ */
 	unsigned long orig_ax;
-/* end of arguments */
-/* cpu exception frame or undefined */
+/* Return frame for iretq */
 	unsigned long ip;
 	unsigned long cs;
 	unsigned long flags;
@@ -76,37 +83,26 @@ extern void send_sigtrap(struct task_struct *tsk, struct pt_regs *regs,
 			 int error_code, int si_code);
 
 
-extern long syscall_trace_enter(struct pt_regs *);
-extern void syscall_trace_leave(struct pt_regs *);
-
 static inline unsigned long regs_return_value(struct pt_regs *regs)
 {
 	return regs->ax;
 }
 
 /*
- * user_mode_vm(regs) determines whether a register set came from user mode.
- * This is true if V8086 mode was enabled OR if the register set was from
- * protected mode with RPL-3 CS value.  This tricky test checks that with
- * one comparison.  Many places in the kernel can bypass this full check
- * if they have already ruled out V8086 mode, so user_mode(regs) can be used.
+ * user_mode(regs) determines whether a register set came from user
+ * mode.  On x86_32, this is true if V8086 mode was enabled OR if the
+ * register set was from protected mode with RPL-3 CS value.  This
+ * tricky test checks that with one comparison.
+ *
+ * On x86_64, vm86 mode is mercifully nonexistent, and we don't need
+ * the extra check.
  */
 static inline int user_mode(struct pt_regs *regs)
 {
 #ifdef CONFIG_X86_32
-	return (regs->cs & SEGMENT_RPL_MASK) == USER_RPL;
+	return ((regs->cs & SEGMENT_RPL_MASK) | (regs->flags & X86_VM_MASK)) >= USER_RPL;
 #else
 	return !!(regs->cs & 3);
-#endif
-}
-
-static inline int user_mode_vm(struct pt_regs *regs)
-{
-#ifdef CONFIG_X86_32
-	return ((regs->cs & SEGMENT_RPL_MASK) | (regs->flags & X86_VM_MASK)) >=
-		USER_RPL;
-#else
-	return user_mode(regs);
 #endif
 }
 
@@ -119,9 +115,9 @@ static inline int v8086_mode(struct pt_regs *regs)
 #endif
 }
 
-#ifdef CONFIG_X86_64
 static inline bool user_64bit_mode(struct pt_regs *regs)
 {
+#ifdef CONFIG_X86_64
 #ifndef CONFIG_PARAVIRT
 	/*
 	 * On non-paravirt systems, this is the only long mode CPL 3
@@ -132,14 +128,14 @@ static inline bool user_64bit_mode(struct pt_regs *regs)
 	/* Headers are too twisted for this to go in paravirt.h. */
 	return regs->cs == __USER_CS || regs->cs == pv_info.extra_user_64bit_cs;
 #endif
+#else /* !CONFIG_X86_64 */
+	return false;
+#endif
 }
 
-#define current_user_stack_pointer()	this_cpu_read(old_rsp)
-/* ia32 vs. x32 difference */
-#define compat_user_stack_pointer()	\
-	(test_thread_flag(TIF_IA32) 	\
-	 ? current_pt_regs()->sp 	\
-	 : this_cpu_read(old_rsp))
+#ifdef CONFIG_X86_64
+#define current_user_stack_pointer()	current_pt_regs()->sp
+#define compat_user_stack_pointer()	current_pt_regs()->sp
 #endif
 
 #ifdef CONFIG_X86_32
@@ -272,7 +268,7 @@ static inline unsigned long regs_get_kernel_stack_nth(struct pt_regs *regs,
  */
 #define arch_ptrace_stop_needed(code, info)				\
 ({									\
-	set_thread_flag(TIF_NOTIFY_RESUME);				\
+	force_iret();							\
 	false;								\
 })
 

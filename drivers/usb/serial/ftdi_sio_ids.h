@@ -38,13 +38,6 @@
 
 #define FTDI_LUMEL_PD12_PID	0x6002
 
-/*
- * Custom USB adapters made by Falconia Partners LLC
- * for FreeCalypso project, ID codes allocated to Falconia by FTDI.
- */
-#define FTDI_FALCONIA_JTAG_BUF_PID	0x7150
-#define FTDI_FALCONIA_JTAG_UNBUF_PID	0x7151
-
 /* Sienna Serial Interface by Secyourit GmbH */
 #define FTDI_SIENNA_PID		0x8348
 
@@ -166,7 +159,6 @@
 #define XSENS_AWINDA_DONGLE_PID 0x0102
 #define XSENS_MTW_PID		0x0200	/* Xsens MTw */
 #define XSENS_MTDEVBOARD_PID	0x0300	/* Motion Tracker Development Board */
-#define XSENS_MTIUSBCONVERTER_PID	0x0301	/* MTi USB converter */
 #define XSENS_CONVERTER_PID	0xD00D	/* Xsens USB-serial converter */
 
 /* Xsens devices using FTDI VID */
@@ -623,6 +615,13 @@
 #define ADI_GNICEPLUS_PID	0xF001
 
 /*
+ * Cypress WICED USB UART
+ */
+#define CYPRESS_VID			0x04B4
+#define CYPRESS_WICED_BT_USB_PID	0x009B
+#define CYPRESS_WICED_WL_USB_PID	0xF900
+
+/*
  * Microchip Technology, Inc.
  *
  * MICROCHIP_VID (0x04D8) and MICROCHIP_USB_BOARD_PID (0x000A) are
@@ -924,6 +923,12 @@
 #define ICPDAS_I7560U_PID		0x0103
 #define ICPDAS_I7561U_PID		0x0104
 #define ICPDAS_I7563U_PID		0x0105
+
+/*
+ * Airbus Defence and Space
+ */
+#define AIRBUS_DS_VID			0x1e8e  /* Vendor ID */
+#define AIRBUS_DS_P8GR			0x6001  /* Tetra P8GR */
 
 /*
  * RT Systems programming cables for various ham radios
@@ -1314,6 +1319,12 @@
 #define IONICS_PLUGCOMPUTER_PID		0x0102
 
 /*
+ * EZPrototypes (PID reseller)
+ */
+#define EZPROTOTYPES_VID		0x1c40
+#define HJELMSLUND_USB485_ISO_PID	0x0477
+
+/*
  * Dresden Elektronik Sensor Terminal Board
  */
 #define DE_VID			0x1cf1 /* Vendor ID */
@@ -1431,7 +1442,7 @@
 #define FTDI_CTI_NANO_PID	0xF60B
 
 /*
- * ZeitControl cardsystems GmbH rfid-readers http://zeitconrol.de
+ * ZeitControl cardsystems GmbH rfid-readers http://zeitcontrol.de
  */
 /* TagTracer MIFARE*/
 #define FTDI_ZEITCONTROL_TAGTRACE_MIFARE_PID	0xF7C0

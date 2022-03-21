@@ -189,7 +189,6 @@ static const struct pci_device_id pch_pcidev_id[] = {
 	{ PCI_VDEVICE(ROHM, PCI_DEVICE_ID_ML7831_I2C), 1, },
 	{0,}
 };
-MODULE_DEVICE_TABLE(pci, pch_pcidev_id);
 
 static irqreturn_t pch_i2c_handler(int irq, void *pData);
 
@@ -789,6 +788,7 @@ static int pch_i2c_probe(struct pci_dev *pdev,
 		/* base_addr + offset; */
 		adap_info->pch_data[i].pch_base_address = base_addr + 0x100 * i;
 
+		pch_adap->dev.of_node = pdev->dev.of_node;
 		pch_adap->dev.parent = &pdev->dev;
 	}
 

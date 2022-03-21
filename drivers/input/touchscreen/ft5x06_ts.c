@@ -3,7 +3,7 @@
  * FocalTech ft5x06 TouchScreen driver.
  *
  * Copyright (c) 2010  Focal tech Ltd.
- * Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2016, 2018 The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -157,11 +157,11 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *data);
 #define FT_FW_FILE_VENDOR_ID_FT6X36(x)	((x)->data[0x108])
 
 /**
-* Application data verification will be run before upgrade flow.
-* Firmware image stores some flags with negative and positive value
-* in corresponding addresses, we need pick them out do some check to
-* make sure the application data is valid.
-*/
+ * Application data verification will be run before upgrade flow.
+ * Firmware image stores some flags with negative and positive value
+ * in corresponding addresses, we need pick them out do some check to
+ * make sure the application data is valid.
+ */
 #define FT_FW_CHECK(x, ts_data) \
 	(ts_data->family_id == FT6X36_ID ? \
 	(((x)->data[0x104] ^ (x)->data[0x105]) == 0xFF \
@@ -520,17 +520,17 @@ static void ft5x06_secure_touch_stop(struct ft5x06_ts_data *data, bool blocking)
 
 static struct device_attribute attrs[] = {
 #if defined(CONFIG_FT_SECURE_TOUCH)
-		__ATTR(secure_touch_enable, (S_IRUGO | S_IWUSR | S_IWGRP),
+		__ATTR(secure_touch_enable, (0664),
 				ft5x06_secure_touch_enable_show,
 				ft5x06_secure_touch_enable_store),
-		__ATTR(secure_touch, S_IRUGO ,
+		__ATTR(secure_touch, 0444,
 				ft5x06_secure_touch_show, NULL),
 #endif
 };
 
 static inline bool ft5x06_gesture_support_enabled(void)
 {
-	return config_enabled(CONFIG_TOUCHSCREEN_FT5X06_GESTURE);
+	return IS_ENABLED(CONFIG_TOUCHSCREEN_FT5X06_GESTURE);
 }
 
 static int ft5x06_i2c_read(struct i2c_client *client, char *writebuf,
@@ -636,7 +636,7 @@ static ssize_t ft5x06_gesture_enable_to_set_store(struct device *dev,
 		return ret;
 	}
 
-	if (1 == value)
+	if (value == 1)
 		data->gesture_pdata->gesture_enable_to_set = 1;
 	else
 		data->gesture_pdata->gesture_enable_to_set = 0;
@@ -692,10 +692,10 @@ static ssize_t gesture_in_pocket_mode_store(struct device *dev,
 		return ret;
 	}
 
-	if (1 == value && data->gesture_pdata->in_pocket == 0) {
+	if (value == 1 && data->gesture_pdata->in_pocket == 0) {
 		data->gesture_pdata->in_pocket = 1;
 		ft5x06_entry_pocket(dev);
-	} else if (0 == value && data->gesture_pdata->in_pocket == 1) {
+	} else if (value == 0 && data->gesture_pdata->in_pocket == 1) {
 		ft5x06_leave_pocket(dev);
 		data->gesture_pdata->in_pocket = 0;
 	}
@@ -747,7 +747,7 @@ static int ft5x06_report_gesture(struct i2c_client *i2c_client,
 	}
 
 	/* FW support doubleclick */
-	if (FT_GESTURE_DOUBLECLICK_ID == buf[0]) {
+	if (buf[0] == FT_GESTURE_DOUBLECLICK_ID) {
 		ft5x06_report_gesture_doubleclick(ip_dev);
 		return 0;
 	}
@@ -854,7 +854,7 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *dev_id)
 		return IRQ_HANDLED;
 	}
 
-	if (IRQ_HANDLED == ft5x06_filter_interrupt(data))
+	if (ft5x06_filter_interrupt(data) == IRQ_HANDLED)
 		return IRQ_HANDLED;
 
 	ip_dev = data->input_dev;
@@ -2412,9 +2412,9 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 	err = request_threaded_irq(client->irq, NULL,
 				ft5x06_ts_interrupt,
 	/*
-	* the interrupt trigger mode will be set in Device Tree with property
-	* "interrupts", so here we just need to set the flag IRQF_ONESHOT
-	*/
+	 * the interrupt trigger mode will be set in Device Tree with property
+	 * "interrupts", so here we just need to set the flag IRQF_ONESHOT
+	 */
 				IRQF_ONESHOT,
 				client->dev.driver->name, data);
 	if (err) {
@@ -2492,7 +2492,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		goto free_force_update_fw_sys;
 	}
 
-	temp = debugfs_create_file("addr", S_IRUSR | S_IWUSR, data->dir, data,
+	temp = debugfs_create_file("addr", 0600, data->dir, data,
 				   &debug_addr_fops);
 	if (temp == NULL || IS_ERR(temp)) {
 		pr_err("debugfs_create_file failed: rc=%ld\n", PTR_ERR(temp));
@@ -2500,7 +2500,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		goto free_debug_dir;
 	}
 
-	temp = debugfs_create_file("data", S_IRUSR | S_IWUSR, data->dir, data,
+	temp = debugfs_create_file("data", 0600, data->dir, data,
 				   &debug_data_fops);
 	if (temp == NULL || IS_ERR(temp)) {
 		pr_err("debugfs_create_file failed: rc=%ld\n", PTR_ERR(temp));
@@ -2508,7 +2508,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		goto free_debug_dir;
 	}
 
-	temp = debugfs_create_file("suspend", S_IRUSR | S_IWUSR, data->dir,
+	temp = debugfs_create_file("suspend", 0600, data->dir,
 					data, &debug_suspend_fops);
 	if (temp == NULL || IS_ERR(temp)) {
 		pr_err("debugfs_create_file failed: rc=%ld\n", PTR_ERR(temp));
@@ -2516,7 +2516,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		goto free_debug_dir;
 	}
 
-	temp = debugfs_create_file("dump_info", S_IRUSR | S_IWUSR, data->dir,
+	temp = debugfs_create_file("dump_info", 0600, data->dir,
 					data, &debug_dump_info_fops);
 	if (temp == NULL || IS_ERR(temp)) {
 		pr_err("debugfs_create_file failed: rc=%ld\n", PTR_ERR(temp));
@@ -2743,7 +2743,7 @@ static const struct i2c_device_id ft5x06_ts_id[] = {
 MODULE_DEVICE_TABLE(i2c, ft5x06_ts_id);
 
 #ifdef CONFIG_OF
-static struct of_device_id ft5x06_match_table[] = {
+static const struct of_device_id ft5x06_match_table[] = {
 	{ .compatible = "focaltech,5x06",},
 	{ },
 };

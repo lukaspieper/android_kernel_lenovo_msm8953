@@ -1,8 +1,19 @@
-* Generic OPP Interface
+Generic OPP (Operating Performance Points) Bindings
+----------------------------------------------------
 
-SoCs have a standard set of tuples consisting of frequency and
-voltage pairs that the device will support per voltage domain. These
-are called Operating Performance Points or OPPs.
+Devices work at voltage-current-frequency combinations and some implementations
+have the liberty of choosing these. These combinations are called Operating
+Performance Points aka OPPs. This document defines bindings for these OPPs
+applicable across wide range of devices. For illustration purpose, this document
+uses CPU as a device.
+
+This document contain multiple versions of OPP binding and only one of them
+should be used per device.
+
+Binding 1: operating-points
+============================
+
+This binding only supports voltage-frequency pairs.
 
 Properties:
 - operating-points: An array of 2-tuples items, and each item consists
@@ -24,6 +35,7 @@ cpu@0 {
 	>;
 };
 
+
 Binding 2: operating-points-v2
 ============================
 
@@ -33,7 +45,7 @@ Devices supporting OPPs must set their "operating-points-v2" property with
 phandle to a OPP table in their DT node. The OPP core will use this phandle to
 find the operating points for the device.
 
-If required, this can be extended for SoC vendor specfic bindings. Such bindings
+If required, this can be extended for SoC vendor specific bindings. Such bindings
 should be documented as Documentation/devicetree/bindings/power/<vendor>-opp.txt
 and should have a compatible description like: "operating-points-v2-<vendor>".
 

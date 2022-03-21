@@ -24,6 +24,7 @@
 
 #include <linux/errno.h>
 #include <linux/sched.h>
+#include <linux/sched/loadavg.h>
 #include <linux/sched/rt.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
@@ -622,7 +623,7 @@ static struct spu *spu_get_idle(struct spu_context *ctx)
 
 /**
  * find_victim - find a lower priority context to preempt
- * @ctx:	canidate context for running
+ * @ctx:	candidate context for running
  *
  * Returns the freed physical spu to run the new context on.
  */
@@ -986,9 +987,9 @@ static void spu_calc_load(void)
 	unsigned long active_tasks; /* fixed-point */
 
 	active_tasks = count_active_contexts() * FIXED_1;
-	CALC_LOAD(spu_avenrun[0], EXP_1, active_tasks);
-	CALC_LOAD(spu_avenrun[1], EXP_5, active_tasks);
-	CALC_LOAD(spu_avenrun[2], EXP_15, active_tasks);
+	spu_avenrun[0] = calc_load(spu_avenrun[0], EXP_1, active_tasks);
+	spu_avenrun[1] = calc_load(spu_avenrun[1], EXP_5, active_tasks);
+	spu_avenrun[2] = calc_load(spu_avenrun[2], EXP_15, active_tasks);
 }
 
 static void spusched_wake(unsigned long data)
@@ -1069,9 +1070,6 @@ void spuctx_switch_state(struct spu_context *ctx,
 			atomic_inc(&cbe_spu_info[node].busy_spus);
 	}
 }
-
-#define LOAD_INT(x) ((x) >> FSHIFT)
-#define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 
 static int show_spu_loadavg(struct seq_file *s, void *private)
 {

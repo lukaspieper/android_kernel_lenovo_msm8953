@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -61,7 +61,7 @@ static int ipa3_irq_mapping[IPA_IRQ_MAX] = {
 	[IPA_PROC_ERR_IRQ]			= 13,
 	[IPA_TX_SUSPEND_IRQ]			= 14,
 	[IPA_TX_HOLB_DROP_IRQ]			= 15,
-	[IPA_BAM_GSI_IDLE_IRQ]			= 16,
+	[IPA_GSI_IDLE_IRQ]			= 16,
 };
 
 static void ipa3_interrupt_defer(struct work_struct *work);
@@ -264,8 +264,10 @@ static void ipa3_process_interrupts(bool isr_context)
 			if (en & reg & bmsk) {
 				uc_irq = is_uc_irq(i);
 
-				/* Clear uC interrupt before processing to avoid
-						clearing unhandled interrupts */
+				/*
+				 * Clear uC interrupt before processing to avoid
+				 * clearing unhandled interrupts
+				 */
 				if (uc_irq)
 					ipa3_uc_rg10_write_reg(IPA_IRQ_CLR_EE_n,
 							ipa_ee, bmsk);
@@ -281,8 +283,10 @@ static void ipa3_process_interrupts(bool isr_context)
 				ipa3_handle_interrupt(i, isr_context);
 				spin_lock_irqsave(&suspend_wa_lock, flags);
 
-				/* Clear non uC interrupt after processing
-				   to avoid clearing interrupt data */
+				/*
+				 * Clear non uC interrupt after processing
+				 * to avoid clearing interrupt data
+				 */
 				if (!uc_irq)
 					ipa3_uc_rg10_write_reg(IPA_IRQ_CLR_EE_n,
 							ipa_ee, bmsk);
@@ -318,29 +322,29 @@ static void ipa3_interrupt_defer(struct work_struct *work)
 
 static irqreturn_t ipa3_isr(int irq, void *ctxt)
 {
-	unsigned long flags;
+	struct ipa_active_client_logging_info log_info;
 
+	IPA_ACTIVE_CLIENTS_PREP_SIMPLE(log_info);
 	IPADBG_LOW("Enter\n");
 	/* defer interrupt handling in case IPA is not clocked on */
-	if (ipa3_active_clients_trylock(&flags) == 0) {
+	if (ipa3_inc_client_enable_clks_no_block(&log_info)) {
 		IPADBG("defer interrupt processing\n");
 		queue_work(ipa3_ctx->power_mgmt_wq, &ipa3_interrupt_defer_work);
 		return IRQ_HANDLED;
 	}
 
-	if (ipa3_ctx->ipa3_active_clients.cnt == 0) {
-		IPADBG("defer interrupt processing\n");
-		queue_work(ipa3_ctx->power_mgmt_wq, &ipa3_interrupt_defer_work);
-		goto bail;
-	}
-
 	ipa3_process_interrupts(true);
 	IPADBG_LOW("Exit\n");
 
-bail:
-	ipa3_active_clients_trylock_unlock(&flags);
+	ipa3_dec_client_disable_clks_no_block(&log_info);
 	return IRQ_HANDLED;
 }
+
+irq_handler_t ipa3_get_isr(void)
+{
+	return ipa3_isr;
+}
+
 /**
 * ipa3_add_interrupt_handler() - Adds handler to an interrupt type
 * @interrupt:		Interrupt type
@@ -436,6 +440,12 @@ int ipa3_remove_interrupt_handler(enum ipa_irq_type interrupt)
 		return -EFAULT;
 	}
 
+	kfree(ipa_interrupt_to_cb[irq_num].private_data);
+	ipa_interrupt_to_cb[irq_num].deferred_flag = false;
+	ipa_interrupt_to_cb[irq_num].handler = NULL;
+	ipa_interrupt_to_cb[irq_num].private_data = NULL;
+	ipa_interrupt_to_cb[irq_num].interrupt = -1;
+
 	/* clean SUSPEND_IRQ_EN_EE_n_ADDR for L2 interrupt */
 	if ((interrupt == IPA_TX_SUSPEND_IRQ) &&
 		(ipa3_ctx->ipa_hw_type >= IPA_HW_v3_1)) {
@@ -447,13 +457,6 @@ int ipa3_remove_interrupt_handler(enum ipa_irq_type interrupt)
 	bmsk = 1 << irq_num;
 	val &= ~bmsk;
 	ipa3_uc_rg10_write_reg(IPA_IRQ_EN_EE_n, ipa_ee, val);
-
-	/* delete the handlers after clean-up interrupts */
-	kfree(ipa_interrupt_to_cb[irq_num].private_data);
-	ipa_interrupt_to_cb[irq_num].deferred_flag = false;
-	ipa_interrupt_to_cb[irq_num].handler = NULL;
-	ipa_interrupt_to_cb[irq_num].private_data = NULL;
-	ipa_interrupt_to_cb[irq_num].interrupt = -1;
 
 	return 0;
 }
@@ -489,21 +492,35 @@ int ipa3_interrupts_init(u32 ipa_irq, u32 ee, struct device *ipa_dev)
 		return -ENOMEM;
 	}
 
-	res = request_irq(ipa_irq, (irq_handler_t) ipa3_isr,
-				IRQF_TRIGGER_RISING, "ipa", ipa_dev);
-	if (res) {
-		IPAERR("fail to register IPA IRQ handler irq=%d\n", ipa_irq);
-		return -ENODEV;
+	/*
+	 * NOTE:
+	 *
+	 *  We'll only register an isr on non-emulator (ie. real UE)
+	 *  systems.
+	 *
+	 *  On the emulator, emulator_soft_irq_isr() will be calling
+	 *  ipa3_isr, so hence, no isr registration here, and instead,
+	 *  we'll pass the address of ipa3_isr to the gsi layer where
+	 *  emulator interrupts are handled...
+	 */
+	if (ipa3_ctx->ipa3_hw_mode != IPA_HW_MODE_EMULATION) {
+		res = request_irq(ipa_irq, (irq_handler_t) ipa3_isr,
+					IRQF_TRIGGER_RISING, "ipa", ipa_dev);
+		if (res) {
+			IPAERR(
+			    "fail to register IPA IRQ handler irq=%d\n",
+			    ipa_irq);
+			return -ENODEV;
+		}
+		IPADBG("IPA IRQ handler irq=%d registered\n", ipa_irq);
+
+		res = enable_irq_wake(ipa_irq);
+		if (res)
+			IPAERR("fail to enable IPA IRQ wakeup irq=%d res=%d\n",
+				   ipa_irq, res);
+		else
+			IPADBG("IPA IRQ wakeup enabled irq=%d\n", ipa_irq);
 	}
-	IPADBG("IPA IRQ handler irq=%d registered\n", ipa_irq);
-
-	res = enable_irq_wake(ipa_irq);
-	if (res)
-		IPAERR("fail to enable IPA IRQ wakeup irq=%d res=%d\n",
-				ipa_irq, res);
-	else
-		IPADBG("IPA IRQ wakeup enabled irq=%d\n", ipa_irq);
-
 	spin_lock_init(&suspend_wa_lock);
 	return 0;
 }

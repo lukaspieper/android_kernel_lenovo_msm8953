@@ -12,7 +12,6 @@
 #include <linux/dcache.h>
 #include <linux/magic.h>
 #include <linux/types.h>
-#include "flask.h"
 
 #define SECSID_NULL			0x00000000 /* unspecified SID */
 #define SECSID_WILD			0xffffffff /* wildcard SID */
@@ -39,11 +38,7 @@
 
 /* Range of policy versions we understand*/
 #define POLICYDB_VERSION_MIN   POLICYDB_VERSION_BASE
-#ifdef CONFIG_SECURITY_SELINUX_POLICYDB_VERSION_MAX
-#define POLICYDB_VERSION_MAX	CONFIG_SECURITY_SELINUX_POLICYDB_VERSION_MAX_VALUE
-#else
 #define POLICYDB_VERSION_MAX	POLICYDB_VERSION_XPERMS_IOCTL
-#endif
 
 /* Mask for just the mount related flags */
 #define SE_MNTMASK	0x0f
@@ -167,6 +162,8 @@ int security_sid_to_context_force(u32 sid, char **scontext, u32 *scontext_len);
 int security_context_to_sid(const char *scontext, u32 scontext_len,
 			    u32 *out_sid, gfp_t gfp);
 
+int security_context_str_to_sid(const char *scontext, u32 *out_sid, gfp_t gfp);
+
 int security_context_to_sid_default(const char *scontext, u32 scontext_len,
 				    u32 *out_sid, u32 def_sid, gfp_t gfp_flags);
 
@@ -185,6 +182,9 @@ int security_node_sid(u16 domain, void *addr, u32 addrlen,
 
 int security_validate_transition(u32 oldsid, u32 newsid, u32 tasksid,
 				 u16 tclass);
+
+int security_validate_transition_user(u32 oldsid, u32 newsid, u32 tasksid,
+				      u16 tclass);
 
 int security_bounded_transition(u32 oldsid, u32 newsid);
 

@@ -1,3 +1,15 @@
+/* Copyright (c) 2016-2017, 2019, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
 #ifndef _MSM_MSM_ION_H
 #define _MSM_MSM_ION_H
 
@@ -9,6 +21,8 @@ enum ion_permission_type {
 	IPT_TYPE_MFC_SHAREDMEM = 1,
 	IPT_TYPE_MDP_WRITEBACK = 2,
 };
+
+#define ION_FLAGS_CP_MASK	0x6FFE0000
 
 /*
  * This flag allows clients when mapping into the IOMMU to specify to
@@ -120,9 +134,7 @@ struct ion_client *msm_ion_client_create(const char *name);
  * of the buffer (caching, security, etc.)
  */
 int ion_handle_get_flags(struct ion_client *client, struct ion_handle *handle,
-				unsigned long *flags);
-
-
+			 unsigned long *flags);
 
 /**
  * ion_handle_get_size - get the allocated size of a given handle
@@ -157,6 +169,13 @@ int ion_handle_get_size(struct ion_client *client, struct ion_handle *handle,
 int msm_ion_do_cache_op(struct ion_client *client, struct ion_handle *handle,
 			void *vaddr, unsigned long len, unsigned int cmd);
 
+int msm_ion_do_cache_offset_op(
+		struct ion_client *client, struct ion_handle *handle,
+		void *vaddr, unsigned int offset, unsigned long len,
+		unsigned int cmd);
+
+bool is_buffer_hlos_assigned(struct ion_buffer *buffer);
+
 #else
 static inline struct ion_client *msm_ion_client_create(const char *name)
 {
@@ -164,18 +183,31 @@ static inline struct ion_client *msm_ion_client_create(const char *name)
 }
 
 static inline int ion_handle_get_size(struct ion_client *client,
-				struct ion_handle *handle, size_t *size)
+				      struct ion_handle *handle, size_t *size)
 {
 	return -ENODEV;
 }
 
-static inline int msm_ion_do_cache_op(struct ion_client *client,
+static inline int msm_ion_do_cache_op(
+			struct ion_client *client,
 			struct ion_handle *handle, void *vaddr,
 			unsigned long len, unsigned int cmd)
 {
 	return -ENODEV;
 }
 
+int msm_ion_do_cache_offset_op(
+		struct ion_client *client, struct ion_handle *handle,
+		void *vaddr, unsigned int offset, unsigned long len,
+		unsigned int cmd)
+{
+	return -ENODEV;
+}
+
+static bool is_buffer_hlos_assigned(struct ion_buffer *buffer)
+{
+	return true;
+}
 #endif /* CONFIG_ION */
 
 #endif

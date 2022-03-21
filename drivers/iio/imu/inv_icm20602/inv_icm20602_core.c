@@ -1,9 +1,11 @@
 /*
  * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Copyright (C) 2012 Invensense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -26,31 +28,35 @@
 #include <linux/i2c.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
-
 #include "inv_icm20602_iio.h"
-int icm20602_debug_enable = 1;
+#include <linux/regulator/consumer.h>
 
-/* Attribute of icm20602 device init */
+
+static struct regulator *reg_ldo;
+static struct inv_icm20602_state *st;
+
+/* Attribute of icm20602 device init show */
 static ssize_t inv_icm20602_init_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	return MPU_SUCCESS;
+	return 0;
 }
 
-static int inv_icm20602_def_config(struct inv_icm20602_state *st)
+static void inv_icm20602_def_config(struct inv_icm20602_state *st)
 {
 	struct icm20602_user_config *config = st->config;
 
-	config->user_fps_in_ms = 10;
+	config->user_fps_in_ms = 20;
 	config->gyro_lpf = INV_ICM20602_GYRO_LFP_92HZ;
 	config->gyro_fsr = ICM20602_GYRO_FSR_1000DPS;
 	config->acc_lpf = ICM20602_ACCLFP_99;
 	config->acc_fsr = ICM20602_ACC_FSR_4G;
-	config->gyro_accel_sample_rate = ICM20602_SAMPLE_RATE_100HZ;
+	config->gyro_accel_sample_rate = ICM20602_SAMPLE_RATE_200HZ;
 	config->fifo_enabled = true;
+
 }
 
-static int inv_icm20602_load_config(struct inv_icm20602_state *st)
+static void inv_icm20602_load_config(struct inv_icm20602_state *st)
 {
 	struct icm20602_user_config *config = st->config;
 
@@ -58,13 +64,11 @@ static int inv_icm20602_load_config(struct inv_icm20602_state *st)
 		inv_icm20602_def_config(st);
 	config->fifo_enabled = true;
 
-	return MPU_SUCCESS;
 }
 
 static ssize_t inv_icm20602_init_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
-	int enum_config = 0;
 	int result = MPU_SUCCESS;
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
@@ -74,31 +78,30 @@ static ssize_t inv_icm20602_init_store(struct device *dev,
 	result |= icm20602_init_device(st);
 	icm20602_start_fifo(st);
 	if (result)
-		dev_dbgerr("inv_select_config_store failed\n");
+		return result;
 
 	return count;
 }
 
 static IIO_DEVICE_ATTR(
 						inv_icm20602_init,
-						S_IRUGO | S_IWUSR,
+						0644,
 						inv_icm20602_init_show,
 						inv_icm20602_init_store,
 						0);
 
-/* Attribute of gyro lpf base on enum inv_icm20602_gyro_temp_lpf_e */
-static int inv_gyro_lpf_show(struct device *dev,
+/* Attribute of gyro lpf base on the enum inv_icm20602_gyro_temp_lpf_e */
+static ssize_t inv_gyro_lpf_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
 
-	return config->gyro_lpf;
+	return snprintf(buf, 4, "%d\n", st->config->gyro_lpf);
 }
 
-static int inv_gyro_lpf_store(struct device *dev,
-	struct device_attribute *attr, char *buf, size_t count)
+static ssize_t inv_gyro_lpf_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
@@ -110,28 +113,28 @@ static int inv_gyro_lpf_store(struct device *dev,
 	if (gyro_lpf > INV_ICM20602_GYRO_LFP_NUM)
 		return -EINVAL;
 	config->gyro_lpf = gyro_lpf;
+
 	return count;
 }
 static IIO_DEVICE_ATTR(
 						inv_icm20602_gyro_lpf,
-						S_IRUGO | S_IWUSR,
+						0644,
 						inv_gyro_lpf_show,
 						inv_gyro_lpf_store,
 						0);
 
 /* Attribute of gyro fsr base on enum inv_icm20602_gyro_temp_lpf_e */
-static int inv_gyro_fsr_show(struct device *dev,
+static ssize_t inv_gyro_fsr_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
 
-	return config->gyro_fsr;
+	return snprintf(buf, 4, "%d\n", st->config->gyro_fsr);
 }
 
-static int inv_gyro_fsr_store(struct device *dev,
-	struct device_attribute *attr, char *buf, size_t count)
+static ssize_t inv_gyro_fsr_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
@@ -149,51 +152,46 @@ static int inv_gyro_fsr_store(struct device *dev,
 
 static IIO_DEVICE_ATTR(
 						inv_icm20602_gyro_fsr,
-						S_IRUGO | S_IWUSR,
+						0644,
 						inv_gyro_fsr_show,
 						inv_gyro_fsr_store,
 						0);
 
-/* Attribute of gyro_self_test */
-static int inv_gyro_self_test_show(struct device *dev,
+/* Attribute of self_test */
+static ssize_t inv_self_test_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
-
 	return 0;
 }
 
-static int inv_gyro_self_test_store(struct device *dev,
-	struct device_attribute *attr, char *buf, size_t count)
+static ssize_t inv_self_test_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
 
+	icm20602_self_test(st);
 	return count;
 }
 static IIO_DEVICE_ATTR(
-						inv_icm20602_gyro_self_test,
-						S_IRUGO | S_IWUSR,
-						inv_gyro_self_test_show,
-						inv_gyro_self_test_store,
+						inv_icm20602_self_test,
+						0644,
+						inv_self_test_show,
+						inv_self_test_store,
 						0);
 
 /* Attribute of gyro fsr base on enum inv_icm20602_acc_fsr_e */
-static int inv_gyro_acc_fsr_show(struct device *dev,
+static ssize_t inv_gyro_acc_fsr_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
 
-	return config->acc_fsr;
+	return snprintf(buf, 4, "%d\n", st->config->acc_fsr);
 }
 
-static int inv_gyro_acc_fsr_store(struct device *dev,
-	struct device_attribute *attr, char *buf, size_t count)
+static ssize_t inv_gyro_acc_fsr_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
@@ -210,24 +208,23 @@ static int inv_gyro_acc_fsr_store(struct device *dev,
 }
 static IIO_DEVICE_ATTR(
 						inv_icm20602_acc_fsr,
-						S_IRUGO | S_IWUSR,
+						0644,
 						inv_gyro_acc_fsr_show,
 						inv_gyro_acc_fsr_store,
 						0);
 
 /* Attribute of gyro fsr base on enum inv_icm20602_acc_lpf_e */
-static int inv_gyro_acc_lpf_show(struct device *dev,
+static ssize_t inv_gyro_acc_lpf_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
 
-	return config->acc_lpf;
+	return snprintf(buf, 4, "%d\n", st->config->acc_lpf);
 }
 
-static int inv_gyro_acc_lpf_store(struct device *dev,
-	struct device_attribute *attr, char *buf, size_t count)
+static ssize_t inv_gyro_acc_lpf_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
@@ -244,51 +241,23 @@ static int inv_gyro_acc_lpf_store(struct device *dev,
 }
 static IIO_DEVICE_ATTR(
 						inv_icm20602_acc_lpf,
-						S_IRUGO | S_IWUSR,
+						0644,
 						inv_gyro_acc_lpf_show,
 						inv_gyro_acc_lpf_store,
 						0);
 
-/* Attribute of acc_self_test */
-static int inv_acc_self_test_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
-
-	return 0;
-}
-
-static int inv_acc_self_test_store(struct device *dev,
-	struct device_attribute *attr, char *buf, size_t count)
-{
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
-
-	return count;
-}
-static IIO_DEVICE_ATTR(
-						inv_icm20602_acc_self_test,
-						S_IRUGO | S_IWUSR,
-						inv_acc_self_test_show,
-						inv_acc_self_test_store,
-						0);
-
 /* Attribute of user_fps_in_ms */
-static int inv_user_fps_in_ms_show(struct device *dev,
+static ssize_t inv_user_fps_in_ms_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
 
-	return config->user_fps_in_ms;
+	return snprintf(buf, 4, "%d\n", st->config->user_fps_in_ms);
 }
 
-static int inv_user_fps_in_ms_store(struct device *dev,
-	struct device_attribute *attr, char *buf, size_t count)
+static ssize_t inv_user_fps_in_ms_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
@@ -305,44 +274,50 @@ static int inv_user_fps_in_ms_store(struct device *dev,
 }
 static IIO_DEVICE_ATTR(
 						inv_user_fps_in_ms,
-						S_IRUGO | S_IWUSR,
+						0644,
 						inv_user_fps_in_ms_show,
 						inv_user_fps_in_ms_store,
 						0);
 
 /* Attribute of gyro_accel_sample_rate */
-static int inv_sampling_frequency_show(struct device *dev,
+static ssize_t inv_sampling_frequency_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
-	struct icm20602_user_config *config = st->config;
 
-	return config->gyro_accel_sample_rate;
+	return snprintf(buf, 4, "%d\n", st->config->gyro_accel_sample_rate);
 }
 
-static int inv_sampling_frequency_store(struct device *dev,
-	struct device_attribute *attr, char *buf, size_t count)
+static ssize_t inv_sampling_frequency_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct inv_icm20602_state *st = iio_priv(indio_dev);
 	struct icm20602_user_config *config = st->config;
+	int gyro_accel_sample_rate;
 
+	if (kstrtoint(buf, 10, &gyro_accel_sample_rate))
+		return -EINVAL;
+	if (gyro_accel_sample_rate < 10)
+		return -EINVAL;
+
+	config->gyro_accel_sample_rate = gyro_accel_sample_rate;
 	return count;
 }
 static IIO_DEV_ATTR_SAMP_FREQ(
-						S_IRUGO | S_IWUSR,
+						0644,
 						inv_sampling_frequency_show,
 						inv_sampling_frequency_store);
 
 static struct attribute *inv_icm20602_attributes[] = {
 	&iio_dev_attr_inv_icm20602_init.dev_attr.attr,
 
-	&iio_dev_attr_inv_icm20602_gyro_self_test.dev_attr.attr,
 	&iio_dev_attr_inv_icm20602_gyro_fsr.dev_attr.attr,
 	&iio_dev_attr_inv_icm20602_gyro_lpf.dev_attr.attr,
 
-	&iio_dev_attr_inv_icm20602_acc_self_test.dev_attr.attr,
+	&iio_dev_attr_inv_icm20602_self_test.dev_attr.attr,
+
 	&iio_dev_attr_inv_icm20602_acc_fsr.dev_attr.attr,
 	&iio_dev_attr_inv_icm20602_acc_lpf.dev_attr.attr,
 
@@ -364,7 +339,7 @@ static struct attribute *inv_icm20602_attributes[] = {
 			.sign = 's',                          \
 			.realbits = 16,                       \
 			.storagebits = 16,                    \
-			.shift = 0 ,                          \
+			.shift = 0,                          \
 			.endianness = IIO_BE,                 \
 	},                                       \
 }
@@ -397,16 +372,56 @@ static const struct iio_chan_spec inv_icm20602_channels[] = {
 };
 
 static const struct attribute_group inv_icm20602_attribute_group = {
-	.attrs = inv_icm20602_attributes
+	.attrs = inv_icm20602_attributes,
 };
 
 static const struct iio_info icm20602_info = {
 	.driver_module = THIS_MODULE,
-	.read_raw = &icm20602_read_raw,
+	.read_raw = NULL,
 	.write_raw = NULL,
 	.attrs = &inv_icm20602_attribute_group,
 	.validate_trigger = inv_icm20602_validate_trigger,
 };
+
+static int icm20602_ldo_work(bool enable)
+{
+	int ret = 0;
+
+	if (reg_ldo == NULL)
+		return MPU_FAIL;
+
+	if (enable) {
+		ret = regulator_set_voltage(reg_ldo,
+			ICM20602_LDO_VTG_MIN_UV, ICM20602_LDO_VTG_MAX_UV);
+		if (ret)
+			pr_err("Failed to request LDO voltage.\n");
+
+		ret = regulator_enable(reg_ldo);
+		if (ret)
+			pr_err("Failed to enable LDO %d\n", ret);
+	} else {
+		ret = regulator_disable(reg_ldo);
+		regulator_set_load(reg_ldo, 0);
+		if (ret)
+			pr_err("Failed to disable LDO %d\n", ret);
+	}
+
+	return MPU_SUCCESS;
+}
+
+static int icm20602_init_regulators(struct inv_icm20602_state *st)
+{
+	struct regulator *reg;
+	reg = regulator_get(&st->client->dev, "vdd-ldo");
+	if (IS_ERR_OR_NULL(reg)) {
+		pr_err("Unable to get regulator for LDO\n");
+		return -MPU_FAIL;
+	}
+
+	reg_ldo = reg;
+
+	return MPU_SUCCESS;
+}
 
 static int of_populate_icm20602_dt(struct inv_icm20602_state *st)
 {
@@ -414,28 +429,28 @@ static int of_populate_icm20602_dt(struct inv_icm20602_state *st)
 
 	/* use client device irq */
 	st->gpio = of_get_named_gpio(st->client->dev.of_node,
-			"invn,icm20602-irq", 0);
+			"invensense,icm20602-gpio", 0);
 	result = gpio_is_valid(st->gpio);
 	if (!result) {
-		dev_dbgerr("gpio_is_valid %d failed\n", st->gpio);
+		pr_err("gpio_is_valid %d failed\n", st->gpio);
 		return -MPU_FAIL;
 	}
 
 	result = gpio_request(st->gpio, "icm20602-irq");
 	if (result) {
-		dev_dbgerr("gpio_request failed\n");
+		pr_err("gpio_request failed\n");
 		return -MPU_FAIL;
 	}
 
 	result = gpio_direction_input(st->gpio);
 	if (result) {
-		dev_dbgerr("gpio_direction_input failed\n");
+		pr_err("gpio_direction_input failed\n");
 		return -MPU_FAIL;
 	}
 
 	st->client->irq = gpio_to_irq(st->gpio);
 	if (st->client->irq < 0) {
-		dev_dbgerr("gpio_to_irq failed\n");
+		pr_err("gpio_to_irq failed\n");
 		return -MPU_FAIL;
 	}
 
@@ -454,30 +469,30 @@ static int of_populate_icm20602_dt(struct inv_icm20602_state *st)
 static int inv_icm20602_probe(struct i2c_client *client,
 	const struct i2c_device_id *id)
 {
-	struct inv_icm20602_state *st;
 	struct iio_dev *indio_dev;
 	int result = MPU_SUCCESS;
 
 	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*st));
 	if (indio_dev == NULL) {
 		result =  -ENOMEM;
-		dev_dbgerr("alloc iio device failed\n");
 		goto out_remove_trigger;
 	}
 	st = iio_priv(indio_dev);
 	st->client = client;
 	st->interface = ICM20602_I2C;
 
-	dev_dbginfo("i2c address is %x\n", client->addr);
+	pr_debug("i2c address is %x\n", client->addr);
 	result = of_populate_icm20602_dt(st);
 	if (result)
-		dev_dbgerr("populate dt failed\n");
+		return result;
 
-	st->config = kmalloc(sizeof(struct icm20602_user_config), GFP_ATOMIC);
-	memset(st->config, 0, sizeof(struct icm20602_user_config));
+	st->config = kzalloc(sizeof(struct icm20602_user_config), GFP_ATOMIC);
+	if (st->config == NULL)
+		return -ENOMEM;
+
 	icm20602_init_reg_map();
 
-	i2c_set_clientdata(&client->dev, indio_dev);
+	i2c_set_clientdata(client, indio_dev);
 
 	dev_set_drvdata(&client->dev, indio_dev);
 	indio_dev->dev.parent = &client->dev;
@@ -494,6 +509,8 @@ static int inv_icm20602_probe(struct i2c_client *client,
 				result);
 		goto out_remove_trigger;
 	}
+	icm20602_init_regulators(st);
+	icm20602_ldo_work(true);
 
 	result = inv_icm20602_probe_trigger(indio_dev);
 	if (result) {
@@ -515,7 +532,6 @@ out_remove_trigger:
 	inv_icm20602_remove_trigger(st);
 out_unreg_ring:
 	iio_triggered_buffer_cleanup(indio_dev);
-out_free:
 	iio_device_free(indio_dev);
 	gpio_free(st->gpio);
 
@@ -536,29 +552,35 @@ static int inv_icm20602_remove(struct i2c_client *client)
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int inv_icm20602_suspend(struct i2c_client *client)
+static int inv_icm20602_suspend(struct device *dev)
 {
-	struct iio_dev *indio_dev = i2c_get_clientdata(client);
-	struct inv_icm20602_state *st = iio_priv(indio_dev);
+	icm20602_ldo_work(false);
 
 	return 0;
 }
 
-static int inv_icm20602_resume(struct i2c_client *client)
+static int inv_icm20602_resume(struct device *dev)
 {
-	struct iio_dev *indio_dev = i2c_get_clientdata(client);
-	struct inv_icm20602_state *st = iio_priv(indio_dev);
+	int ret;
+
+	ret = icm20602_ldo_work(true);
+	if (ret == MPU_FAIL)
+		return 0;
+
+	icm20602_detect(st);
+	icm20602_init_device(st);
+	icm20602_start_fifo(st);
 
 	return 0;
 }
-#else
-#define inv_icm20602_suspend NULL
-#define inv_icm20602_resume NULL
-#endif
 
-static struct of_device_id icm20602_match_table[] = {
-	{.compatible = "invn,icm20602"},
+static const struct dev_pm_ops icm20602_pm_ops = {
+	.resume		=	inv_icm20602_resume,
+	.suspend	=	inv_icm20602_suspend,
+};
+
+static const struct of_device_id icm20602_match_table[] = {
+	{.compatible = "invensense,icm20602"},
 	{}
 };
 MODULE_DEVICE_TABLE(of, icm20602_match_table);
@@ -572,14 +594,12 @@ static struct i2c_driver icm20602_i2c_driver = {
 	.probe		=	inv_icm20602_probe,
 	.remove		=	inv_icm20602_remove,
 	.id_table	=	inv_icm20602_id,
-	.suspend = inv_icm20602_suspend,
-	.resume = inv_icm20602_resume,
 	.driver = {
 		.owner	=	THIS_MODULE,
 		.name	=	"inv-icm20602",
 		.of_match_table = icm20602_match_table,
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
-		.pm = NULL,
+		.pm = &icm20602_pm_ops,
 	},
 };
 

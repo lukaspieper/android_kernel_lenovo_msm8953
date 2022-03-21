@@ -281,8 +281,8 @@ error:
 
 static const struct file_operations romfs_dir_operations = {
 	.read		= generic_read_dir,
-	.iterate	= romfs_readdir,
-	.llseek		= default_llseek,
+	.iterate_shared	= romfs_readdir,
+	.llseek		= generic_file_llseek,
 };
 
 static const struct inode_operations romfs_dir_inode_operations = {
@@ -356,14 +356,12 @@ static struct inode *romfs_iget(struct super_block *sb, unsigned long pos)
 	case ROMFH_REG:
 		i->i_fop = &romfs_ro_fops;
 		i->i_data.a_ops = &romfs_aops;
-		if (i->i_sb->s_mtd)
-			i->i_data.backing_dev_info =
-				i->i_sb->s_mtd->backing_dev_info;
 		if (nextfh & ROMFH_EXEC)
 			mode |= S_IXUGO;
 		break;
 	case ROMFH_SYM:
 		i->i_op = &page_symlink_inode_operations;
+		inode_nohighmem(i);
 		i->i_data.a_ops = &romfs_aops;
 		mode |= S_IRWXUGO;
 		break;
@@ -642,8 +640,8 @@ static int __init init_romfs_fs(void)
 	romfs_inode_cachep =
 		kmem_cache_create("romfs_i",
 				  sizeof(struct romfs_inode_info), 0,
-				  SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
-				  romfs_i_init_once);
+				  SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD |
+				  SLAB_ACCOUNT, romfs_i_init_once);
 
 	if (!romfs_inode_cachep) {
 		pr_err("Failed to initialise inode cache\n");

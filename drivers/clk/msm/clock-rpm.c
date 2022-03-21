@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -45,7 +45,7 @@ static int clk_rpmrs_set_rate_smd(struct rpm_clk *r, uint32_t value,
 			return 0;
 		break;
 	case MSM_RPM_CTX_SLEEP_SET:
-		 if (*r->last_sleep_set_vote == value)
+		if (*r->last_sleep_set_vote == value)
 			return 0;
 		break;
 	default:
@@ -196,7 +196,6 @@ static void rpm_clk_unprepare(struct clk *clk)
 out:
 	rt_mutex_unlock(&rpm_clock_lock);
 
-	return;
 }
 
 static int rpm_clk_set_rate(struct clk *clk, unsigned long rate)
@@ -237,6 +236,7 @@ out:
 static unsigned long rpm_clk_get_rate(struct clk *clk)
 {
 	struct rpm_clk *r = to_rpm_clk(clk);
+
 	if (r->rpmrs_data->get_rate_fn)
 		return r->rpmrs_data->get_rate_fn(r);
 	else
@@ -246,6 +246,7 @@ static unsigned long rpm_clk_get_rate(struct clk *clk)
 static int rpm_clk_is_enabled(struct clk *clk)
 {
 	struct rpm_clk *r = to_rpm_clk(clk);
+
 	return r->rpmrs_data->is_enabled(r);
 }
 
@@ -349,7 +350,7 @@ int vote_bimc(struct rpm_clk *r, uint32_t value)
 	return rc;
 }
 
-struct clk_ops clk_ops_rpm = {
+const struct clk_ops clk_ops_rpm = {
 	.prepare = rpm_clk_prepare,
 	.unprepare = rpm_clk_unprepare,
 	.set_rate = rpm_clk_set_rate,
@@ -360,7 +361,7 @@ struct clk_ops clk_ops_rpm = {
 	.handoff = rpm_clk_handoff,
 };
 
-struct clk_ops clk_ops_rpm_branch = {
+const struct clk_ops clk_ops_rpm_branch = {
 	.prepare = rpm_clk_prepare,
 	.unprepare = rpm_clk_unprepare,
 	.is_local = rpm_clk_is_local,
@@ -377,10 +378,8 @@ static struct rpm_clk *rpm_clk_dt_parser_common(struct device *dev,
 	const char *str;
 
 	rpm = devm_kzalloc(dev, sizeof(*rpm), GFP_KERNEL);
-	if (!rpm) {
-		dt_err(np, "memory alloc failure\n");
+	if (!rpm)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	rc = of_property_read_phandle_index(np, "qcom,rpm-peer", 0, &p);
 	if (rc) {
@@ -439,6 +438,7 @@ static struct rpm_clk *rpm_clk_dt_parser_common(struct device *dev,
 static void *rpm_clk_dt_parser(struct device *dev, struct device_node *np)
 {
 	struct rpm_clk *rpm;
+
 	rpm = rpm_clk_dt_parser_common(dev, np);
 	if (IS_ERR(rpm))
 		return rpm;
@@ -453,6 +453,7 @@ static void *rpm_branch_clk_dt_parser(struct device *dev,
 	struct rpm_clk *rpm;
 	u32 rate;
 	int rc;
+
 	rpm = rpm_clk_dt_parser_common(dev, np);
 	if (IS_ERR(rpm))
 		return rpm;

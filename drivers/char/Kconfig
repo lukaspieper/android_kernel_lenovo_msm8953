@@ -7,17 +7,13 @@ menu "Character devices"
 source "drivers/tty/Kconfig"
 
 config DEVMEM
-	bool "Memory device driver"
+	bool "/dev/mem virtual device support"
 	default y
 	help
-	  The memory driver provides two character devices, mem and kmem, which
-	  provide access to the system's memory. The mem device is a view of
-	  physical memory, and each byte in the device corresponds to the
-	  matching physical address. The kmem device is the same as mem, but
-	  the addresses correspond to the kernel's virtual address space rather
-	  than physical memory. These devices are standard parts of a Linux
-	  system and most users should say Y here. You might say N if very
-	  security conscience or memory is tight.
+	  Say Y here if you want to support the /dev/mem device.
+	  The /dev/mem device is used to access areas of physical
+	  memory.
+	  When in doubt, say "Y".
 
 config DEVKMEM
 	bool "/dev/kmem virtual device support"
@@ -184,6 +180,20 @@ config IBM_BSR
 	  of threads across a large system which avoids bouncing a cacheline
 	  between several cores on a system
 
+config POWERNV_OP_PANEL
+	tristate "IBM POWERNV Operator Panel Display support"
+	depends on PPC_POWERNV
+	default m
+	help
+	  If you say Y here, a special character device node, /dev/op_panel,
+	  will be created which exposes the operator panel display on IBM
+	  Power Systems machines with FSPs.
+
+	  If you don't require access to the operator panel display from user
+	  space, say N.
+
+	  If unsure, say M here to build it as a module called powernv-op-panel.
+
 source "drivers/char/ipmi/Kconfig"
 
 config DS1620
@@ -285,8 +295,7 @@ if RTC_LIB=n
 
 config RTC
 	tristate "Enhanced Real Time Clock Support (legacy PC RTC driver)"
-	depends on !PPC && !PARISC && !IA64 && !M68K && !SPARC && !FRV \
-			&& !ARM && !SUPERH && !S390 && !AVR32 && !BLACKFIN && !UML
+	depends on ALPHA || (MIPS && MACH_LOONGSON64)
 	---help---
 	  If you say Y here and create a character special file /dev/rtc with
 	  major number 10 and minor number 135 using mknod ("man mknod"), you
@@ -331,31 +340,6 @@ config JS_RTC
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called js-rtc.
-
-config GEN_RTC
-	tristate "Generic /dev/rtc emulation"
-	depends on RTC!=y && !IA64 && !ARM && !M32R && !MIPS && !SPARC && !FRV && !S390 && !SUPERH && !AVR32 && !BLACKFIN && !UML
-	---help---
-	  If you say Y here and create a character special file /dev/rtc with
-	  major number 10 and minor number 135 using mknod ("man mknod"), you
-	  will get access to the real time clock (or hardware clock) built
-	  into your computer.
-
-	  It reports status information via the file /proc/driver/rtc and its
-	  behaviour is set by various ioctls on /dev/rtc. If you enable the
-	  "extended RTC operation" below it will also provide an emulation
-	  for RTC_UIE which is required by some programs and may improve
-	  precision in some cases.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called genrtc.
-
-config GEN_RTC_X
-	bool "Extended RTC operation"
-	depends on GEN_RTC
-	help
-	  Provides an emulation for RTC_UIE which is required by some programs
-	  and may improve precision of the generic RTC support in some cases.
 
 config EFI_RTC
 	bool "EFI Real Time Clock Services"
@@ -603,8 +587,10 @@ config MSM_SMD_PKT
 	default n
 	depends on MSM_SMD
 	help
-	  Enables userspace clients to read and write to some packet SMD
-	  ports via device interface for MSM chipset.
+	  smd_pkt driver provides the interface for the userspace clients
+	  to communicate over smd via device nodes. This enable the
+	  usersapce clients to read and write to some smd packets channel
+	  for MSM chipset.
 
 config TILE_SROM
 	bool "Character-device access via hypervisor to the Tilera SPI ROM"
@@ -620,28 +606,66 @@ config TILE_SROM
 source "drivers/char/xillybus/Kconfig"
 
 config MSM_ADSPRPC
-	tristate "Qualcomm ADSP RPC driver"
-	depends on MSM_SMD
-	help
-	  Provides a communication mechanism that allows for clients to
-	  make remote method invocations across processor boundary to
-	  applications DSP processor. Say M if you want to enable this
-	  module.
-
-config MSM_MDSP_TS
-	tristate "Qualcomm Technologies Inc MDSP TimeStamp driver"
-	depends on MSM_SMD
-	help
-	  Provides a high response mechanism that allows for AP to get
-	  timestamp from mDSP. It provides the device /dev/vsync_ts_diff
-	  for user to read the timestamp, and the timestamp is transferred
-	  through smd between mDSP and AP.
+        tristate "QTI ADSP RPC driver"
+        depends on MSM_GLINK || MSM_SMD
+        help
+          Provides a communication mechanism that allows for clients to
+          make remote method invocations across processor boundary to
+          applications DSP processor. Say M if you want to enable this
+          module.
 
 config MSM_RDBG
-	tristate "Qualcomm Remote debug driver"
+	tristate "QTI Remote debug driver"
 	help
 	  Implements a shared memory based transport mechanism that allows
 	  for a debugger running on a host PC to communicate with a remote
 	  stub running on peripheral subsystems such as the ADSP, MODEM etc.
+
 endmenu
 
+config OKL4_PIPE
+      bool "OKL4 Pipe Driver"
+      depends on OKL4_GUEST
+      default n
+      help
+        Virtual pipe driver for the OKL4 Microvisor. This driver allows
+        OKL4 Microvisor pipes to be exposed directly to user level as
+        character devices.
+
+config VSERVICES_SERIAL
+	tristate
+
+config VSERVICES_SERIAL_SERVER
+	tristate "Virtual Services serial server"
+	depends on VSERVICES_SUPPORT && VSERVICES_SERVER
+	select VSERVICES_SERIAL
+	select VSERVICES_PROTOCOL_SERIAL_SERVER
+	default y
+	help
+	  Select this option if you want support for server side Virtual
+	  Services serial. A virtual serial service behaves similarly to
+	  a UNIX pseudo terminal (pty), and does not require any physical
+	  serial hardware. Virtual serial devices are typically called
+	  /dev/ttyVS0, /dev/ttyVS1, etc.
+
+config VSERVICES_SERIAL_CLIENT
+	tristate "Virtual Services serial client"
+	depends on VSERVICES_SUPPORT && VSERVICES_CLIENT
+	select VSERVICES_SERIAL
+	select VSERVICES_PROTOCOL_SERIAL_CLIENT
+	default y
+	help
+	  Select this option if you want support for client side Virtual
+	  Services serial. A virtual serial service behaves similarly to
+	  a UNIX pseudo terminal (pty), and does not require any physical
+	  serial hardware. Virtual serial devices are typically called
+	  /dev/ttyVS0, /dev/ttyVS1, etc.
+
+config VSERVICES_VTTY_COUNT
+	int "Maximum number of Virtual Services serial devices"
+	depends on VSERVICES_SERIAL
+	range 0 256
+	default "8"
+	help
+	  The maximum number of Virtual Services serial devices to support.
+	  This limit applies to both the client and server.

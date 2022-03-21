@@ -1,5 +1,4 @@
-/*
- * Copyright (c) 2013-2014, 2016-2017 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,12 +10,13 @@
  * GNU General Public License for more details.
  *
  * RMNET Data configuration engine
- *
  */
 
 #include <linux/types.h>
 #include <linux/time.h>
 #include <linux/spinlock.h>
+#include <net/rmnet_config.h>
+#include <linux/hrtimer.h>
 
 #ifndef _RMNET_DATA_CONFIG_H_
 #define _RMNET_DATA_CONFIG_H_
@@ -35,11 +35,14 @@
  *            parmeter depends on the rmnet_mode
  */
 struct rmnet_logical_ep_conf_s {
-	uint8_t refcount;
-	uint8_t rmnet_mode;
-	uint8_t mux_id;
-	struct timespec flush_time;
 	struct net_device *egress_dev;
+	struct timespec last_flush_time;
+	long curr_time_limit;
+	unsigned int flush_byte_count;
+	unsigned int curr_byte_threshold;
+	u8 refcount;
+	u8 rmnet_mode;
+	u8 mux_id;
 };
 
 /**
@@ -62,27 +65,28 @@ struct rmnet_logical_ep_conf_s {
  * @agg_time: Wall clock time when aggregated frame was created
  * @agg_last: Last time the aggregation routing was invoked
  */
-struct rmnet_phys_ep_conf_s {
+struct rmnet_phys_ep_config {
 	struct net_device *dev;
 	struct rmnet_logical_ep_conf_s local_ep;
 	struct rmnet_logical_ep_conf_s muxed_ep[RMNET_DATA_MAX_LOGICAL_EP];
-	uint32_t ingress_data_format;
-	uint32_t egress_data_format;
+	u32 ingress_data_format;
+	u32 egress_data_format;
 
 	/* MAP specific */
-	uint16_t egress_agg_size;
-	uint16_t egress_agg_count;
-	uint8_t tail_spacing;
+	u16 egress_agg_size;
+	u16 egress_agg_count;
+	u8 tail_spacing;
 	/* MAP aggregation state machine
 	 *  - This is not sctrictly configuration and is updated at runtime
 	 *    Make sure all of these are protected by the agg_lock
 	 */
 	spinlock_t agg_lock;
 	struct sk_buff *agg_skb;
-	uint8_t agg_state;
-	uint8_t agg_count;
+	u8 agg_state;
+	u8 agg_count;
 	struct timespec agg_time;
 	struct timespec agg_last;
+	struct hrtimer hrtimer;
 };
 
 int rmnet_config_init(void);
@@ -90,38 +94,41 @@ void rmnet_config_exit(void);
 
 int rmnet_unassociate_network_device(struct net_device *dev);
 int rmnet_set_ingress_data_format(struct net_device *dev,
-				  uint32_t ingress_data_format,
-				  uint8_t  tail_spacing);
+				  u32 ingress_data_format,
+				  u8  tail_spacing);
 int rmnet_set_egress_data_format(struct net_device *dev,
-				 uint32_t egress_data_format,
-				 uint16_t agg_size,
-				 uint16_t agg_count);
+				 u32 egress_data_format,
+				 u16 agg_size,
+				 u16 agg_count);
 int rmnet_associate_network_device(struct net_device *dev);
-int _rmnet_set_logical_endpoint_config(struct net_device *dev,
-				       int config_id,
-				      struct rmnet_logical_ep_conf_s *epconfig);
+int _rmnet_set_logical_endpoint_config
+	(struct net_device *dev, int config_id,
+	 struct rmnet_logical_ep_conf_s *epconfig);
 int rmnet_set_logical_endpoint_config(struct net_device *dev,
 				      int config_id,
-				      uint8_t rmnet_mode,
+				      u8 rmnet_mode,
 				      struct net_device *egress_dev);
 int _rmnet_unset_logical_endpoint_config(struct net_device *dev,
 					 int config_id);
 int rmnet_unset_logical_endpoint_config(struct net_device *dev,
 					int config_id);
-int _rmnet_get_logical_endpoint_config(struct net_device *dev,
-				       int config_id,
-				      struct rmnet_logical_ep_conf_s *epconfig);
+int _rmnet_get_logical_endpoint_config
+	(struct net_device *dev, int config_id,
+	 struct rmnet_logical_ep_conf_s *epconfig);
 int rmnet_get_logical_endpoint_config(struct net_device *dev,
 				      int config_id,
-				      uint8_t *rmnet_mode,
-				      uint8_t *egress_dev_name,
+				      u8 *rmnet_mode,
+				      u8 *egress_dev_name,
 				      size_t egress_dev_name_size);
 void rmnet_config_netlink_msg_handler (struct sk_buff *skb);
 int rmnet_config_notify_cb(struct notifier_block *nb,
-				  unsigned long event, void *data);
+			   unsigned long event, void *data);
 int rmnet_create_vnd(int id);
 int rmnet_create_vnd_prefix(int id, const char *name);
 int rmnet_create_vnd_name(int id, const char *name);
 int rmnet_free_vnd(int id);
+
+struct rmnet_phys_ep_config *_rmnet_get_phys_ep_config
+						(struct net_device *dev);
 
 #endif /* _RMNET_DATA_CONFIG_H_ */

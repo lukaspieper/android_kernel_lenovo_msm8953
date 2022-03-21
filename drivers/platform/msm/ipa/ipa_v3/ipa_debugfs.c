@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,7 +17,9 @@
 #include <linux/stringify.h>
 #include "ipa_i.h"
 #include "../ipa_rm_i.h"
+#include "ipahal/ipahal_nat.h"
 
+#define IPA_MAX_ENTRY_STRING_LEN 500
 #define IPA_MAX_MSG_LEN 4096
 #define IPA_DBG_MAX_RULE_IN_TBL 128
 #define IPA_DBG_ACTIVE_CLIENT_BUF_SIZE ((IPA3_ACTIVE_CLIENTS_LOG_LINE_LEN \
@@ -26,16 +28,19 @@
 #define IPA_DUMP_STATUS_FIELD(f) \
 	pr_err(#f "=0x%x\n", status->f)
 
-const char *ipa3_excp_name[] = {
-	__stringify_1(IPA_A5_MUX_HDR_EXCP_RSVD0),
-	__stringify_1(IPA_A5_MUX_HDR_EXCP_RSVD1),
-	__stringify_1(IPA_A5_MUX_HDR_EXCP_FLAG_IHL),
-	__stringify_1(IPA_A5_MUX_HDR_EXCP_FLAG_REPLICATED),
-	__stringify_1(IPA_A5_MUX_HDR_EXCP_FLAG_TAG),
-	__stringify_1(IPA_A5_MUX_HDR_EXCP_FLAG_SW_FLT),
-	__stringify_1(IPA_A5_MUX_HDR_EXCP_FLAG_NAT),
-	__stringify_1(IPA_A5_MUX_HDR_EXCP_FLAG_IP),
+#define IPA_READ_ONLY_MODE  0444
+#define IPA_READ_WRITE_MODE 0664
+#define IPA_WRITE_ONLY_MODE 0220
+
+#define DEBUG_BUF_MAX_LEN(nbytes) (nbytes < IPA_MAX_MSG_LEN ? 1 : 0)
+
+struct ipa3_debugfs_file {
+	const char *name;
+	umode_t mode;
+	void *data;
+	const struct file_operations fops;
 };
+
 
 const char *ipa3_event_name[] = {
 	__stringify(WLAN_CLIENT_CONNECT),
@@ -61,22 +66,27 @@ const char *ipa3_event_name[] = {
 	__stringify(ECM_DISCONNECT),
 	__stringify(IPA_TETHERING_STATS_UPDATE_STATS),
 	__stringify(IPA_TETHERING_STATS_UPDATE_NETWORK_STATS),
-	__stringify(IPA_PER_CLIENT_STATS_CONNECT_EVENT),
-	__stringify(IPA_PER_CLIENT_STATS_DISCONNECT_EVENT),
+	__stringify(IPA_QUOTA_REACH),
+	__stringify(IPA_SSR_BEFORE_SHUTDOWN),
+	__stringify(IPA_SSR_AFTER_POWERUP),
 	__stringify(ADD_VLAN_IFACE),
 	__stringify(DEL_VLAN_IFACE),
 	__stringify(ADD_L2TP_VLAN_MAPPING),
 	__stringify(DEL_L2TP_VLAN_MAPPING),
-	__stringify(IPA_QUOTA_REACH),
-	__stringify(IPA_SSR_BEFORE_SHUTDOWN),
-	__stringify(IPA_SSR_AFTER_POWERUP),
+	__stringify(IPA_PER_CLIENT_STATS_CONNECT_EVENT),
+	__stringify(IPA_PER_CLIENT_STATS_DISCONNECT_EVENT),
+	__stringify(ADD_BRIDGE_VLAN_MAPPING),
+	__stringify(DEL_BRIDGE_VLAN_MAPPING),
 	__stringify(WLAN_FWR_SSR_BEFORE_SHUTDOWN),
+	__stringify(IPA_GSB_CONNECT),
+	__stringify(IPA_GSB_DISCONNECT),
 };
 
 const char *ipa3_hdr_l2_type_name[] = {
 	__stringify(IPA_HDR_L2_NONE),
 	__stringify(IPA_HDR_L2_ETHERNET_II),
 	__stringify(IPA_HDR_L2_802_3),
+	__stringify(IPA_HDR_L2_802_1Q),
 };
 
 const char *ipa3_hdr_proc_type_name[] = {
@@ -87,33 +97,10 @@ const char *ipa3_hdr_proc_type_name[] = {
 	__stringify(IPA_HDR_PROC_802_3_TO_802_3),
 	__stringify(IPA_HDR_PROC_L2TP_HEADER_ADD),
 	__stringify(IPA_HDR_PROC_L2TP_HEADER_REMOVE),
+	__stringify(IPA_HDR_PROC_ETHII_TO_ETHII_EX),
 };
 
 static struct dentry *dent;
-static struct dentry *dfile_gen_reg;
-static struct dentry *dfile_ep_reg;
-static struct dentry *dfile_keep_awake;
-static struct dentry *dfile_ep_holb;
-static struct dentry *dfile_hdr;
-static struct dentry *dfile_proc_ctx;
-static struct dentry *dfile_ip4_rt;
-static struct dentry *dfile_ip4_rt_hw;
-static struct dentry *dfile_ip6_rt;
-static struct dentry *dfile_ip6_rt_hw;
-static struct dentry *dfile_ip4_flt;
-static struct dentry *dfile_ip4_flt_hw;
-static struct dentry *dfile_ip6_flt;
-static struct dentry *dfile_ip6_flt_hw;
-static struct dentry *dfile_stats;
-static struct dentry *dfile_wstats;
-static struct dentry *dfile_wdi_stats;
-static struct dentry *dfile_ntn_stats;
-static struct dentry *dfile_dbg_cnt;
-static struct dentry *dfile_msg;
-static struct dentry *dfile_ip4_nat;
-static struct dentry *dfile_rm_stats;
-static struct dentry *dfile_status_stats;
-static struct dentry *dfile_active_clients;
 static char dbg_buff[IPA_MAX_MSG_LEN];
 static char *active_clients_buf;
 
@@ -256,6 +243,40 @@ int _ipa_read_ep_reg_v3_0(char *buf, int max_len, int pipe)
 		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_CFG_n, pipe));
 }
 
+/**
+ * _ipa_read_ep_reg_v4_0() - Reads and prints endpoint configuration registers
+ *
+ * Returns the number of characters printed
+ * Removed IPA_ENDP_INIT_ROUTE_n from v3
+ */
+int _ipa_read_ep_reg_v4_0(char *buf, int max_len, int pipe)
+{
+	return scnprintf(
+		dbg_buff, IPA_MAX_MSG_LEN,
+		"IPA_ENDP_INIT_NAT_%u=0x%x\n"
+		"IPA_ENDP_INIT_CONN_TRACK_n%u=0x%x\n"
+		"IPA_ENDP_INIT_HDR_%u=0x%x\n"
+		"IPA_ENDP_INIT_HDR_EXT_%u=0x%x\n"
+		"IPA_ENDP_INIT_MODE_%u=0x%x\n"
+		"IPA_ENDP_INIT_AGGR_%u=0x%x\n"
+		"IPA_ENDP_INIT_CTRL_%u=0x%x\n"
+		"IPA_ENDP_INIT_HOL_EN_%u=0x%x\n"
+		"IPA_ENDP_INIT_HOL_TIMER_%u=0x%x\n"
+		"IPA_ENDP_INIT_DEAGGR_%u=0x%x\n"
+		"IPA_ENDP_INIT_CFG_%u=0x%x\n",
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_NAT_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_CONN_TRACK_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_HDR_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_HDR_EXT_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_MODE_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_AGGR_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_CTRL_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_HOL_BLOCK_EN_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_HOL_BLOCK_TIMER_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_DEAGGR_n, pipe),
+		pipe, ipahal_read_reg_n(IPA_ENDP_INIT_CFG_n, pipe));
+}
+
 static ssize_t ipa3_read_ep_reg(struct file *file, char __user *ubuf,
 		size_t count, loff_t *ppos)
 {
@@ -332,14 +353,14 @@ static ssize_t ipa3_read_keep_awake(struct file *file, char __user *ubuf,
 {
 	int nbytes;
 
-	ipa3_active_clients_lock();
-	if (ipa3_ctx->ipa3_active_clients.cnt)
+	mutex_lock(&ipa3_ctx->ipa3_active_clients.mutex);
+	if (atomic_read(&ipa3_ctx->ipa3_active_clients.cnt))
 		nbytes = scnprintf(dbg_buff, IPA_MAX_MSG_LEN,
 				"IPA APPS power state is ON\n");
 	else
 		nbytes = scnprintf(dbg_buff, IPA_MAX_MSG_LEN,
 				"IPA APPS power state is OFF\n");
-	ipa3_active_clients_unlock();
+	mutex_unlock(&ipa3_ctx->ipa3_active_clients.mutex);
 
 	return simple_read_from_buffer(ubuf, count, ppos, dbg_buff, nbytes);
 }
@@ -364,7 +385,7 @@ static ssize_t ipa3_read_hdr(struct file *file, char __user *ubuf, size_t count,
 			continue;
 		nbytes = scnprintf(
 			dbg_buff,
-			IPA_MAX_MSG_LEN - 1,
+			IPA_MAX_MSG_LEN,
 			"name:%s len=%d ref=%d partial=%d type=%s ",
 			entry->name,
 			entry->hdr_len,
@@ -373,26 +394,34 @@ static ssize_t ipa3_read_hdr(struct file *file, char __user *ubuf, size_t count,
 			ipa3_hdr_l2_type_name[entry->type]);
 
 		if (entry->is_hdr_proc_ctx) {
-			nbytes += scnprintf(
-				dbg_buff + nbytes,
-				IPA_MAX_MSG_LEN - 1 - nbytes,
-				"phys_base=0x%pa ",
-				&entry->phys_base);
+			if (DEBUG_BUF_MAX_LEN(nbytes)) {
+				nbytes += scnprintf(
+					dbg_buff + nbytes,
+					IPA_MAX_MSG_LEN - nbytes,
+					"phys_base=0x%pa ",
+					&entry->phys_base);
+			}
 		} else {
-			nbytes += scnprintf(
-				dbg_buff + nbytes,
-				IPA_MAX_MSG_LEN - 1 - nbytes,
-				"ofst=%u ",
-				entry->offset_entry->offset >> 2);
+			if (DEBUG_BUF_MAX_LEN(nbytes)) {
+				nbytes += scnprintf(
+					dbg_buff + nbytes,
+					IPA_MAX_MSG_LEN - nbytes,
+					"ofst=%u ",
+					entry->offset_entry->offset >> 2);
+			}
 		}
 		for (i = 0; i < entry->hdr_len; i++) {
-			scnprintf(dbg_buff + nbytes + i * 2,
-				  IPA_MAX_MSG_LEN - 1 - nbytes - i * 2,
-				  "%02x", entry->hdr[i]);
+			if (DEBUG_BUF_MAX_LEN(nbytes + i * 2)) {
+				scnprintf(dbg_buff + nbytes + i * 2,
+					  IPA_MAX_MSG_LEN - nbytes - i * 2,
+					  "%02x", entry->hdr[i]);
+			}
 		}
-		scnprintf(dbg_buff + nbytes + entry->hdr_len * 2,
-			  IPA_MAX_MSG_LEN - 1 - nbytes - entry->hdr_len * 2,
-			  "\n");
+		if (DEBUG_BUF_MAX_LEN(nbytes + entry->hdr_len * 2)) {
+			scnprintf(dbg_buff + nbytes + entry->hdr_len * 2,
+				  IPA_MAX_MSG_LEN - nbytes - entry->hdr_len * 2,
+				  "\n");
+		}
 		pr_err("%s", dbg_buff);
 	}
 	mutex_unlock(&ipa3_ctx->lock);
@@ -498,18 +527,23 @@ static int ipa3_attrib_dump(struct ipa_rule_attrib *attrib,
 		pr_err("frg ");
 
 	if ((attrib->attrib_mask & IPA_FLT_MAC_SRC_ADDR_ETHER_II) ||
-		(attrib->attrib_mask & IPA_FLT_MAC_SRC_ADDR_802_3)) {
+		(attrib->attrib_mask & IPA_FLT_MAC_SRC_ADDR_802_3) ||
+		(attrib->attrib_mask & IPA_FLT_MAC_SRC_ADDR_802_1Q)) {
 		pr_err("src_mac_addr:%pM ", attrib->src_mac_addr);
 	}
 
 	if ((attrib->attrib_mask & IPA_FLT_MAC_DST_ADDR_ETHER_II) ||
 		(attrib->attrib_mask & IPA_FLT_MAC_DST_ADDR_802_3) ||
-		(attrib->attrib_mask & IPA_FLT_MAC_DST_ADDR_L2TP)) {
+		(attrib->attrib_mask & IPA_FLT_MAC_DST_ADDR_L2TP) ||
+		(attrib->attrib_mask & IPA_FLT_MAC_DST_ADDR_802_1Q)) {
 		pr_err("dst_mac_addr:%pM ", attrib->dst_mac_addr);
 	}
 
 	if (attrib->attrib_mask & IPA_FLT_MAC_ETHER_TYPE)
 		pr_err("ether_type:%x ", attrib->ether_type);
+
+	if (attrib->attrib_mask & IPA_FLT_VLAN_ID)
+		pr_err("vlan_id:%x ", attrib->vlan_id);
 
 	if (attrib->attrib_mask & IPA_FLT_TCP_SYN)
 		pr_err("tcp syn ");
@@ -543,62 +577,8 @@ static int ipa3_attrib_dump_eq(struct ipa_ipfltri_rule_eq *attrib)
 	if (attrib->protocol_eq_present)
 		pr_err("protocol:%d ", attrib->protocol_eq);
 
-	if (attrib->num_ihl_offset_range_16 >
-			IPA_IPFLTR_NUM_IHL_RANGE_16_EQNS) {
-		IPAERR_RL("num_ihl_offset_range_16  Max %d passed value %d\n",
-			IPA_IPFLTR_NUM_IHL_RANGE_16_EQNS,
-			attrib->num_ihl_offset_range_16);
-		 return -EPERM;
-	}
-	for (i = 0; i < attrib->num_ihl_offset_range_16; i++) {
-		pr_err(
-			   "(ihl_ofst_range16: ofst:%u lo:%u hi:%u) ",
-			   attrib->ihl_offset_range_16[i].offset,
-			   attrib->ihl_offset_range_16[i].range_low,
-			   attrib->ihl_offset_range_16[i].range_high);
-	}
-
-	if (attrib->num_offset_meq_32 > IPA_IPFLTR_NUM_MEQ_32_EQNS) {
-		IPAERR_RL("num_offset_meq_32  Max %d passed value %d\n",
-			IPA_IPFLTR_NUM_MEQ_32_EQNS, attrib->num_offset_meq_32);
-		return -EPERM;
-	}
-
-	for (i = 0; i < attrib->num_offset_meq_32; i++) {
-		pr_err(
-			   "(ofst_meq32: ofst:%u mask:0x%x val:0x%x) ",
-			   attrib->offset_meq_32[i].offset,
-			   attrib->offset_meq_32[i].mask,
-			   attrib->offset_meq_32[i].value);
-	}
-
 	if (attrib->tc_eq_present)
 		pr_err("tc:%d ", attrib->tc_eq);
-
-	if (attrib->fl_eq_present)
-		pr_err("flow_label:%d ", attrib->fl_eq);
-
-	if (attrib->ihl_offset_eq_16_present) {
-		pr_err(
-				"(ihl_ofst_eq16:%d val:0x%x) ",
-				attrib->ihl_offset_eq_16.offset,
-				attrib->ihl_offset_eq_16.value);
-	}
-
-	if (attrib->num_ihl_offset_meq_32 > IPA_IPFLTR_NUM_IHL_MEQ_32_EQNS) {
-		IPAERR_RL("num_ihl_offset_meq_32  Max %d passed value %d\n",
-			IPA_IPFLTR_NUM_IHL_MEQ_32_EQNS,
-			attrib->num_ihl_offset_meq_32);
-		return -EPERM;
-	}
-
-	for (i = 0; i < attrib->num_ihl_offset_meq_32; i++) {
-		pr_err(
-				"(ihl_ofst_meq32: ofts:%d mask:0x%x val:0x%x) ",
-				attrib->ihl_offset_meq_32[i].offset,
-				attrib->ihl_offset_meq_32[i].mask,
-				attrib->ihl_offset_meq_32[i].value);
-	}
 
 	if (attrib->num_offset_meq_128 > IPA_IPFLTR_NUM_MEQ_128_EQNS) {
 		IPAERR_RL("num_offset_meq_128  Max %d passed value %d\n",
@@ -612,22 +592,76 @@ static int ipa3_attrib_dump_eq(struct ipa_ipfltri_rule_eq *attrib)
 			mask[j] = attrib->offset_meq_128[i].mask[j];
 		}
 		pr_err(
-				"(ofst_meq128: ofst:%d mask:%pI6 val:%pI6) ",
-				attrib->offset_meq_128[i].offset,
-				mask + 0,
-				addr + 0);
+			"(ofst_meq128: ofst:%d mask:%pI6 val:%pI6) ",
+			attrib->offset_meq_128[i].offset,
+			mask, addr);
 	}
 
-	if (attrib->metadata_meq32_present) {
-		pr_err(
-				"(metadata: ofst:%u mask:0x%x val:0x%x) ",
-				attrib->metadata_meq32.offset,
-				attrib->metadata_meq32.mask,
-				attrib->metadata_meq32.value);
+	if (attrib->num_offset_meq_32 > IPA_IPFLTR_NUM_MEQ_32_EQNS) {
+		IPAERR_RL("num_offset_meq_32  Max %d passed value %d\n",
+		IPA_IPFLTR_NUM_MEQ_32_EQNS, attrib->num_offset_meq_32);
+		return -EPERM;
 	}
+
+	for (i = 0; i < attrib->num_offset_meq_32; i++)
+		pr_err(
+			   "(ofst_meq32: ofst:%u mask:0x%x val:0x%x) ",
+			   attrib->offset_meq_32[i].offset,
+			   attrib->offset_meq_32[i].mask,
+			   attrib->offset_meq_32[i].value);
+
+	if (attrib->num_ihl_offset_meq_32 > IPA_IPFLTR_NUM_IHL_MEQ_32_EQNS) {
+		IPAERR_RL("num_ihl_offset_meq_32  Max %d passed value %d\n",
+		IPA_IPFLTR_NUM_IHL_MEQ_32_EQNS, attrib->num_ihl_offset_meq_32);
+		return -EPERM;
+	}
+
+	for (i = 0; i < attrib->num_ihl_offset_meq_32; i++)
+		pr_err(
+			"(ihl_ofst_meq32: ofts:%d mask:0x%x val:0x%x) ",
+			attrib->ihl_offset_meq_32[i].offset,
+			attrib->ihl_offset_meq_32[i].mask,
+			attrib->ihl_offset_meq_32[i].value);
+
+	if (attrib->metadata_meq32_present)
+		pr_err(
+			"(metadata: ofst:%u mask:0x%x val:0x%x) ",
+			attrib->metadata_meq32.offset,
+			attrib->metadata_meq32.mask,
+			attrib->metadata_meq32.value);
+
+	if (attrib->num_ihl_offset_range_16 >
+			IPA_IPFLTR_NUM_IHL_RANGE_16_EQNS) {
+		IPAERR_RL("num_ihl_offset_range_16  Max %d passed value %d\n",
+			IPA_IPFLTR_NUM_IHL_RANGE_16_EQNS,
+			attrib->num_ihl_offset_range_16);
+		return -EPERM;
+	}
+
+	for (i = 0; i < attrib->num_ihl_offset_range_16; i++)
+		pr_err(
+			   "(ihl_ofst_range16: ofst:%u lo:%u hi:%u) ",
+			   attrib->ihl_offset_range_16[i].offset,
+			   attrib->ihl_offset_range_16[i].range_low,
+			   attrib->ihl_offset_range_16[i].range_high);
+
+	if (attrib->ihl_offset_eq_32_present)
+		pr_err(
+			"(ihl_ofst_eq32:%d val:0x%x) ",
+			attrib->ihl_offset_eq_32.offset,
+			attrib->ihl_offset_eq_32.value);
+
+	if (attrib->ihl_offset_eq_16_present)
+		pr_err(
+			"(ihl_ofst_eq16:%d val:0x%x) ",
+			attrib->ihl_offset_eq_16.offset,
+			attrib->ihl_offset_eq_16.value);
+
+	if (attrib->fl_eq_present)
+		pr_err("flow_label:%d ", attrib->fl_eq);
 
 	if (attrib->ipv4_frag_eq_present)
-		pr_err("frg ");
+		pr_err("frag ");
 
 	pr_err("\n");
 	return 0;
@@ -736,84 +770,114 @@ static ssize_t ipa3_read_rt(struct file *file, char __user *ubuf, size_t count,
 static ssize_t ipa3_read_rt_hw(struct file *file, char __user *ubuf,
 	size_t count, loff_t *ppos)
 {
-	int i;
-	int j;
-	int num_rules;
-	struct ipa3_debugfs_rt_entry *entry;
 	enum ipa_ip_type ip = (enum ipa_ip_type)file->private_data;
-	int num_tbls;
+	int tbls_num;
+	int rules_num;
+	int tbl;
+	int rl;
 	int res = 0;
+	struct ipahal_rt_rule_entry *rules = NULL;
 
-	if (ip == IPA_IP_v4)
-		num_tbls = IPA_MEM_PART(v4_rt_num_index);
-	else
-		num_tbls = IPA_MEM_PART(v6_rt_num_index);
+	switch (ip) {
+	case IPA_IP_v4:
+		tbls_num = IPA_MEM_PART(v4_rt_num_index);
+		break;
+	case IPA_IP_v6:
+		tbls_num = IPA_MEM_PART(v6_rt_num_index);
+		break;
+	default:
+		IPAERR("ip type error %d\n", ip);
+		return -EINVAL;
+	};
 
-	entry = kzalloc(sizeof(*entry) * IPA_DBG_MAX_RULE_IN_TBL, GFP_KERNEL);
-	if (!entry)
+	IPADBG("Tring to parse %d H/W routing tables - IP=%d\n", tbls_num, ip);
+
+	rules = kzalloc(sizeof(*rules) * IPA_DBG_MAX_RULE_IN_TBL, GFP_KERNEL);
+	if (!rules) {
+		IPAERR("failed to allocate mem for tbl rules\n");
 		return -ENOMEM;
+	}
 
 	IPA_ACTIVE_CLIENTS_INC_SIMPLE();
 	mutex_lock(&ipa3_ctx->lock);
-	for (j = 0; j < num_tbls; j++) {
-		pr_err("== NON HASHABLE TABLE tbl:%d ==\n", j);
-		num_rules = IPA_DBG_MAX_RULE_IN_TBL;
-		ipa3_rt_read_tbl_from_hw(j, ip, false, entry, &num_rules);
-		for (i = 0; i < num_rules; i++) {
-			pr_err("rule_idx:%d dst ep:%d L:%u ",
-				i, entry[i].dst, entry[i].system);
 
-			if (entry[i].is_proc_ctx)
-				pr_err("proc_ctx[32B]:%u attrib_mask:%08x ",
-					entry[i].hdr_ofset,
-					entry[i].eq_attrib.rule_eq_bitmap);
+	for (tbl = 0 ; tbl < tbls_num ; tbl++) {
+		pr_err("=== Routing Table %d = Hashable Rules ===\n", tbl);
+		rules_num = IPA_DBG_MAX_RULE_IN_TBL;
+		res = ipa3_rt_read_tbl_from_hw(tbl, ip, true, rules,
+			&rules_num);
+		if (res) {
+			pr_err("ERROR - Check the logs\n");
+			IPAERR("failed reading tbl from hw\n");
+			goto bail;
+		}
+		if (!rules_num)
+			pr_err("-->No rules. Empty tbl or modem system table\n");
+
+		for (rl = 0 ; rl < rules_num ; rl++) {
+			pr_err("rule_idx:%d dst ep:%d L:%u ",
+				rl, rules[rl].dst_pipe_idx, rules[rl].hdr_lcl);
+
+			if (rules[rl].hdr_type == IPAHAL_RT_RULE_HDR_PROC_CTX)
+				pr_err("proc_ctx:%u attrib_mask:%08x ",
+					rules[rl].hdr_ofst,
+					rules[rl].eq_attrib.rule_eq_bitmap);
 			else
-				pr_err("hdr_ofst[words]:%u attrib_mask:%08x ",
-					entry[i].hdr_ofset,
-					entry[i].eq_attrib.rule_eq_bitmap);
+				pr_err("hdr_ofst:%u attrib_mask:%08x ",
+					rules[rl].hdr_ofst,
+					rules[rl].eq_attrib.rule_eq_bitmap);
 
 			pr_err("rule_id:%u prio:%u retain_hdr:%u ",
-				entry[i].rule_id, entry[i].prio,
-				entry[i].retain_hdr);
-			res = ipa3_attrib_dump_eq(&entry[i].eq_attrib);
+				rules[rl].id, rules[rl].priority,
+				rules[rl].retain_hdr);
+			res = ipa3_attrib_dump_eq(&rules[rl].eq_attrib);
 			if (res) {
 				IPAERR_RL("failed read attrib eq\n");
 				goto bail;
 			}
 		}
 
-		pr_err("== HASHABLE TABLE tbl:%d ==\n", j);
-		num_rules = IPA_DBG_MAX_RULE_IN_TBL;
-		ipa3_rt_read_tbl_from_hw(j, ip, true, entry, &num_rules);
-		for (i = 0; i < num_rules; i++) {
+		pr_err("=== Routing Table %d = Non-Hashable Rules ===\n", tbl);
+		rules_num = IPA_DBG_MAX_RULE_IN_TBL;
+		res = ipa3_rt_read_tbl_from_hw(tbl, ip, false, rules,
+			&rules_num);
+		if (res) {
+			pr_err("ERROR - Check the logs\n");
+			IPAERR("failed reading tbl from hw\n");
+			goto bail;
+		}
+		if (!rules_num)
+			pr_err("-->No rules. Empty tbl or modem system table\n");
+
+		for (rl = 0 ; rl < rules_num ; rl++) {
 			pr_err("rule_idx:%d dst ep:%d L:%u ",
-				i, entry[i].dst, entry[i].system);
+				rl, rules[rl].dst_pipe_idx, rules[rl].hdr_lcl);
 
-			if (entry[i].is_proc_ctx)
-				pr_err("proc_ctx[32B]:%u attrib_mask:%08x ",
-				entry[i].hdr_ofset,
-				entry[i].eq_attrib.rule_eq_bitmap);
+			if (rules[rl].hdr_type == IPAHAL_RT_RULE_HDR_PROC_CTX)
+				pr_err("proc_ctx:%u attrib_mask:%08x ",
+					rules[rl].hdr_ofst,
+					rules[rl].eq_attrib.rule_eq_bitmap);
 			else
-				pr_err("hdr_ofst[words]:%u attrib_mask:%08x ",
-				entry[i].hdr_ofset,
-				entry[i].eq_attrib.rule_eq_bitmap);
+				pr_err("hdr_ofst:%u attrib_mask:%08x ",
+					rules[rl].hdr_ofst,
+					rules[rl].eq_attrib.rule_eq_bitmap);
 
-			pr_err("rule_id:%u prio:%u retain_hdr:%u ",
-				entry[i].rule_id, entry[i].prio,
-				entry[i].retain_hdr);
-			res = ipa3_attrib_dump_eq(&entry[i].eq_attrib);
+			pr_err("rule_id:%u prio:%u retain_hdr:%u\n",
+				rules[rl].id, rules[rl].priority,
+				rules[rl].retain_hdr);
+			res = ipa3_attrib_dump_eq(&rules[rl].eq_attrib);
 			if (res) {
 				IPAERR_RL("failed read attrib eq\n");
 				goto bail;
 			}
 		}
+		pr_err("\n");
 	}
 
 bail:
 	mutex_unlock(&ipa3_ctx->lock);
-	kfree(entry);
 	IPA_ACTIVE_CLIENTS_DEC_SIMPLE();
-
+	kfree(rules);
 	return res;
 }
 
@@ -889,6 +953,8 @@ static ssize_t ipa3_read_flt(struct file *file, char __user *ubuf, size_t count,
 		tbl = &ipa3_ctx->flt_tbl[j][ip];
 		i = 0;
 		list_for_each_entry(entry, &tbl->head_flt_rule_list, link) {
+			if (entry->cookie != IPA_FLT_COOKIE)
+				continue;
 			if (entry->rule.eq_attrib_type) {
 				rt_tbl_idx = entry->rule.rt_tbl_idx;
 				bitmap = entry->rule.eq_attrib.rule_eq_bitmap;
@@ -910,9 +976,13 @@ static ssize_t ipa3_read_flt(struct file *file, char __user *ubuf, size_t count,
 			pr_err("hashable:%u rule_id:%u max_prio:%u prio:%u ",
 				entry->rule.hashable, entry->rule_id,
 				entry->rule.max_prio, entry->prio);
+			if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_0)
+				pr_err("pdn index %d, set metadata %d ",
+					entry->rule.pdn_idx,
+					entry->rule.set_metadata);
 			if (eq) {
 				res = ipa3_attrib_dump_eq(
-					&entry->rule.eq_attrib);
+						&entry->rule.eq_attrib);
 				if (res) {
 					IPAERR_RL("failed read attrib eq\n");
 					goto bail;
@@ -932,68 +1002,100 @@ bail:
 static ssize_t ipa3_read_flt_hw(struct file *file, char __user *ubuf,
 	size_t count, loff_t *ppos)
 {
-	int i;
-	int j;
-	int num_rules;
-	struct ipa3_flt_entry *entry;
+	int pipe;
+	int rl;
+	int rules_num;
+	struct ipahal_flt_rule_entry *rules;
 	enum ipa_ip_type ip = (enum ipa_ip_type)file->private_data;
 	u32 rt_tbl_idx;
 	u32 bitmap;
 	int res = 0;
 
-	entry = kzalloc(sizeof(*entry) * IPA_DBG_MAX_RULE_IN_TBL, GFP_KERNEL);
-	if (!entry)
+	IPADBG("Tring to parse %d H/W filtering tables - IP=%d\n",
+		ipa3_ctx->ep_flt_num, ip);
+
+	rules = kzalloc(sizeof(*rules) * IPA_DBG_MAX_RULE_IN_TBL, GFP_KERNEL);
+	if (!rules) {
+		IPAERR("failed to allocate mem for tbl rules\n");
 		return -ENOMEM;
+	}
 
 	IPA_ACTIVE_CLIENTS_INC_SIMPLE();
 	mutex_lock(&ipa3_ctx->lock);
-	for (j = 0; j < ipa3_ctx->ipa_num_pipes; j++) {
-		if (!ipa_is_ep_support_flt(j))
+	for (pipe = 0; pipe < ipa3_ctx->ipa_num_pipes; pipe++) {
+		if (!ipa_is_ep_support_flt(pipe))
 			continue;
-		pr_err("== NON HASHABLE TABLE ep:%d ==\n", j);
-		num_rules = IPA_DBG_MAX_RULE_IN_TBL;
-		ipa3_flt_read_tbl_from_hw(j, ip, false, entry, &num_rules);
-		for (i = 0; i < num_rules; i++) {
-			rt_tbl_idx = entry[i].rule.rt_tbl_idx;
-			bitmap = entry[i].rule.eq_attrib.rule_eq_bitmap;
+		pr_err("=== Filtering Table ep:%d = Hashable Rules ===\n",
+			pipe);
+		rules_num = IPA_DBG_MAX_RULE_IN_TBL;
+		res = ipa3_flt_read_tbl_from_hw(pipe, ip, true, rules,
+			&rules_num);
+		if (res) {
+			pr_err("ERROR - Check the logs\n");
+			IPAERR("failed reading tbl from hw\n");
+			goto bail;
+		}
+		if (!rules_num)
+			pr_err("-->No rules. Empty tbl or modem sys table\n");
+
+		for (rl = 0; rl < rules_num; rl++) {
+			rt_tbl_idx = rules[rl].rule.rt_tbl_idx;
+			bitmap = rules[rl].rule.eq_attrib.rule_eq_bitmap;
 			pr_err("ep_idx:%d rule_idx:%d act:%d rt_tbl_idx:%d ",
-				j, i, entry[i].rule.action, rt_tbl_idx);
+				pipe, rl, rules[rl].rule.action, rt_tbl_idx);
 			pr_err("attrib_mask:%08x retain_hdr:%d ",
-				bitmap, entry[i].rule.retain_hdr);
+				bitmap, rules[rl].rule.retain_hdr);
 			pr_err("rule_id:%u prio:%u ",
-				entry[i].rule_id, entry[i].prio);
-			res = ipa3_attrib_dump_eq(&entry[i].rule.eq_attrib);
+				rules[rl].id, rules[rl].priority);
+			if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_0)
+				pr_err("pdn: %u, set_metadata: %u ",
+					rules[rl].rule.pdn_idx,
+					rules[rl].rule.set_metadata);
+			res = ipa3_attrib_dump_eq(&rules[rl].rule.eq_attrib);
 			if (res) {
 				IPAERR_RL("failed read attrib eq\n");
 				goto bail;
 			}
 		}
 
-		pr_err("== HASHABLE TABLE ep:%d ==\n", j);
-		num_rules = IPA_DBG_MAX_RULE_IN_TBL;
-		ipa3_flt_read_tbl_from_hw(j, ip, true, entry, &num_rules);
-		for (i = 0; i < num_rules; i++) {
-			rt_tbl_idx = entry[i].rule.rt_tbl_idx;
-			bitmap = entry[i].rule.eq_attrib.rule_eq_bitmap;
+		pr_err("=== Filtering Table ep:%d = Non-Hashable Rules ===\n",
+			pipe);
+		rules_num = IPA_DBG_MAX_RULE_IN_TBL;
+		res = ipa3_flt_read_tbl_from_hw(pipe, ip, false, rules,
+			&rules_num);
+		if (res) {
+			pr_err("ERROR - Check the logs\n");
+			IPAERR("failed reading tbl from hw\n");
+			goto bail;
+		}
+		if (!rules_num)
+			pr_err("-->No rules. Empty tbl or modem sys table\n");
+		for (rl = 0; rl < rules_num; rl++) {
+			rt_tbl_idx = rules[rl].rule.rt_tbl_idx;
+			bitmap = rules[rl].rule.eq_attrib.rule_eq_bitmap;
 			pr_err("ep_idx:%d rule_idx:%d act:%d rt_tbl_idx:%d ",
-				j, i, entry[i].rule.action, rt_tbl_idx);
+				pipe, rl, rules[rl].rule.action, rt_tbl_idx);
 			pr_err("attrib_mask:%08x retain_hdr:%d ",
-				bitmap, entry[i].rule.retain_hdr);
-			pr_err("rule_id:%u max_prio:%u prio:%u ",
-				entry[i].rule_id,
-				entry[i].rule.max_prio, entry[i].prio);
-			res = ipa3_attrib_dump_eq(&entry[i].rule.eq_attrib);
+				bitmap, rules[rl].rule.retain_hdr);
+			pr_err("rule_id:%u  prio:%u ",
+				rules[rl].id, rules[rl].priority);
+			if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_0)
+				pr_err("pdn: %u, set_metadata: %u ",
+					rules[rl].rule.pdn_idx,
+					rules[rl].rule.set_metadata);
+			res = ipa3_attrib_dump_eq(&rules[rl].rule.eq_attrib);
 			if (res) {
 				IPAERR_RL("failed read attrib eq\n");
 				goto bail;
 			}
 		}
+		pr_err("\n");
 	}
+
 bail:
 	mutex_unlock(&ipa3_ctx->lock);
-	kfree(entry);
+	kfree(rules);
 	IPA_ACTIVE_CLIENTS_DEC_SIMPLE();
-
 	return res;
 }
 
@@ -1033,7 +1135,7 @@ static ssize_t ipa3_read_stats(struct file *file, char __user *ubuf,
 		ipa3_ctx->stats.stat_compl,
 		ipa3_ctx->stats.aggr_close,
 		ipa3_ctx->stats.wan_aggr_close,
-		ipa3_ctx->ipa3_active_clients.cnt,
+		atomic_read(&ipa3_ctx->ipa3_active_clients.cnt),
 		connect,
 		ipa3_ctx->stats.wan_rx_empty,
 		ipa3_ctx->stats.wan_repl_rx_empty,
@@ -1318,7 +1420,7 @@ static ssize_t ipa3_read_wdi(struct file *file, char __user *ubuf,
 			"TX num_db=%u\n"
 			"TX num_unexpected_db=%u\n"
 			"TX num_bam_int_handled=%u\n"
-			"TX num_bam_int_in_non_runnning_state=%u\n"
+			"TX num_bam_int_in_non_running_state=%u\n"
 			"TX num_qmb_int_handled=%u\n"
 			"TX num_bam_int_handled_while_wait_for_bam=%u\n",
 			stats.tx_ch_stats.num_pkts_processed,
@@ -1337,7 +1439,7 @@ static ssize_t ipa3_read_wdi(struct file *file, char __user *ubuf,
 			stats.tx_ch_stats.num_db,
 			stats.tx_ch_stats.num_unexpected_db,
 			stats.tx_ch_stats.num_bam_int_handled,
-			stats.tx_ch_stats.num_bam_int_in_non_runnning_state,
+			stats.tx_ch_stats.num_bam_int_in_non_running_state,
 			stats.tx_ch_stats.num_qmb_int_handled,
 			stats.tx_ch_stats.
 				num_bam_int_handled_while_wait_for_bam);
@@ -1404,6 +1506,11 @@ static ssize_t ipa3_write_dbg_cnt(struct file *file, const char __user *buf,
 	u32 option = 0;
 	struct ipahal_reg_debug_cnt_ctrl dbg_cnt_ctrl;
 
+	if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_0) {
+		IPAERR("IPA_DEBUG_CNT_CTRL is not supported in IPA 4.0\n");
+		return -EPERM;
+	}
+
 	if (sizeof(dbg_buff) < count + 1)
 		return -EFAULT;
 
@@ -1439,6 +1546,11 @@ static ssize_t ipa3_read_dbg_cnt(struct file *file, char __user *ubuf,
 	int nbytes;
 	u32 regval;
 
+	if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_0) {
+		IPAERR("IPA_DEBUG_CNT_REG is not supported in IPA 4.0\n");
+		return -EPERM;
+	}
+
 	IPA_ACTIVE_CLIENTS_INC_SIMPLE();
 	regval =
 		ipahal_read_reg_n(IPA_DEBUG_CNT_REG_n, 0);
@@ -1456,7 +1568,7 @@ static ssize_t ipa3_read_msg(struct file *file, char __user *ubuf,
 	int cnt = 0;
 	int i;
 
-	for (i = 0; i < IPA_EVENT_MAX_NUM; i++) {
+	for (i = 0; i < ARRAY_SIZE(ipa3_event_name); i++) {
 		nbytes = scnprintf(dbg_buff + cnt, IPA_MAX_MSG_LEN - cnt,
 				"msg[%u:%27s] W:%u R:%u\n", i,
 				ipa3_event_name[i],
@@ -1468,201 +1580,352 @@ static ssize_t ipa3_read_msg(struct file *file, char __user *ubuf,
 	return simple_read_from_buffer(ubuf, count, ppos, dbg_buff, cnt);
 }
 
-static ssize_t ipa3_read_nat4(struct file *file,
-		char __user *ubuf, size_t count,
-		loff_t *ppos) {
+static void ipa3_read_table(
+	char *table_addr, u32 table_size,
+	u32 *total_num_entries,
+	u32 *rule_id,
+	enum ipahal_nat_type nat_type)
+{
+	int result;
+	char *entry;
+	size_t entry_size;
+	bool entry_zeroed;
+	bool entry_valid;
+	u32 i, num_entries = 0, id = *rule_id;
+	char *buff;
+	size_t buff_size = 2 * IPA_MAX_ENTRY_STRING_LEN;
 
-#define ENTRY_U32_FIELDS 8
-#define NAT_ENTRY_ENABLE 0x8000
-#define NAT_ENTRY_RST_FIN_BIT 0x4000
-#define BASE_TABLE 0
-#define EXPANSION_TABLE 1
+	IPADBG("\n");
+	if (table_addr == NULL) {
+		pr_err("NULL NAT table\n");
+		return;
+	}
 
-	u32 *base_tbl, *indx_tbl;
-	u32 tbl_size, *tmp;
-	u32 value, i, j, rule_id;
-	u16 enable, tbl_entry, flag;
-	u32 no_entrys = 0;
+	result = ipahal_nat_entry_size(nat_type, &entry_size);
+	if (result) {
+		IPAERR("Failed to retrieve size of %s entry\n",
+			ipahal_nat_type_str(nat_type));
+		return;
+	}
 
-	value = ipa3_ctx->nat_mem.public_ip_addr;
-	pr_err(
-				"Table IP Address:%d.%d.%d.%d\n",
-				((value & 0xFF000000) >> 24),
-				((value & 0x00FF0000) >> 16),
-				((value & 0x0000FF00) >> 8),
-				((value & 0x000000FF)));
+	buff = kzalloc(buff_size, GFP_KERNEL);
+	if (!buff) {
+		IPAERR("Out of memory\n");
+		return;
+	}
 
-	pr_err("Table Size:%d\n",
-				ipa3_ctx->nat_mem.size_base_tables);
+	for (i = 0, entry = table_addr;
+		i < table_size;
+		++i, ++id, entry += entry_size) {
+		result = ipahal_nat_is_entry_zeroed(nat_type, entry,
+			&entry_zeroed);
+		if (result) {
+			IPAERR(
+				"Failed to determine whether the %s entry is definitely zero\n"
+					, ipahal_nat_type_str(nat_type));
+			goto bail;
+		}
+		if (entry_zeroed)
+			continue;
 
-	if (!ipa3_ctx->nat_mem.size_expansion_tables)
-		pr_err("Expansion Table Size:%d\n",
-				ipa3_ctx->nat_mem.size_expansion_tables);
+		result = ipahal_nat_is_entry_valid(nat_type, entry,
+			&entry_valid);
+		if (result) {
+			IPAERR(
+				"Failed to determine whether the %s entry is valid\n"
+					, ipahal_nat_type_str(nat_type));
+			goto bail;
+		}
+
+		if (entry_valid) {
+			++num_entries;
+			pr_err("\tEntry_Index=%d\n", id);
+		} else
+			pr_err("\tEntry_Index=%d - Invalid Entry\n", id);
+
+		ipahal_nat_stringify_entry(nat_type, entry,
+			buff, buff_size);
+		pr_err("%s\n", buff);
+		memset(buff, 0, buff_size);
+	}
+
+	if (num_entries)
+		pr_err("\n");
 	else
-		pr_err("Expansion Table Size:%d\n",
-				ipa3_ctx->nat_mem.size_expansion_tables-1);
+		pr_err("\tEmpty\n\n");
+	IPADBG("return\n");
+bail:
+	kfree(buff);
+	*rule_id = id;
+	*total_num_entries += num_entries;
+}
 
-	if (!ipa3_ctx->nat_mem.is_sys_mem)
+static void ipa3_start_read_memory_device(
+	struct ipa3_nat_ipv6ct_common_mem *dev,
+	enum ipahal_nat_type nat_type,
+	u32 *num_entries)
+{
+	u32 rule_id = 0;
+
+	IPADBG("\n");
+
+	pr_err("%s_Table_Size=%d\n",
+		dev->name, dev->table_entries + 1);
+
+	pr_err("%s_Expansion_Table_Size=%d\n",
+		dev->name, dev->expn_table_entries);
+
+	if (!dev->is_sys_mem)
 		pr_err("Not supported for local(shared) memory\n");
 
-	/* Print Base tables */
-	rule_id = 0;
-	for (j = 0; j < 2; j++) {
-		if (j == BASE_TABLE) {
-			tbl_size = ipa3_ctx->nat_mem.size_base_tables;
-			base_tbl = (u32 *)ipa3_ctx->nat_mem.ipv4_rules_addr;
+	pr_err("\n%s Base Table:\n", dev->name);
+	ipa3_read_table(dev->base_table_addr, dev->table_entries + 1,
+		num_entries, &rule_id, nat_type);
 
-			pr_err("\nBase Table:\n");
-		} else {
-			if (!ipa3_ctx->nat_mem.size_expansion_tables)
-				continue;
-			tbl_size = ipa3_ctx->nat_mem.size_expansion_tables-1;
-			base_tbl =
-			 (u32 *)ipa3_ctx->nat_mem.ipv4_expansion_rules_addr;
+	pr_err("%s Expansion Table:\n", dev->name);
+	ipa3_read_table(
+		dev->expansion_table_addr, dev->expn_table_entries,
+		num_entries,
+		&rule_id,
+		nat_type);
 
-			pr_err("\nExpansion Base Table:\n");
-		}
+	IPADBG("return\n");
+}
 
-		if (base_tbl != NULL) {
-			for (i = 0; i <= tbl_size; i++, rule_id++) {
-				tmp = base_tbl;
-				value = tmp[4];
-				enable = ((value & 0xFFFF0000) >> 16);
+static void ipa3_finish_read_memory_device(
+	struct ipa3_nat_ipv6ct_common_mem *dev,
+	u32 num_entries)
+{
+	IPADBG("\n");
+	pr_err("Overall number %s entries: %d\n\n", dev->name, num_entries);
+	IPADBG("return\n");
+}
 
-				if (enable & NAT_ENTRY_ENABLE) {
-					no_entrys++;
-					pr_err("Rule:%d ", rule_id);
+static void ipa3_read_pdn_table(void)
+{
+	int i, result;
+	char *pdn_entry;
+	size_t pdn_entry_size;
+	bool entry_zeroed;
+	bool entry_valid;
+	char *buff;
+	size_t buff_size = 128;
 
-					value = *tmp;
-					pr_err(
-						"Private_IP:%d.%d.%d.%d ",
-						((value & 0xFF000000) >> 24),
-						((value & 0x00FF0000) >> 16),
-						((value & 0x0000FF00) >> 8),
-						((value & 0x000000FF)));
-					tmp++;
+	IPADBG("\n");
 
-					value = *tmp;
-					pr_err(
-						"Target_IP:%d.%d.%d.%d ",
-						((value & 0xFF000000) >> 24),
-						((value & 0x00FF0000) >> 16),
-						((value & 0x0000FF00) >> 8),
-						((value & 0x000000FF)));
-					tmp++;
-
-					value = *tmp;
-					pr_err(
-						"Next_Index:%d  Public_Port:%d ",
-						(value & 0x0000FFFF),
-						((value & 0xFFFF0000) >> 16));
-					tmp++;
-
-					value = *tmp;
-					pr_err(
-						"Private_Port:%d  Target_Port:%d ",
-						(value & 0x0000FFFF),
-						((value & 0xFFFF0000) >> 16));
-					tmp++;
-
-					value = *tmp;
-					flag = ((value & 0xFFFF0000) >> 16);
-					if (flag & NAT_ENTRY_RST_FIN_BIT) {
-						pr_err(
-								"IP_CKSM_delta:0x%x  Flags:%s ",
-							  (value & 0x0000FFFF),
-								"Direct_To_A5");
-					} else {
-						pr_err(
-							"IP_CKSM_delta:0x%x  Flags:%s ",
-							(value & 0x0000FFFF),
-							"Fwd_to_route");
-					}
-					tmp++;
-
-					value = *tmp;
-					pr_err(
-						"Time_stamp:0x%x Proto:%d ",
-						(value & 0x00FFFFFF),
-						((value & 0xFF000000) >> 24));
-					tmp++;
-
-					value = *tmp;
-					pr_err(
-						"Prev_Index:%d  Indx_tbl_entry:%d ",
-						(value & 0x0000FFFF),
-						((value & 0xFFFF0000) >> 16));
-					tmp++;
-
-					value = *tmp;
-					pr_err(
-						"TCP_UDP_cksum_delta:0x%x\n",
-						((value & 0xFFFF0000) >> 16));
-				}
-
-				base_tbl += ENTRY_U32_FIELDS;
-
-			}
-		}
+	result = ipahal_nat_entry_size(IPAHAL_NAT_IPV4_PDN, &pdn_entry_size);
+	if (result) {
+		IPAERR("Failed to retrieve size of PDN entry");
+		return;
 	}
+
+	buff = kzalloc(buff_size, GFP_KERNEL);
+	if (!buff) {
+		IPAERR("Out of memory\n");
+		return;
+	}
+
+	for (i = 0, pdn_entry = ipa3_ctx->nat_mem.pdn_mem.base;
+		i < IPA_MAX_PDN_NUM;
+		++i, pdn_entry += pdn_entry_size) {
+		result = ipahal_nat_is_entry_zeroed(IPAHAL_NAT_IPV4_PDN,
+			pdn_entry, &entry_zeroed);
+		if (result) {
+			IPAERR(
+				"Failed to determine whether the PDN entry is definitely zero\n");
+			goto bail;
+		}
+		if (entry_zeroed)
+			continue;
+
+		result = ipahal_nat_is_entry_valid(IPAHAL_NAT_IPV4_PDN,
+			pdn_entry, &entry_valid);
+		if (result) {
+			IPAERR(
+				"Failed to determine whether the PDN entry is valid\n");
+			goto bail;
+		}
+		if (entry_valid)
+			pr_err("PDN %d: ", i);
+		else
+			pr_err("PDN %d - Invalid: ", i);
+
+		ipahal_nat_stringify_entry(IPAHAL_NAT_IPV4_PDN,
+				pdn_entry, buff, buff_size);
+		pr_err("%s\n", buff);
+		memset(buff, 0, buff_size);
+	}
+	pr_err("\n");
+bail:
+	kfree(buff);
+	IPADBG("return\n");
+}
+
+static ssize_t ipa3_read_nat4(struct file *file,
+		char __user *ubuf, size_t count,
+		loff_t *ppos)
+{
+	u32 rule_id = 0, num_entries = 0, index_num_entries = 0;
+
+	pr_err("IPA3 NAT stats\n");
+	if (!ipa3_ctx->nat_mem.dev.is_dev_init) {
+		pr_err("NAT hasn't been initialized or not supported\n");
+		goto ret;
+	}
+
+	mutex_lock(&ipa3_ctx->nat_mem.dev.lock);
+
+	if (!ipa3_ctx->nat_mem.dev.is_hw_init) {
+		pr_err("NAT H/W hasn't been initialized\n");
+		goto bail;
+	}
+
+	if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_0) {
+		ipa3_read_pdn_table();
+	} else {
+		pr_err("NAT Table IP Address=%pI4h\n\n",
+			&ipa3_ctx->nat_mem.public_ip_addr);
+	}
+
+	ipa3_start_read_memory_device(&ipa3_ctx->nat_mem.dev,
+		IPAHAL_NAT_IPV4, &num_entries);
 
 	/* Print Index tables */
-	rule_id = 0;
-	for (j = 0; j < 2; j++) {
-		if (j == BASE_TABLE) {
-			tbl_size = ipa3_ctx->nat_mem.size_base_tables;
-			indx_tbl = (u32 *)ipa3_ctx->nat_mem.index_table_addr;
+	pr_err("ipaNatTable Index Table:\n");
+	ipa3_read_table(
+		ipa3_ctx->nat_mem.index_table_addr,
+		ipa3_ctx->nat_mem.dev.table_entries + 1,
+		&index_num_entries,
+		&rule_id,
+		IPAHAL_NAT_IPV4_INDEX);
 
-			pr_err("\nIndex Table:\n");
-		} else {
-			if (!ipa3_ctx->nat_mem.size_expansion_tables)
-				continue;
-			tbl_size = ipa3_ctx->nat_mem.size_expansion_tables-1;
-			indx_tbl =
-			 (u32 *)ipa3_ctx->nat_mem.index_table_expansion_addr;
+	pr_err("ipaNatTable Expansion Index Table:\n");
+	ipa3_read_table(
+		ipa3_ctx->nat_mem.index_table_expansion_addr,
+		ipa3_ctx->nat_mem.dev.expn_table_entries,
+		&index_num_entries,
+		&rule_id,
+		IPAHAL_NAT_IPV4_INDEX);
 
-			pr_err("\nExpansion Index Table:\n");
-		}
+	if (num_entries != index_num_entries)
+		IPAERR(
+			"The NAT table number of entries %d is different from index table number of entries %d\n",
+			num_entries, index_num_entries);
 
-		if (indx_tbl != NULL) {
-			for (i = 0; i <= tbl_size; i++, rule_id++) {
-				tmp = indx_tbl;
-				value = *tmp;
-				tbl_entry = (value & 0x0000FFFF);
+	ipa3_finish_read_memory_device(&ipa3_ctx->nat_mem.dev, num_entries);
 
-				if (tbl_entry) {
-					pr_err("Rule:%d ", rule_id);
+	IPADBG("return\n");
+bail:
+	mutex_unlock(&ipa3_ctx->nat_mem.dev.lock);
+ret:
+	return 0;
+}
 
-					value = *tmp;
-					pr_err(
-						"Table_Entry:%d  Next_Index:%d\n",
-						tbl_entry,
-						((value & 0xFFFF0000) >> 16));
-				}
+static ssize_t ipa3_read_ipv6ct(struct file *file,
+	char __user *ubuf, size_t count,
+	loff_t *ppos) {
+	u32 num_entries = 0;
 
-				indx_tbl++;
-			}
-		}
+	pr_err("\n");
+
+	if (!ipa3_ctx->ipv6ct_mem.dev.is_dev_init) {
+		pr_err("IPv6 Conntrack not initialized or not supported\n");
+		return 0;
 	}
-	pr_err("Current No. Nat Entries: %d\n", no_entrys);
 
+	mutex_lock(&ipa3_ctx->ipv6ct_mem.dev.lock);
+
+	if (!ipa3_ctx->ipv6ct_mem.dev.is_hw_init) {
+		pr_err("IPv6 connection tracking H/W hasn't been initialized\n");
+		goto bail;
+	}
+
+	ipa3_start_read_memory_device(&ipa3_ctx->ipv6ct_mem.dev,
+		IPAHAL_NAT_IPV6CT, &num_entries);
+	ipa3_finish_read_memory_device(&ipa3_ctx->ipv6ct_mem.dev,
+		num_entries);
+
+	IPADBG("return\n");
+bail:
+	mutex_unlock(&ipa3_ctx->ipv6ct_mem.dev.lock);
 	return 0;
 }
 
 static ssize_t ipa3_rm_read_stats(struct file *file, char __user *ubuf,
 		size_t count, loff_t *ppos)
 {
-	int result, nbytes, cnt = 0;
+	int result, cnt = 0;
+
+	/* deprecate if IPA PM is used */
+	if (ipa3_ctx->use_ipa_pm) {
+		cnt += scnprintf(dbg_buff + cnt, IPA_MAX_MSG_LEN - cnt,
+			"IPA RM is disabled\n");
+		goto ret;
+	}
 
 	result = ipa_rm_stat(dbg_buff, IPA_MAX_MSG_LEN);
 	if (result < 0) {
-		nbytes = scnprintf(dbg_buff, IPA_MAX_MSG_LEN,
+		cnt += scnprintf(dbg_buff + cnt, IPA_MAX_MSG_LEN - cnt,
 				"Error in printing RM stat %d\n", result);
-		cnt += nbytes;
-	} else
-		cnt += result;
-
+		goto ret;
+	}
+	cnt += result;
+ret:
 	return simple_read_from_buffer(ubuf, count, ppos, dbg_buff, cnt);
+}
+
+static ssize_t ipa3_pm_read_stats(struct file *file, char __user *ubuf,
+		size_t count, loff_t *ppos)
+{
+	int result, cnt = 0;
+
+	if (!ipa3_ctx->use_ipa_pm) {
+		cnt += scnprintf(dbg_buff + cnt, IPA_MAX_MSG_LEN - cnt,
+			"IPA PM is disabled\n");
+		goto ret;
+	}
+
+	result = ipa_pm_stat(dbg_buff, IPA_MAX_MSG_LEN);
+	if (result < 0) {
+		cnt += scnprintf(dbg_buff + cnt, IPA_MAX_MSG_LEN - cnt,
+				"Error in printing PM stat %d\n", result);
+		goto ret;
+	}
+	cnt += result;
+ret:
+	return simple_read_from_buffer(ubuf, count, ppos, dbg_buff, cnt);
+}
+
+static ssize_t ipa3_pm_ex_read_stats(struct file *file, char __user *ubuf,
+		size_t count, loff_t *ppos)
+{
+	int result, cnt = 0;
+
+	if (!ipa3_ctx->use_ipa_pm) {
+		cnt += scnprintf(dbg_buff + cnt, IPA_MAX_MSG_LEN - cnt,
+			"IPA PM is disabled\n");
+		goto ret;
+	}
+
+	result = ipa_pm_exceptions_stat(dbg_buff, IPA_MAX_MSG_LEN);
+	if (result < 0) {
+		cnt += scnprintf(dbg_buff + cnt, IPA_MAX_MSG_LEN - cnt,
+				"Error in printing PM stat %d\n", result);
+		goto ret;
+	}
+	cnt += result;
+ret:
+	return simple_read_from_buffer(ubuf, count, ppos, dbg_buff, cnt);
+}
+
+static ssize_t ipa3_read_ipahal_regs(struct file *file, char __user *ubuf,
+		size_t count, loff_t *ppos)
+{
+	IPA_ACTIVE_CLIENTS_INC_SIMPLE();
+	ipahal_print_all_regs(true);
+	IPA_ACTIVE_CLIENTS_DEC_SIMPLE();
+
+	return 0;
 }
 
 static void ipa_dump_status(struct ipahal_pkt_status *status)
@@ -1738,12 +2001,12 @@ static ssize_t ipa3_print_active_clients_log(struct file *file,
 		return 0;
 	}
 	memset(active_clients_buf, 0, IPA_DBG_ACTIVE_CLIENT_BUF_SIZE);
-	ipa3_active_clients_lock();
+	mutex_lock(&ipa3_ctx->ipa3_active_clients.mutex);
 	cnt = ipa3_active_clients_log_print_buffer(active_clients_buf,
 			IPA_DBG_ACTIVE_CLIENT_BUF_SIZE - IPA_MAX_MSG_LEN);
 	table_size = ipa3_active_clients_log_print_table(active_clients_buf
 			+ cnt, IPA_MAX_MSG_LEN);
-	ipa3_active_clients_unlock();
+	mutex_unlock(&ipa3_ctx->ipa3_active_clients.mutex);
 
 	return simple_read_from_buffer(ubuf, count, ppos,
 			active_clients_buf, cnt + table_size);
@@ -1806,104 +2069,143 @@ static ssize_t ipa3_enable_ipc_low(struct file *file,
 	return count;
 }
 
-const struct file_operations ipa3_gen_reg_ops = {
-	.read = ipa3_read_gen_reg,
-};
-
-const struct file_operations ipa3_ep_reg_ops = {
-	.read = ipa3_read_ep_reg,
-	.write = ipa3_write_ep_reg,
-};
-
-const struct file_operations ipa3_keep_awake_ops = {
-	.read = ipa3_read_keep_awake,
-	.write = ipa3_write_keep_awake,
-};
-
-const struct file_operations ipa3_ep_holb_ops = {
-	.write = ipa3_write_ep_holb,
-};
-
-const struct file_operations ipa3_hdr_ops = {
-	.read = ipa3_read_hdr,
-};
-
-const struct file_operations ipa3_rt_ops = {
-	.read = ipa3_read_rt,
-	.open = ipa3_open_dbg,
-};
-
-const struct file_operations ipa3_rt_hw_ops = {
-	.read = ipa3_read_rt_hw,
-	.open = ipa3_open_dbg,
-};
-
-const struct file_operations ipa3_proc_ctx_ops = {
-	.read = ipa3_read_proc_ctx,
-};
-
-const struct file_operations ipa3_flt_ops = {
-	.read = ipa3_read_flt,
-	.open = ipa3_open_dbg,
-};
-
-const struct file_operations ipa3_flt_hw_ops = {
-	.read = ipa3_read_flt_hw,
-	.open = ipa3_open_dbg,
-};
-
-const struct file_operations ipa3_stats_ops = {
-	.read = ipa3_read_stats,
-};
-
-const struct file_operations ipa3_wstats_ops = {
-	.read = ipa3_read_wstats,
-};
-
-const struct file_operations ipa3_wdi_ops = {
-	.read = ipa3_read_wdi,
-};
-
-const struct file_operations ipa3_ntn_ops = {
-	.read = ipa3_read_ntn,
-};
-
-const struct file_operations ipa3_msg_ops = {
-	.read = ipa3_read_msg,
-};
-
-const struct file_operations ipa3_dbg_cnt_ops = {
-	.read = ipa3_read_dbg_cnt,
-	.write = ipa3_write_dbg_cnt,
-};
-
-const struct file_operations ipa3_status_stats_ops = {
-	.read = ipa_status_stats_read,
-};
-
-const struct file_operations ipa3_nat4_ops = {
-	.read = ipa3_read_nat4,
-};
-
-const struct file_operations ipa3_rm_stats = {
-	.read = ipa3_rm_read_stats,
-};
-
-const struct file_operations ipa3_active_clients = {
-	.read = ipa3_print_active_clients_log,
-	.write = ipa3_clear_active_clients_log,
-};
-
-const struct file_operations ipa3_ipc_low_ops = {
-	.write = ipa3_enable_ipc_low,
+static const struct ipa3_debugfs_file debugfs_files[] = {
+	{
+		"gen_reg", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_gen_reg
+		}
+	}, {
+		"active_clients", IPA_READ_WRITE_MODE, NULL, {
+			.read = ipa3_print_active_clients_log,
+			.write = ipa3_clear_active_clients_log
+		}
+	}, {
+		"ep_reg", IPA_READ_WRITE_MODE, NULL, {
+			.read = ipa3_read_ep_reg,
+			.write = ipa3_write_ep_reg,
+		}
+	}, {
+		"keep_awake", IPA_READ_WRITE_MODE, NULL, {
+			.read = ipa3_read_keep_awake,
+			.write = ipa3_write_keep_awake,
+		}
+	}, {
+		"holb", IPA_WRITE_ONLY_MODE, NULL, {
+			.write = ipa3_write_ep_holb,
+		}
+	}, {
+		"hdr", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_hdr,
+		}
+	}, {
+		"proc_ctx", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_proc_ctx,
+		}
+	}, {
+		"ip4_rt", IPA_READ_ONLY_MODE, (void *)IPA_IP_v4, {
+			.read = ipa3_read_rt,
+			.open = ipa3_open_dbg,
+		}
+	}, {
+		"ip4_rt_hw", IPA_READ_ONLY_MODE, (void *)IPA_IP_v4, {
+			.read = ipa3_read_rt_hw,
+			.open = ipa3_open_dbg,
+		}
+	}, {
+		"ip6_rt", IPA_READ_ONLY_MODE, (void *)IPA_IP_v6, {
+			.read = ipa3_read_rt,
+			.open = ipa3_open_dbg,
+		}
+	}, {
+		"ip6_rt_hw", IPA_READ_ONLY_MODE, (void *)IPA_IP_v6, {
+			.read = ipa3_read_rt_hw,
+			.open = ipa3_open_dbg,
+		}
+	}, {
+		"ip4_flt", IPA_READ_ONLY_MODE, (void *)IPA_IP_v4, {
+			.read = ipa3_read_flt,
+			.open = ipa3_open_dbg,
+		}
+	}, {
+		"ip4_flt_hw", IPA_READ_ONLY_MODE, (void *)IPA_IP_v4, {
+			.read = ipa3_read_flt_hw,
+			.open = ipa3_open_dbg,
+		}
+	}, {
+		"ip6_flt", IPA_READ_ONLY_MODE, (void *)IPA_IP_v6, {
+			.read = ipa3_read_flt,
+			.open = ipa3_open_dbg,
+		}
+	}, {
+		"ip6_flt_hw", IPA_READ_ONLY_MODE, (void *)IPA_IP_v6, {
+			.read = ipa3_read_flt_hw,
+			.open = ipa3_open_dbg,
+		}
+	}, {
+		"stats", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_stats,
+		}
+	}, {
+		"wstats", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_wstats,
+		}
+	}, {
+		"wdi", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_wdi,
+		}
+	}, {
+		"ntn", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_ntn,
+		}
+	}, {
+		"dbg_cnt", IPA_READ_WRITE_MODE, NULL, {
+			.read = ipa3_read_dbg_cnt,
+			.write = ipa3_write_dbg_cnt,
+		}
+	}, {
+		"msg", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_msg,
+		}
+	}, {
+		"ip4_nat", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_nat4,
+		}
+	}, {
+		"ipv6ct", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_ipv6ct,
+		}
+	}, {
+		"rm_stats", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_rm_read_stats,
+		}
+	}, {
+		"pm_stats", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_pm_read_stats,
+		}
+	}, {
+		"pm_ex_stats", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_pm_ex_read_stats,
+		}
+	}, {
+		"status_stats", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa_status_stats_read,
+		}
+	}, {
+		"enable_low_prio_print", IPA_WRITE_ONLY_MODE, NULL, {
+			.write = ipa3_enable_ipc_low,
+		}
+	}, {
+		"ipa_dump_regs", IPA_READ_ONLY_MODE, NULL, {
+			.read = ipa3_read_ipahal_regs,
+		}
+	}
 };
 
 void ipa3_debugfs_init(void)
 {
-	const mode_t read_only_mode = S_IRUSR | S_IRGRP | S_IROTH;
-	const mode_t read_write_mode = S_IRUSR | S_IRGRP | S_IROTH |
-			S_IWUSR | S_IWGRP;
-	const mode_t write_only_mode = S_IWUSR | S_IWGRP;
+	const size_t debugfs_files_num =
+		sizeof(debugfs_files) / sizeof(struct ipa3_debugfs_file);
+	size_t i;
 	struct dentry *file;
 
 	dent = debugfs_create_dir("ipa", 0);
@@ -1912,26 +2214,24 @@ void ipa3_debugfs_init(void)
 		return;
 	}
 
-	file = debugfs_create_u32("hw_type", read_only_mode,
-			dent, &ipa3_ctx->ipa_hw_type);
+	file = debugfs_create_u32("hw_type", IPA_READ_ONLY_MODE,
+		dent, &ipa3_ctx->ipa_hw_type);
 	if (!file) {
 		IPAERR("could not create hw_type file\n");
 		goto fail;
 	}
 
 
-	dfile_gen_reg = debugfs_create_file("gen_reg", read_only_mode, dent, 0,
-			&ipa3_gen_reg_ops);
-	if (!dfile_gen_reg || IS_ERR(dfile_gen_reg)) {
-		IPAERR("fail to create file for debug_fs gen_reg\n");
-		goto fail;
-	}
+	for (i = 0; i < debugfs_files_num; ++i) {
+		const struct ipa3_debugfs_file *curr = &debugfs_files[i];
 
-	dfile_active_clients = debugfs_create_file("active_clients",
-			read_write_mode, dent, 0, &ipa3_active_clients);
-	if (!dfile_active_clients || IS_ERR(dfile_active_clients)) {
-		IPAERR("fail to create file for debug_fs active_clients\n");
-		goto fail;
+		file = debugfs_create_file(curr->name, curr->mode, dent,
+			curr->data, &curr->fops);
+		if (!file || IS_ERR(file)) {
+			IPAERR("fail to create file for debug_fs %s\n",
+				curr->name);
+			goto fail;
+		}
 	}
 
 	active_clients_buf = NULL;
@@ -1940,161 +2240,7 @@ void ipa3_debugfs_init(void)
 	if (active_clients_buf == NULL)
 		IPAERR("fail to allocate active clients memory buffer");
 
-	dfile_ep_reg = debugfs_create_file("ep_reg", read_write_mode, dent, 0,
-			&ipa3_ep_reg_ops);
-	if (!dfile_ep_reg || IS_ERR(dfile_ep_reg)) {
-		IPAERR("fail to create file for debug_fs ep_reg\n");
-		goto fail;
-	}
-
-	dfile_keep_awake = debugfs_create_file("keep_awake", read_write_mode,
-			dent, 0, &ipa3_keep_awake_ops);
-	if (!dfile_keep_awake || IS_ERR(dfile_keep_awake)) {
-		IPAERR("fail to create file for debug_fs dfile_keep_awake\n");
-		goto fail;
-	}
-
-	dfile_ep_holb = debugfs_create_file("holb", write_only_mode, dent,
-			0, &ipa3_ep_holb_ops);
-	if (!dfile_ep_holb || IS_ERR(dfile_ep_holb)) {
-		IPAERR("fail to create file for debug_fs dfile_ep_hol_en\n");
-		goto fail;
-	}
-
-	dfile_hdr = debugfs_create_file("hdr", read_only_mode, dent, 0,
-			&ipa3_hdr_ops);
-	if (!dfile_hdr || IS_ERR(dfile_hdr)) {
-		IPAERR("fail to create file for debug_fs hdr\n");
-		goto fail;
-	}
-
-	dfile_proc_ctx = debugfs_create_file("proc_ctx", read_only_mode, dent,
-		0, &ipa3_proc_ctx_ops);
-	if (!dfile_hdr || IS_ERR(dfile_hdr)) {
-		IPAERR("fail to create file for debug_fs proc_ctx\n");
-		goto fail;
-	}
-
-	dfile_ip4_rt = debugfs_create_file("ip4_rt", read_only_mode, dent,
-			(void *)IPA_IP_v4, &ipa3_rt_ops);
-	if (!dfile_ip4_rt || IS_ERR(dfile_ip4_rt)) {
-		IPAERR("fail to create file for debug_fs ip4 rt\n");
-		goto fail;
-	}
-
-	dfile_ip4_rt_hw = debugfs_create_file("ip4_rt_hw", read_only_mode, dent,
-		(void *)IPA_IP_v4, &ipa3_rt_hw_ops);
-	if (!dfile_ip4_rt_hw || IS_ERR(dfile_ip4_rt_hw)) {
-		IPAERR("fail to create file for debug_fs ip4 rt hw\n");
-		goto fail;
-	}
-
-	dfile_ip6_rt = debugfs_create_file("ip6_rt", read_only_mode, dent,
-			(void *)IPA_IP_v6, &ipa3_rt_ops);
-	if (!dfile_ip6_rt || IS_ERR(dfile_ip6_rt)) {
-		IPAERR("fail to create file for debug_fs ip6:w" " rt\n");
-		goto fail;
-	}
-
-	dfile_ip6_rt_hw = debugfs_create_file("ip6_rt_hw", read_only_mode, dent,
-		(void *)IPA_IP_v6, &ipa3_rt_hw_ops);
-	if (!dfile_ip6_rt_hw || IS_ERR(dfile_ip6_rt_hw)) {
-		IPAERR("fail to create file for debug_fs ip6 rt hw\n");
-		goto fail;
-	}
-
-	dfile_ip4_flt = debugfs_create_file("ip4_flt", read_only_mode, dent,
-			(void *)IPA_IP_v4, &ipa3_flt_ops);
-	if (!dfile_ip4_flt || IS_ERR(dfile_ip4_flt)) {
-		IPAERR("fail to create file for debug_fs ip4 flt\n");
-		goto fail;
-	}
-
-	dfile_ip4_flt_hw = debugfs_create_file("ip4_flt_hw", read_only_mode,
-			dent, (void *)IPA_IP_v4, &ipa3_flt_hw_ops);
-	if (!dfile_ip4_flt_hw || IS_ERR(dfile_ip4_flt_hw)) {
-		IPAERR("fail to create file for debug_fs ip4 flt\n");
-		goto fail;
-	}
-
-	dfile_ip6_flt = debugfs_create_file("ip6_flt", read_only_mode, dent,
-			(void *)IPA_IP_v6, &ipa3_flt_ops);
-	if (!dfile_ip6_flt || IS_ERR(dfile_ip6_flt)) {
-		IPAERR("fail to create file for debug_fs ip6 flt\n");
-		goto fail;
-	}
-
-	dfile_ip6_flt_hw = debugfs_create_file("ip6_flt_hw", read_only_mode,
-			dent, (void *)IPA_IP_v6, &ipa3_flt_hw_ops);
-	if (!dfile_ip6_flt_hw || IS_ERR(dfile_ip6_flt_hw)) {
-		IPAERR("fail to create file for debug_fs ip6 flt\n");
-		goto fail;
-	}
-
-	dfile_stats = debugfs_create_file("stats", read_only_mode, dent, 0,
-			&ipa3_stats_ops);
-	if (!dfile_stats || IS_ERR(dfile_stats)) {
-		IPAERR("fail to create file for debug_fs stats\n");
-		goto fail;
-	}
-
-	dfile_wstats = debugfs_create_file("wstats", read_only_mode,
-			dent, 0, &ipa3_wstats_ops);
-	if (!dfile_wstats || IS_ERR(dfile_wstats)) {
-		IPAERR("fail to create file for debug_fs wstats\n");
-		goto fail;
-	}
-
-	dfile_wdi_stats = debugfs_create_file("wdi", read_only_mode, dent, 0,
-			&ipa3_wdi_ops);
-	if (!dfile_wdi_stats || IS_ERR(dfile_wdi_stats)) {
-		IPAERR("fail to create file for debug_fs wdi stats\n");
-		goto fail;
-	}
-
-	dfile_ntn_stats = debugfs_create_file("ntn", read_only_mode, dent, 0,
-			&ipa3_ntn_ops);
-	if (!dfile_ntn_stats || IS_ERR(dfile_ntn_stats)) {
-		IPAERR("fail to create file for debug_fs ntn stats\n");
-		goto fail;
-	}
-
-	dfile_dbg_cnt = debugfs_create_file("dbg_cnt", read_write_mode, dent, 0,
-			&ipa3_dbg_cnt_ops);
-	if (!dfile_dbg_cnt || IS_ERR(dfile_dbg_cnt)) {
-		IPAERR("fail to create file for debug_fs dbg_cnt\n");
-		goto fail;
-	}
-
-	dfile_msg = debugfs_create_file("msg", read_only_mode, dent, 0,
-			&ipa3_msg_ops);
-	if (!dfile_msg || IS_ERR(dfile_msg)) {
-		IPAERR("fail to create file for debug_fs msg\n");
-		goto fail;
-	}
-
-	dfile_ip4_nat = debugfs_create_file("ip4_nat", read_only_mode, dent,
-			0, &ipa3_nat4_ops);
-	if (!dfile_ip4_nat || IS_ERR(dfile_ip4_nat)) {
-		IPAERR("fail to create file for debug_fs ip4 nat\n");
-		goto fail;
-	}
-
-	dfile_rm_stats = debugfs_create_file("rm_stats",
-			read_only_mode, dent, 0, &ipa3_rm_stats);
-	if (!dfile_rm_stats || IS_ERR(dfile_rm_stats)) {
-		IPAERR("fail to create file for debug_fs rm_stats\n");
-		goto fail;
-	}
-
-	dfile_status_stats = debugfs_create_file("status_stats",
-			read_only_mode, dent, 0, &ipa3_status_stats_ops);
-	if (!dfile_status_stats || IS_ERR(dfile_status_stats)) {
-		IPAERR("fail to create file for debug_fs status_stats\n");
-		goto fail;
-	}
-
-	file = debugfs_create_u32("enable_clock_scaling", read_write_mode,
+	file = debugfs_create_u32("enable_clock_scaling", IPA_READ_WRITE_MODE,
 		dent, &ipa3_ctx->enable_clock_scaling);
 	if (!file) {
 		IPAERR("could not create enable_clock_scaling file\n");
@@ -2102,7 +2248,7 @@ void ipa3_debugfs_init(void)
 	}
 
 	file = debugfs_create_u32("clock_scaling_bw_threshold_nominal_mbps",
-		read_write_mode, dent,
+		IPA_READ_WRITE_MODE, dent,
 		&ipa3_ctx->ctrl->clock_scaling_bw_threshold_nominal);
 	if (!file) {
 		IPAERR("could not create bw_threshold_nominal_mbps\n");
@@ -2110,19 +2256,21 @@ void ipa3_debugfs_init(void)
 	}
 
 	file = debugfs_create_u32("clock_scaling_bw_threshold_turbo_mbps",
-		read_write_mode, dent,
-		&ipa3_ctx->ctrl->clock_scaling_bw_threshold_turbo);
+			IPA_READ_WRITE_MODE, dent,
+			&ipa3_ctx->ctrl->clock_scaling_bw_threshold_turbo);
 	if (!file) {
 		IPAERR("could not create bw_threshold_turbo_mbps\n");
 		goto fail;
 	}
 
-	file = debugfs_create_file("enable_low_prio_print", write_only_mode,
-		dent, 0, &ipa3_ipc_low_ops);
+	file = debugfs_create_u32("clk_rate", IPA_READ_ONLY_MODE,
+		dent, &ipa3_ctx->curr_ipa_clk_rate);
 	if (!file) {
-		IPAERR("could not create enable_low_prio_print file\n");
+		IPAERR("could not create clk_rate file\n");
 		goto fail;
 	}
+
+	ipa_debugfs_init_stats(dent);
 
 	return;
 

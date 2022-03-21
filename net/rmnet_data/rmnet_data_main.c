@@ -1,5 +1,4 @@
-/*
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, 2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,7 +11,6 @@
  *
  *
  * RMNET Data generic framework
- *
  */
 
 #include <linux/module.h>
@@ -22,23 +20,22 @@
 #include "rmnet_data_config.h"
 #include "rmnet_data_vnd.h"
 
-/* ***************** Trace Points ******************************************* */
+/* Trace Points */
 #define CREATE_TRACE_POINTS
 #include "rmnet_data_trace.h"
 
-/* ***************** Module Parameters ************************************** */
+/* Module Parameters */
 unsigned int rmnet_data_log_level = RMNET_LOG_LVL_ERR | RMNET_LOG_LVL_HI;
-module_param(rmnet_data_log_level, uint,  S_IRUGO | S_IWUSR);
+module_param(rmnet_data_log_level, uint, 0644);
 MODULE_PARM_DESC(log_level, "Logging level");
 
 unsigned int rmnet_data_log_module_mask;
-module_param(rmnet_data_log_module_mask, uint,  S_IRUGO | S_IWUSR);
+module_param(rmnet_data_log_module_mask, uint, 0644);
 MODULE_PARM_DESC(rmnet_data_log_module_mask, "Logging module mask");
 
-/* ***************** Startup/Shutdown *************************************** */
+/* Startup/Shutdown */
 
-/**
- * rmnet_init() - Module initialization
+/* rmnet_init() - Module initialization
  *
  * todo: check for (and init) startup errors
  */

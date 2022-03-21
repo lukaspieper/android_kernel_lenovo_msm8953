@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -69,33 +69,30 @@ int msm_spm_enable_fts_lpm(int cpu, uint32_t mode);
 
 static inline int msm_spm_apcs_set_phase(int cpu, unsigned int phase_cnt)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 
 static inline int msm_spm_enable_fts_lpm(int cpu, uint32_t mode)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 #endif /* defined(CONFIG_MSM_L2_SPM) */
 #else /* defined(CONFIG_MSM_SPM) */
 static inline int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 
-static inline void msm_spm_set_rpm_hs(bool allow_rpm_hs)
-{
-	return;
-}
+static inline void msm_spm_set_rpm_hs(bool allow_rpm_hs) {}
 
 static inline int msm_spm_probe_done(void)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 
 static inline int msm_spm_set_vdd(unsigned int cpu, unsigned int vlevel)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 
 static inline int msm_spm_get_vdd(unsigned int cpu)
@@ -106,18 +103,16 @@ static inline int msm_spm_get_vdd(unsigned int cpu)
 static inline int msm_spm_turn_on_cpu_rail(struct device_node *l2ccc_node,
 		unsigned int val, int cpu, int vctl_offset)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 
 static inline int msm_spm_device_init(void)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 
 static inline void msm_spm_dump_regs(unsigned int cpu)
-{
-	return;
-}
+{ }
 
 static inline int msm_spm_config_low_power_mode(struct msm_spm_device *dev,
 		unsigned int mode, bool notify_rpm)
@@ -131,7 +126,8 @@ static inline int msm_spm_config_low_power_mode_addr(
 	return -ENODEV;
 }
 
-static inline struct msm_spm_device *msm_spm_get_device_by_name(const char *name)
+static inline struct msm_spm_device *msm_spm_get_device_by_name(
+				const char *name)
 {
 	return NULL;
 }
@@ -141,22 +137,43 @@ static inline bool msm_spm_is_mode_avail(unsigned int mode)
 	return false;
 }
 
+static inline int msm_spm_is_avs_enabled(unsigned int cpu)
+{
+	return -ENODEV;
+}
+
+static inline int msm_spm_avs_enable(unsigned int cpu)
+{
+	return -ENODEV;
+}
+
+static inline int msm_spm_avs_disable(unsigned int cpu)
+{
+	return -ENODEV;
+}
+
+static inline int msm_spm_avs_set_limit(unsigned int cpu, uint32_t min_lvl,
+		uint32_t max_lvl)
+{
+	return -ENODEV;
+}
+
 static inline int msm_spm_avs_enable_irq(unsigned int cpu,
 		enum msm_spm_avs_irq irq)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 
 static inline int msm_spm_avs_disable_irq(unsigned int cpu,
 		enum msm_spm_avs_irq irq)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 
 static inline int msm_spm_avs_clear_irq(unsigned int cpu,
 		enum msm_spm_avs_irq irq)
 {
-	return -ENOSYS;
+	return -ENODEV;
 }
 
 #endif  /* defined (CONFIG_MSM_SPM) */

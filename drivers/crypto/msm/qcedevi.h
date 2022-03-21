@@ -1,6 +1,6 @@
 /* QTI crypto Driver
  *
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,6 +21,7 @@
 #include <linux/platform_data/qcom_crypto_device.h>
 #include <linux/fips_status.h>
 #include "qce.h"
+#include "qcedev_smmu.h"
 
 #define CACHE_LINE_SIZE 32
 #define CE_SHA_BLOCK_SIZE SHA256_BLOCK_SIZE
@@ -74,7 +75,8 @@ struct qcedev_async_req {
 
 /**********************************************************************
  * Register ourselves as a misc device to be able to access the dev driver
- * from userspace. */
+ * from userspace.
+ */
 
 #define QCEDEV_DEV	"qcedev"
 
@@ -100,12 +102,14 @@ struct qcedev_control {
 	/* platform device */
 	struct platform_device *pdev;
 
-	unsigned magic;
+	unsigned int magic;
 
 	struct list_head ready_commands;
 	struct qcedev_async_req *active_command;
 	spinlock_t lock;
 	struct tasklet_struct done_tasklet;
+	struct list_head context_banks;
+	struct qcedev_mem_client *mem_client;
 };
 
 struct qcedev_handle {
@@ -113,6 +117,8 @@ struct qcedev_handle {
 	struct qcedev_control *cntl;
 	/* qce internal sha context*/
 	struct qcedev_sha_ctxt sha_ctxt;
+	/* qcedev mapped buffer list */
+	struct qcedev_buffer_list registeredbufs;
 };
 
 void qcedev_cipher_req_cb(void *cookie, unsigned char *icv,

@@ -34,7 +34,7 @@ static struct fb_ops bochsfb_ops = {
 };
 
 static int bochsfb_create_object(struct bochs_device *bochs,
-				 struct drm_mode_fb_cmd2 *mode_cmd,
+				 const struct drm_mode_fb_cmd2 *mode_cmd,
 				 struct drm_gem_object **gobj_p)
 {
 	struct drm_device *dev = bochs->dev;
@@ -82,7 +82,7 @@ static int bochsfb_create(struct drm_fb_helper *helper,
 
 	bo = gem_to_bochs_bo(gobj);
 
-	ret = ttm_bo_reserve(&bo->bo, true, false, false, NULL);
+	ret = ttm_bo_reserve(&bo->bo, true, false, NULL);
 	if (ret)
 		return ret;
 
@@ -138,6 +138,7 @@ static int bochsfb_create(struct drm_fb_helper *helper,
 	info->fix.smem_start = 0;
 	info->fix.smem_len = size;
 
+	bochs->fb.initialized = true;
 	return 0;
 }
 
@@ -155,29 +156,13 @@ static int bochs_fbdev_destroy(struct bochs_device *bochs)
 		gfb->obj = NULL;
 	}
 
-	drm_fb_helper_fini(&bochs->fb.helper);
 	drm_framebuffer_unregister_private(&gfb->base);
 	drm_framebuffer_cleanup(&gfb->base);
 
 	return 0;
 }
 
-void bochs_fb_gamma_set(struct drm_crtc *crtc, u16 red, u16 green,
-			u16 blue, int regno)
-{
-}
-
-void bochs_fb_gamma_get(struct drm_crtc *crtc, u16 *red, u16 *green,
-			u16 *blue, int regno)
-{
-	*red   = regno;
-	*green = regno;
-	*blue  = regno;
-}
-
 static const struct drm_fb_helper_funcs bochs_fb_helper_funcs = {
-	.gamma_set = bochs_fb_gamma_set,
-	.gamma_get = bochs_fb_gamma_get,
 	.fb_probe = bochsfb_create,
 };
 
@@ -203,7 +188,6 @@ int bochs_fbdev_init(struct bochs_device *bochs)
 	if (ret)
 		goto fini;
 
-	bochs->fb.initialized = true;
 	return 0;
 
 fini:
@@ -213,9 +197,9 @@ fini:
 
 void bochs_fbdev_fini(struct bochs_device *bochs)
 {
-	if (!bochs->fb.initialized)
-		return;
+	if (bochs->fb.initialized)
+		bochs_fbdev_destroy(bochs);
 
-	bochs_fbdev_destroy(bochs);
+	drm_fb_helper_fini(&bochs->fb.helper);
 	bochs->fb.initialized = false;
 }

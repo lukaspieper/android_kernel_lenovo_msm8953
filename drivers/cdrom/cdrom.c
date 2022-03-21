@@ -886,6 +886,7 @@ static int cdrom_is_dvd_rw(struct cdrom_device_info *cdi)
 	switch (cdi->mmc3_profile) {
 	case 0x12:	/* DVD-RAM	*/
 	case 0x1A:	/* DVD+RW	*/
+	case 0x43:	/* BD-RE	*/
 		return 0;
 	default:
 		return 1;
@@ -997,6 +998,12 @@ static void cdrom_count_tracks(struct cdrom_device_info *cdi, tracktype *tracks)
 	tracks->xa = 0;
 	tracks->error = 0;
 	cd_dbg(CD_COUNT_TRACKS, "entering cdrom_count_tracks\n");
+
+	if (!CDROM_CAN(CDC_PLAY_AUDIO)) {
+		tracks->error = CDS_NO_INFO;
+		return;
+	}
+
 	/* Grab the TOC header so we can see how many tracks there are */
 	ret = cdi->ops->audio_ioctl(cdi, CDROMREADTOCHDR, &header);
 	if (ret) {
@@ -1163,7 +1170,8 @@ int cdrom_open(struct cdrom_device_info *cdi, struct block_device *bdev,
 		ret = open_for_data(cdi);
 		if (ret)
 			goto err;
-		cdrom_mmc3_profile(cdi);
+		if (CDROM_CAN(CDC_GENERIC_PACKET))
+			cdrom_mmc3_profile(cdi);
 		if (mode & FMODE_WRITE) {
 			ret = -EROFS;
 			if (cdrom_open_write(cdi))
@@ -2029,7 +2037,7 @@ static int cdrom_read_subchannel(struct cdrom_device_info *cdi,
 
 	init_cdrom_command(&cgc, buffer, 16, CGC_DATA_READ);
 	cgc.cmd[0] = GPCMD_READ_SUBCHANNEL;
-	cgc.cmd[1] = 2;     /* MSF addressing */
+	cgc.cmd[1] = subchnl->cdsc_format;/* MSF or LBA addressing */
 	cgc.cmd[2] = 0x40;  /* request subQ data */
 	cgc.cmd[3] = mcn ? 2 : 1;
 	cgc.cmd[8] = 16;
@@ -2038,17 +2046,27 @@ static int cdrom_read_subchannel(struct cdrom_device_info *cdi,
 		return ret;
 
 	subchnl->cdsc_audiostatus = cgc.buffer[1];
-	subchnl->cdsc_format = CDROM_MSF;
 	subchnl->cdsc_ctrl = cgc.buffer[5] & 0xf;
 	subchnl->cdsc_trk = cgc.buffer[6];
 	subchnl->cdsc_ind = cgc.buffer[7];
 
-	subchnl->cdsc_reladdr.msf.minute = cgc.buffer[13];
-	subchnl->cdsc_reladdr.msf.second = cgc.buffer[14];
-	subchnl->cdsc_reladdr.msf.frame = cgc.buffer[15];
-	subchnl->cdsc_absaddr.msf.minute = cgc.buffer[9];
-	subchnl->cdsc_absaddr.msf.second = cgc.buffer[10];
-	subchnl->cdsc_absaddr.msf.frame = cgc.buffer[11];
+	if (subchnl->cdsc_format == CDROM_LBA) {
+		subchnl->cdsc_absaddr.lba = ((cgc.buffer[8] << 24) |
+						(cgc.buffer[9] << 16) |
+						(cgc.buffer[10] << 8) |
+						(cgc.buffer[11]));
+		subchnl->cdsc_reladdr.lba = ((cgc.buffer[12] << 24) |
+						(cgc.buffer[13] << 16) |
+						(cgc.buffer[14] << 8) |
+						(cgc.buffer[15]));
+	} else {
+		subchnl->cdsc_reladdr.msf.minute = cgc.buffer[13];
+		subchnl->cdsc_reladdr.msf.second = cgc.buffer[14];
+		subchnl->cdsc_reladdr.msf.frame = cgc.buffer[15];
+		subchnl->cdsc_absaddr.msf.minute = cgc.buffer[9];
+		subchnl->cdsc_absaddr.msf.second = cgc.buffer[10];
+		subchnl->cdsc_absaddr.msf.frame = cgc.buffer[11];
+	}
 
 	return 0;
 }
@@ -2862,6 +2880,9 @@ int cdrom_get_last_written(struct cdrom_device_info *cdi, long *last_written)
 	   it doesn't give enough information or fails. then we return
 	   the toc contents. */
 use_toc:
+	if (!CDROM_CAN(CDC_PLAY_AUDIO))
+		return -ENOSYS;
+
 	toc.cdte_format = CDROM_MSF;
 	toc.cdte_track = CDROM_LEADOUT;
 	if ((ret = cdi->ops->audio_ioctl(cdi, CDROMREADTOCENTRY, &toc)))
@@ -3019,7 +3040,7 @@ static noinline int mmc_ioctl_cdrom_subchannel(struct cdrom_device_info *cdi,
 	if (!((requested == CDROM_MSF) ||
 	      (requested == CDROM_LBA)))
 		return -EINVAL;
-	q.cdsc_format = CDROM_MSF;
+
 	ret = cdrom_read_subchannel(cdi, &q, 0);
 	if (ret)
 		return ret;
@@ -3183,15 +3204,11 @@ static noinline int mmc_ioctl_dvd_read_struct(struct cdrom_device_info *cdi,
 	if (!CDROM_CAN(CDC_DVD))
 		return -ENOSYS;
 
-	s = kmalloc(size, GFP_KERNEL);
-	if (!s)
-		return -ENOMEM;
+	s = memdup_user(arg, size);
+	if (IS_ERR(s))
+		return PTR_ERR(s);
 
 	cd_dbg(CD_DO_IOCTL, "entering DVD_READ_STRUCT\n");
-	if (copy_from_user(s, arg, size)) {
-		kfree(s);
-		return -EFAULT;
-	}
 
 	ret = dvd_read_struct(cdi, s, cgc);
 	if (ret)

@@ -24,6 +24,7 @@
 /* ethtool support for e1000 */
 
 #include "e1000.h"
+#include <linux/jiffies.h>
 #include <linux/uaccess.h>
 
 enum {NETDEV_STATS, E1000_STATS};
@@ -558,8 +559,6 @@ static void e1000_get_drvinfo(struct net_device *netdev,
 
 	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev),
 		sizeof(drvinfo->bus_info));
-	drvinfo->regdump_len = e1000_get_regs_len(netdev);
-	drvinfo->eedump_len = e1000_get_eeprom_len(netdev);
 }
 
 static void e1000_get_ringparam(struct net_device *netdev,
@@ -1460,7 +1459,7 @@ static int e1000_run_loopback_test(struct e1000_adapter *adapter)
 			ret_val = 13; /* ret_val is the same as mis-compare */
 			break;
 		}
-		if (jiffies >= (time + 2)) {
+		if (time_after_eq(jiffies, time + 2)) {
 			ret_val = 14; /* error code for time out error */
 			break;
 		}
@@ -1554,7 +1553,7 @@ static void e1000_diag_test(struct net_device *netdev,
 
 		if (if_running)
 			/* indicate we're in test mode */
-			dev_close(netdev);
+			e1000_close(netdev);
 		else
 			e1000_reset(adapter);
 
@@ -1583,7 +1582,7 @@ static void e1000_diag_test(struct net_device *netdev,
 		e1000_reset(adapter);
 		clear_bit(__E1000_TESTING, &adapter->flags);
 		if (if_running)
-			dev_open(netdev);
+			e1000_open(netdev);
 	} else {
 		e_info(hw, "online testing starting\n");
 		/* Online tests */
@@ -1826,11 +1825,12 @@ static void e1000_get_ethtool_stats(struct net_device *netdev,
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	int i;
-	char *p = NULL;
 	const struct e1000_stats *stat = e1000_gstrings_stats;
 
 	e1000_update_stats(adapter);
-	for (i = 0; i < E1000_GLOBAL_STATS_LEN; i++) {
+	for (i = 0; i < E1000_GLOBAL_STATS_LEN; i++, stat++) {
+		char *p;
+
 		switch (stat->type) {
 		case NETDEV_STATS:
 			p = (char *)netdev + stat->stat_offset;
@@ -1841,15 +1841,13 @@ static void e1000_get_ethtool_stats(struct net_device *netdev,
 		default:
 			WARN_ONCE(1, "Invalid E1000 stat type: %u index %d\n",
 				  stat->type, i);
-			break;
+			continue;
 		}
 
 		if (stat->sizeof_stat == sizeof(u64))
 			data[i] = *(u64 *)p;
 		else
 			data[i] = *(u32 *)p;
-
-		stat++;
 	}
 /* BUG_ON(i != E1000_STATS_LEN); */
 }

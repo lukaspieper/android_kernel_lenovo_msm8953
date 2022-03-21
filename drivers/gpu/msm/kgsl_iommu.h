@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016,2018 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,7 +13,7 @@
 #ifndef __KGSL_IOMMU_H
 #define __KGSL_IOMMU_H
 
-#ifdef CONFIG_MSM_IOMMU
+#ifdef CONFIG_QCOM_IOMMU
 #include <linux/qcom_iommu.h>
 #endif
 #include <linux/of.h>
@@ -23,7 +23,7 @@
  * These defines control the address range for allocations that
  * are mapped into all pagetables.
  */
-#define KGSL_IOMMU_GLOBAL_MEM_SIZE	SZ_8M
+#define KGSL_IOMMU_GLOBAL_MEM_SIZE	(20 * SZ_1M)
 #define KGSL_IOMMU_GLOBAL_MEM_BASE32	0xf8000000
 #define KGSL_IOMMU_GLOBAL_MEM_BASE64	0xfc000000
 
@@ -187,11 +187,13 @@ struct kgsl_iommu_pt {
 /* Macros to read/write IOMMU registers */
 extern const unsigned int kgsl_iommu_reg_list[KGSL_IOMMU_REG_MAX];
 
+/*
+ * Don't use this function directly. Use the macros below to read/write
+ * IOMMU registers.
+ */
 static inline void __iomem *
 kgsl_iommu_reg(struct kgsl_iommu_context *ctx, enum kgsl_iommu_reg_map reg)
 {
-	BUG_ON(ctx->regbase == NULL);
-	BUG_ON(reg >= KGSL_IOMMU_REG_MAX);
 	return ctx->regbase + kgsl_iommu_reg_list[reg];
 }
 

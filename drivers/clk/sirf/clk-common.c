@@ -7,11 +7,13 @@
  * Licensed under GPLv2 or later.
  */
 
+#include <linux/clk.h>
+
 #define KHZ     1000
 #define MHZ     (KHZ * KHZ)
 
-static void *sirfsoc_clk_vbase;
-static void *sirfsoc_rsc_vbase;
+static void __iomem *sirfsoc_clk_vbase;
+static void __iomem *sirfsoc_rsc_vbase;
 static struct clk_onecell_data clk_data;
 
 /*
@@ -165,10 +167,10 @@ static long cpu_clk_round_rate(struct clk_hw *hw, unsigned long rate,
 	 * SiRF SoC has not cpu clock control,
 	 * So bypass to it's parent pll.
 	 */
-	struct clk *parent_clk = clk_get_parent(hw->clk);
-	struct clk *pll_parent_clk = clk_get_parent(parent_clk);
-	unsigned long pll_parent_rate = clk_get_rate(pll_parent_clk);
-	return pll_clk_round_rate(__clk_get_hw(parent_clk), rate, &pll_parent_rate);
+	struct clk_hw *parent_clk = clk_hw_get_parent(hw);
+	struct clk_hw *pll_parent_clk = clk_hw_get_parent(parent_clk);
+	unsigned long pll_parent_rate = clk_hw_get_rate(pll_parent_clk);
+	return pll_clk_round_rate(parent_clk, rate, &pll_parent_rate);
 }
 
 static unsigned long cpu_clk_recalc_rate(struct clk_hw *hw,
@@ -178,8 +180,8 @@ static unsigned long cpu_clk_recalc_rate(struct clk_hw *hw,
 	 * SiRF SoC has not cpu clock control,
 	 * So return the parent pll rate.
 	 */
-	struct clk *parent_clk = clk_get_parent(hw->clk);
-	return __clk_get_rate(parent_clk);
+	struct clk_hw *parent_clk = clk_hw_get_parent(hw);
+	return clk_hw_get_rate(parent_clk);
 }
 
 static struct clk_ops std_pll_ops = {
@@ -188,7 +190,7 @@ static struct clk_ops std_pll_ops = {
 	.set_rate = pll_clk_set_rate,
 };
 
-static const char *pll_clk_parents[] = {
+static const char * const pll_clk_parents[] = {
 	"osc",
 };
 
@@ -284,7 +286,7 @@ static struct clk_hw usb_pll_clk_hw = {
  * clock domains - cpu, mem, sys/io, dsp, gfx
  */
 
-static const char *dmn_clk_parents[] = {
+static const char * const dmn_clk_parents[] = {
 	"rtc",
 	"osc",
 	"pll1",
@@ -296,9 +298,10 @@ static u8 dmn_clk_get_parent(struct clk_hw *hw)
 {
 	struct clk_dmn *clk = to_dmnclk(hw);
 	u32 cfg = clkc_readl(clk->regofs);
+	const char *name = clk_hw_get_name(hw);
 
 	/* parent of io domain can only be pll3 */
-	if (strcmp(hw->init->name, "io") == 0)
+	if (strcmp(name, "io") == 0)
 		return 4;
 
 	WARN_ON((cfg & (BIT(3) - 1)) > 4);
@@ -310,9 +313,10 @@ static int dmn_clk_set_parent(struct clk_hw *hw, u8 parent)
 {
 	struct clk_dmn *clk = to_dmnclk(hw);
 	u32 cfg = clkc_readl(clk->regofs);
+	const char *name = clk_hw_get_name(hw);
 
 	/* parent of io domain can only be pll3 */
-	if (strcmp(hw->init->name, "io") == 0)
+	if (strcmp(name, "io") == 0)
 		return -EINVAL;
 
 	cfg &= ~(BIT(3) - 1);
@@ -352,7 +356,8 @@ static long dmn_clk_round_rate(struct clk_hw *hw, unsigned long rate,
 {
 	unsigned long fin;
 	unsigned ratio, wait, hold;
-	unsigned bits = (strcmp(hw->init->name, "mem") == 0) ? 3 : 4;
+	const char *name = clk_hw_get_name(hw);
+	unsigned bits = (strcmp(name, "mem") == 0) ? 3 : 4;
 
 	fin = *parent_rate;
 	ratio = fin / rate;
@@ -374,7 +379,8 @@ static int dmn_clk_set_rate(struct clk_hw *hw, unsigned long rate,
 	struct clk_dmn *clk = to_dmnclk(hw);
 	unsigned long fin;
 	unsigned ratio, wait, hold, reg;
-	unsigned bits = (strcmp(hw->init->name, "mem") == 0) ? 3 : 4;
+	const char *name = clk_hw_get_name(hw);
+	unsigned bits = (strcmp(name, "mem") == 0) ? 3 : 4;
 
 	fin = parent_rate;
 	ratio = fin / rate;
@@ -673,7 +679,7 @@ static void std_clk_disable(struct clk_hw *hw)
 	clkc_writel(val, reg);
 }
 
-static const char *std_clk_io_parents[] = {
+static const char * const std_clk_io_parents[] = {
 	"io",
 };
 
@@ -949,7 +955,7 @@ static struct clk_std clk_pulse = {
 	},
 };
 
-static const char *std_clk_dsp_parents[] = {
+static const char * const std_clk_dsp_parents[] = {
 	"dsp",
 };
 
@@ -981,7 +987,7 @@ static struct clk_std clk_mf = {
 	},
 };
 
-static const char *std_clk_sys_parents[] = {
+static const char * const std_clk_sys_parents[] = {
 	"sys",
 };
 
@@ -999,7 +1005,7 @@ static struct clk_std clk_security = {
 	},
 };
 
-static const char *std_clk_usb_parents[] = {
+static const char * const std_clk_usb_parents[] = {
 	"usb_pll",
 };
 

@@ -118,6 +118,8 @@ int 		mptscsih_suspend(struct pci_dev *pdev, pm_message_t state);
 int 		mptscsih_resume(struct pci_dev *pdev);
 #endif
 
+#define SNS_LEN(scp)	SCSI_SENSE_BUFFERSIZE
+
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 /*
@@ -1176,10 +1178,8 @@ mptscsih_remove(struct pci_dev *pdev)
 
 	scsi_remove_host(host);
 
-	if (host == NULL)
-		hd = NULL;
-	else
-		hd = shost_priv(host);
+	if((hd = shost_priv(host)) == NULL)
+		return;
 
 	mptscsih_shutdown(pdev);
 
@@ -1195,15 +1195,14 @@ mptscsih_remove(struct pci_dev *pdev)
 	    "Free'd ScsiLookup (%d) memory\n",
 	    ioc->name, sz1));
 
-	if (hd)
-		kfree(hd->info_kbuf);
+	kfree(hd->info_kbuf);
 
 	/* NULL the Scsi_Host pointer
 	 */
 	ioc->sh = NULL;
 
-	if (host)
-		scsi_host_put(host);
+	scsi_host_put(host);
+
 	mpt_detach(pdev);
 
 }
@@ -2312,25 +2311,20 @@ mptscsih_slave_destroy(struct scsi_device *sdev)
  *	mptscsih_change_queue_depth - This function will set a devices queue depth
  *	@sdev: per scsi_device pointer
  *	@qdepth: requested queue depth
- *	@reason: calling context
  *
  *	Adding support for new 'change_queue_depth' api.
 */
 int
-mptscsih_change_queue_depth(struct scsi_device *sdev, int qdepth, int reason)
+mptscsih_change_queue_depth(struct scsi_device *sdev, int qdepth)
 {
 	MPT_SCSI_HOST		*hd = shost_priv(sdev->host);
 	VirtTarget 		*vtarget;
 	struct scsi_target 	*starget;
 	int			max_depth;
-	int			tagged;
 	MPT_ADAPTER		*ioc = hd->ioc;
 
 	starget = scsi_target(sdev);
 	vtarget = starget->hostdata;
-
-	if (reason != SCSI_QDEPTH_DEFAULT)
-		return -EOPNOTSUPP;
 
 	if (ioc->bus_type == SPI) {
 		if (!(vtarget->tflags & MPT_TARGET_FLAGS_Q_YES))
@@ -2348,13 +2342,8 @@ mptscsih_change_queue_depth(struct scsi_device *sdev, int qdepth, int reason)
 
 	if (qdepth > max_depth)
 		qdepth = max_depth;
-	if (qdepth == 1)
-		tagged = 0;
-	else
-		tagged = MSG_SIMPLE_TAG;
 
-	scsi_adjust_queue_depth(sdev, tagged, qdepth);
-	return sdev->queue_depth;
+	return scsi_change_queue_depth(sdev, qdepth);
 }
 
 /*
@@ -2398,12 +2387,10 @@ mptscsih_slave_configure(struct scsi_device *sdev)
 		    ioc->name, vtarget->negoFlags, vtarget->maxOffset,
 		    vtarget->minSyncFactor));
 
-	mptscsih_change_queue_depth(sdev, MPT_SCSI_CMD_PER_DEV_HIGH,
-				    SCSI_QDEPTH_DEFAULT);
+	mptscsih_change_queue_depth(sdev, MPT_SCSI_CMD_PER_DEV_HIGH);
 	dsprintk(ioc, printk(MYIOC_s_DEBUG_FMT
-		"tagged %d, simple %d, ordered %d\n",
-		ioc->name,sdev->tagged_supported, sdev->simple_tags,
-		sdev->ordered_tags));
+		"tagged %d, simple %d\n",
+		ioc->name,sdev->tagged_supported, sdev->simple_tags));
 
 	blk_queue_dma_alignment (sdev->request_queue, 512 - 1);
 
@@ -2440,7 +2427,7 @@ mptscsih_copy_sense_data(struct scsi_cmnd *sc, MPT_SCSI_HOST *hd, MPT_FRAME_HDR 
 		/* Copy the sense received into the scsi command block. */
 		req_index = le16_to_cpu(mf->u.frame.hwhdr.msgctxu.fld.req_idx);
 		sense_data = ((u8 *)ioc->sense_buf_pool + (req_index * MPT_SENSE_BUFFER_ALLOC));
-		memcpy(sc->sense_buffer, sense_data, MPT_SENSE_BUFFER_ALLOC);
+		memcpy(sc->sense_buffer, sense_data, SNS_LEN(sc));
 
 		/* Log SMART data (asc = 0x5D, non-IM case only) if required.
 		 */

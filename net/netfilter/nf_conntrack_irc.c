@@ -1,16 +1,15 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
- * IRC extension for IP connection tracking, Version 1.21
+/* IRC extension for IP connection tracking, Version 1.21
  * (C) 2000-2002 by Harald Welte <laforge@gnumonks.org>
  * based on RR's ip_conntrack_ftp.c
  * (C) 2006-2012 Patrick McHardy <kaber@trash.net>
  *
- * Linux Foundation chooses to take subject only to the GPLv2 license terms,
- * and distributes only under these terms.
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation; either version
  * 2 of the License, or (at your option) any later version.
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -153,8 +152,8 @@ static bool mangle_ip(struct nf_conn *ct,
 		temp = list_entry(obj_ptr,
 				  struct irc_client_info, ptr);
 		/*If it is an internal client,
-		*do not mangle the DCC Server IP
-		*/
+		 *do not mangle the DCC Server IP
+		 */
 		if ((temp->server_ip == tuple->dst.u3.ip) &&
 		    (temp->nickname_len == (nick_end - nick_start))) {
 			if (memcmp(nick_start, temp->nickname,
@@ -182,16 +181,16 @@ static int handle_nickname(struct nf_conn *ct,
 	}
 	tuple = &ct->tuplehash[dir].tuple;
 	/*Check if the entry is already
-	* present for that client
-	*/
+	 * present for that client
+	 */
 	temp = search_client_by_ip(tuple);
 	if (temp) {
 		add_entry = false;
 		/*Update nickname if the client is not already
-		* connected to the server.If the client is
-		* connected, wait for server to confirm
-		* if nickname is valid
-		*/
+		 * connected to the server.If the client is
+		 * connected, wait for server to confirm
+		 * if nickname is valid
+		 */
 		if (!temp->conn_to_server) {
 			kfree(temp->nickname);
 			temp->nickname =
@@ -217,7 +216,7 @@ static int handle_nickname(struct nf_conn *ct,
 			temp->nickname_len = i;
 			temp->nickname =
 				kmalloc(temp->nickname_len, GFP_ATOMIC);
-			if (temp->nickname == NULL) {
+			if (!temp->nickname) {
 				kfree(temp);
 				return NF_DROP;
 			}
@@ -438,7 +437,7 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 				}
 
 				exp = nf_ct_expect_alloc(ct);
-				if (exp == NULL) {
+				if (!exp) {
 					nf_ct_helper_log(skb, ct,
 							 "cannot alloc expectation");
 					ret = NF_DROP;
@@ -480,7 +479,8 @@ static int help(struct sk_buff *skb, unsigned int protoff,
 					ret = nf_nat_irc(skb, ctinfo,
 							 protoff,
 							 addr_beg_p - ib_ptr,
-							 addr_end_p-addr_beg_p,
+							 addr_end_p
+							 - addr_beg_p,
 							 exp);
 
 				else if (mangle &&
@@ -510,7 +510,7 @@ static int __init nf_conntrack_irc_init(void)
 	int i, ret;
 
 	if (max_dcc_channels < 1) {
-		printk(KERN_ERR "nf_ct_irc: max_dcc_channels must not be zero\n");
+		pr_err("max_dcc_channels must not be zero\n");
 		return -EINVAL;
 	}
 
@@ -526,26 +526,16 @@ static int __init nf_conntrack_irc_init(void)
 		ports[ports_c++] = IRC_PORT;
 
 	for (i = 0; i < ports_c; i++) {
-		irc[i].tuple.src.l3num = AF_INET;
-		irc[i].tuple.src.u.tcp.port = htons(ports[i]);
-		irc[i].tuple.dst.protonum = IPPROTO_TCP;
-		irc[i].expect_policy = &irc_exp_policy;
-		irc[i].me = THIS_MODULE;
-		irc[i].help = help;
+		nf_ct_helper_init(&irc[i], AF_INET, IPPROTO_TCP, "irc",
+				  IRC_PORT, ports[i], i, &irc_exp_policy,
+				  0, 0, help, NULL, THIS_MODULE);
+	}
 
-		if (ports[i] == IRC_PORT)
-			sprintf(irc[i].name, "irc");
-		else
-			sprintf(irc[i].name, "irc-%u", i);
-
-		ret = nf_conntrack_helper_register(&irc[i]);
-		if (ret) {
-			printk(KERN_ERR "nf_ct_irc: failed to register helper "
-			       "for pf: %u port: %u\n",
-			       irc[i].tuple.src.l3num, ports[i]);
-			nf_conntrack_irc_fini();
-			return ret;
-		}
+	ret = nf_conntrack_helpers_register(&irc[0], ports_c);
+	if (ret) {
+		pr_err("failed to register helpers\n");
+		kfree(irc_buffer);
+		return ret;
 	}
 	no_of_clients = 0;
 	INIT_LIST_HEAD(&client_list.ptr);
@@ -556,10 +546,7 @@ static int __init nf_conntrack_irc_init(void)
  * it is needed by the init function */
 static void nf_conntrack_irc_fini(void)
 {
-	int i;
-
-	for (i = 0; i < ports_c; i++)
-		nf_conntrack_helper_unregister(&irc[i]);
+	nf_conntrack_helpers_unregister(irc, ports_c);
 	kfree(irc_buffer);
 }
 

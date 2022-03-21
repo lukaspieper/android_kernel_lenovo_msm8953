@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, 2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,18 +14,42 @@
 #ifndef _F_GSI_H
 #define _F_GSI_H
 
+#include <linux/poll.h>
+#include <linux/miscdevice.h>
+#include <linux/ipa.h>
+#include <uapi/linux/usb/cdc.h>
+#include <linux/usb/ch9.h>
+#include <linux/usb/composite.h>
+#include <linux/usb/gadget.h>
+#include <linux/usb/usb_ctrl_qti.h>
+#include <linux/etherdevice.h>
+#include <linux/debugfs.h>
+#include <linux/ipa_usb.h>
+#include <linux/ipc_logging.h>
+#include <linux/timer.h>
+
+#include "u_ether.h"
+#include "configfs.h"
+
 #define GSI_RMNET_CTRL_NAME "rmnet_ctrl"
+#define GSI_RMNET_V2X_CTRL_NAME "rmnet_v2x_ctrl"
 #define GSI_MBIM_CTRL_NAME "android_mbim"
 #define GSI_DPL_CTRL_NAME "dpl_ctrl"
-#define GSI_CTRL_NAME_LEN (sizeof(GSI_MBIM_CTRL_NAME)+2)
-#define GSI_MAX_CTRL_PKT_SIZE 4096
+#define ETHER_RMNET_CTRL_NAME "rmnet_ctrl0"
+#define ETHER_DPL_CTRL_NAME "dpl_ctrl0"
+#define GSI_GPS_CTRL_NAME "gps"
 
+#define GSI_CTRL_NAME_LEN (sizeof(GSI_MBIM_CTRL_NAME)+2)
+#define GSI_MAX_CTRL_PKT_SIZE 8192
+#define GSI_CTRL_DTR (1 << 0)
+
+#define GSI_NUM_IN_RNDIS_RMNET_ECM_BUFFERS 50
 #define GSI_NUM_IN_BUFFERS 15
 #define GSI_IN_BUFF_SIZE 2048
 #define GSI_NUM_OUT_BUFFERS 14
 #define GSI_OUT_AGGR_SIZE 24576
 
-#define GSI_IN_RNDIS_AGGR_SIZE 9216
+#define GSI_IN_RNDIS_AGGR_SIZE 16384
 #define GSI_IN_MBIM_AGGR_SIZE 16384
 #define GSI_IN_RMNET_AGGR_SIZE 16384
 #define GSI_ECM_AGGR_SIZE 2048
@@ -47,10 +71,6 @@
 /* default pkt alignment factor */
 #define DEFAULT_PKT_ALIGNMENT_FACTOR 4
 
-#define GSI_MBIM_IOCTL_MAGIC 'o'
-#define GSI_MBIM_GET_NTB_SIZE  _IOR(GSI_MBIM_IOCTL_MAGIC, 2, u32)
-#define GSI_MBIM_GET_DATAGRAM_COUNT  _IOR(GSI_MBIM_IOCTL_MAGIC, 3, u16)
-#define GSI_MBIM_EP_LOOKUP _IOR(GSI_MBIM_IOCTL_MAGIC, 4, struct ep_info)
 #define GSI_MBIM_DATA_EP_TYPE_HSUSB 0x2
 /* ID for Microsoft OS String */
 #define GSI_MBIM_OS_STRING_ID 0xEE
@@ -85,6 +105,37 @@ enum gsi_ctrl_notify_state {
 	GSI_CTRL_NOTIFY_RESPONSE_AVAILABLE,
 };
 
+enum rndis_class_id {
+	RNDIS_ID_UNKNOWN,
+	WIRELESS_CONTROLLER_REMOTE_NDIS,
+	MISC_ACTIVE_SYNC,
+	MISC_RNDIS_OVER_ETHERNET,
+	MISC_RNDIS_OVER_WIFI,
+	MISC_RNDIS_OVER_WIMAX,
+	MISC_RNDIS_OVER_WWAN,
+	MISC_RNDIS_FOR_IPV4,
+	MISC_RNDIS_FOR_IPV6,
+	MISC_RNDIS_FOR_GPRS,
+	RNDIS_ID_MAX,
+};
+
+enum usb_prot_id {
+	/* accelerated: redefined from ipa_usb.h, do not change order */
+	USB_PROT_RNDIS_IPA,
+	USB_PROT_ECM_IPA,
+	USB_PROT_RMNET_IPA,
+	USB_PROT_MBIM_IPA,
+	USB_PROT_DIAG_IPA,
+	USB_PROT_RMNET_V2X_IPA,
+
+	/* non-accelerated */
+	USB_PROT_RMNET_ETHER,
+	USB_PROT_DPL_ETHER,
+	USB_PROT_GPS_CTRL,
+
+	USB_PROT_MAX,
+};
+
 #define MAXQUEUELEN 128
 struct event_queue {
 	u8 event[MAXQUEUELEN];
@@ -93,9 +144,9 @@ struct event_queue {
 };
 
 struct gsi_ntb_info {
-	u32	ntb_input_size;
-	u16	ntb_max_datagrams;
-	u16	reserved;
+	__u32	ntb_input_size;
+	__u16	ntb_max_datagrams;
+	__u16	reserved;
 };
 
 struct gsi_ctrl_pkt {
@@ -163,12 +214,16 @@ struct gsi_ctrl_port {
 	int ipa_cons_clnt_hdl;
 	int ipa_prod_clnt_hdl;
 
-	unsigned host_to_modem;
-	unsigned copied_to_modem;
-	unsigned copied_from_modem;
-	unsigned modem_to_host;
-	unsigned cpkt_drop_cnt;
-	unsigned get_encap_cnt;
+	unsigned int host_to_modem;
+	unsigned int copied_to_modem;
+	unsigned int copied_from_modem;
+	unsigned int modem_to_host;
+	unsigned int cpkt_drop_cnt;
+	unsigned int get_encap_cnt;
+
+	struct device *dev;
+	struct work_struct uevent_work;
+	struct workqueue_struct *uevent_wq;
 };
 
 struct gsi_data_port {
@@ -181,10 +236,6 @@ struct gsi_data_port {
 	struct ipa_usb_teth_params ipa_init_params;
 	int in_channel_handle;
 	int out_channel_handle;
-	u32 in_db_reg_phs_addr_lsb;
-	u32 in_db_reg_phs_addr_msb;
-	u32 out_db_reg_phs_addr_lsb;
-	u32 out_db_reg_phs_addr_msb;
 	u32 in_xfer_rsc_index;
 	u32 out_xfer_rsc_index;
 	u16 in_last_trb_addr;
@@ -203,6 +254,7 @@ struct gsi_data_port {
 	enum connection_state sm_state;
 	struct event_queue evt_q;
 	wait_queue_head_t wait_for_ipa_ready;
+	struct gether gether_port;
 
 	/* Track these for debugfs */
 	struct ipa_usb_xdci_chan_params ipa_in_channel_params;
@@ -212,28 +264,33 @@ struct gsi_data_port {
 
 struct f_gsi {
 	struct usb_function function;
-	enum ipa_usb_teth_prot prot_id;
+	enum usb_prot_id prot_id;
 	int ctrl_id;
 	int data_id;
 	u32 vendorID;
 	u8 ethaddr[ETH_ADDR_STR_LEN];
 	const char *manufacturer;
-	int config;
+	struct rndis_params *params;
 	atomic_t connected;
 	bool data_interface_up;
+	enum rndis_class_id rndis_id;
 
 	const struct usb_endpoint_descriptor *in_ep_desc_backup;
 	const struct usb_endpoint_descriptor *out_ep_desc_backup;
 
 	struct gsi_data_port d_port;
 	struct gsi_ctrl_port c_port;
+	bool rmnet_dtr_status;
+
+	bool rwake_inprogress;
+
 	/* To test remote wakeup using debugfs */
 	struct timer_list gsi_rw_timer;
 	u8 debugfs_rw_timer_enable;
 	u16 gsi_rw_timer_interval;
-};
 
-static struct f_gsi *gsi_prot_ctx[IPA_USB_MAX_TETH_PROT_SIZE];
+	bool host_supports_flow_control;
+};
 
 static inline struct f_gsi *func_to_gsi(struct usb_function *f)
 {
@@ -250,10 +307,58 @@ static inline struct f_gsi *c_port_to_gsi(struct gsi_ctrl_port *d)
 	return container_of(d, struct f_gsi, c_port);
 }
 
+/* for configfs support */
+#define MAX_INST_NAME_LEN	40
+
+struct gsi_opts {
+	struct usb_function_instance func_inst;
+	struct f_gsi *gsi;
+
+	/* os desc support */
+	struct config_group *interf_group;
+	char ext_compat_id[16];
+	struct usb_os_desc os_desc;
+};
+
+static inline struct gsi_opts *to_gsi_opts(struct config_item *item)
+{
+	return container_of(to_config_group(item), struct gsi_opts,
+			    func_inst.group);
+}
+
+static int name_to_prot_id(const char *name)
+{
+	if (!name)
+		goto error;
+
+	if (!strncasecmp(name, "rndis", MAX_INST_NAME_LEN))
+		return USB_PROT_RNDIS_IPA;
+	if (!strncasecmp(name, "ecm", MAX_INST_NAME_LEN))
+		return USB_PROT_ECM_IPA;
+	if (!strncasecmp(name, "rmnet", MAX_INST_NAME_LEN))
+		return USB_PROT_RMNET_IPA;
+	if (!strncasecmp(name, "mbim", MAX_INST_NAME_LEN))
+		return USB_PROT_MBIM_IPA;
+	if (!strncasecmp(name, "dpl", MAX_INST_NAME_LEN))
+		return USB_PROT_DIAG_IPA;
+	if (!strncasecmp(name, "rmnet.v2x", MAX_INST_NAME_LEN))
+		return USB_PROT_RMNET_V2X_IPA;
+	if (!strncasecmp(name, "rmnet.ether", MAX_INST_NAME_LEN))
+		return USB_PROT_RMNET_ETHER;
+	if (!strncasecmp(name, "dpl.ether", MAX_INST_NAME_LEN))
+		return USB_PROT_DPL_ETHER;
+	if (!strncasecmp(name, "gps", MAX_INST_NAME_LEN))
+		return USB_PROT_GPS_CTRL;
+
+error:
+	return -EINVAL;
+}
+
 /* device descriptors */
 
 #define LOG2_STATUS_INTERVAL_MSEC 5
 #define MAX_NOTIFY_SIZE sizeof(struct usb_cdc_notification)
+#define GPS_MAX_NOTIFY_SIZE 64
 
 /* rmnet device descriptors */
 
@@ -418,7 +523,7 @@ static struct usb_gadget_strings *rmnet_gsi_strings[] = {
 
 /* rndis device descriptors */
 
-/* interface descriptor: */
+/* interface descriptor: Supports "Wireless" RNDIS; auto-detected by Windows*/
 static struct usb_interface_descriptor rndis_gsi_control_intf = {
 	.bLength =		sizeof(rndis_gsi_control_intf),
 	.bDescriptorType =	USB_DT_INTERFACE,
@@ -426,9 +531,9 @@ static struct usb_interface_descriptor rndis_gsi_control_intf = {
 	/* .bInterfaceNumber = DYNAMIC */
 	/* status endpoint is optional; this could be patched later */
 	.bNumEndpoints =	1,
-	.bInterfaceClass =	USB_CLASS_COMM,
-	.bInterfaceSubClass =   USB_CDC_SUBCLASS_ACM,
-	.bInterfaceProtocol =   USB_CDC_ACM_PROTO_VENDOR,
+	.bInterfaceClass =	USB_CLASS_WIRELESS_CONTROLLER,
+	.bInterfaceSubClass =   0x01,
+	.bInterfaceProtocol =   0x03,
 	/* .iInterface = DYNAMIC */
 };
 
@@ -479,15 +584,16 @@ static struct usb_interface_descriptor rndis_gsi_data_intf = {
 	/* .iInterface = DYNAMIC */
 };
 
+/*  Supports "Wireless" RNDIS; auto-detected by Windows */
 static struct usb_interface_assoc_descriptor
 rndis_gsi_iad_descriptor = {
 	.bLength =		sizeof(rndis_gsi_iad_descriptor),
 	.bDescriptorType =	USB_DT_INTERFACE_ASSOCIATION,
 	.bFirstInterface =	0, /* XXX, hardcoded */
 	.bInterfaceCount =	2, /* control + data */
-	.bFunctionClass =	USB_CLASS_COMM,
-	.bFunctionSubClass =	USB_CDC_SUBCLASS_ETHERNET,
-	.bFunctionProtocol =	USB_CDC_PROTO_NONE,
+	.bFunctionClass =	USB_CLASS_WIRELESS_CONTROLLER,
+	.bFunctionSubClass =	0x01,
+	.bFunctionProtocol =	0x03,
 	/* .iFunction = DYNAMIC */
 };
 
@@ -505,7 +611,7 @@ static struct usb_endpoint_descriptor rndis_gsi_fs_notify_desc = {
 static struct usb_endpoint_descriptor rndis_gsi_fs_in_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
-
+	.wMaxPacketSize =	cpu_to_le16(64),
 	.bEndpointAddress =	USB_DIR_IN,
 	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
 };
@@ -513,7 +619,7 @@ static struct usb_endpoint_descriptor rndis_gsi_fs_in_desc = {
 static struct usb_endpoint_descriptor rndis_gsi_fs_out_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
-
+	.wMaxPacketSize =	cpu_to_le16(64),
 	.bEndpointAddress =	USB_DIR_OUT,
 	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
 };
@@ -666,11 +772,12 @@ static struct usb_gadget_strings *rndis_gsi_strings[] = {
 };
 
 /* mbim device descriptors */
+#define MBIM_NTB_DEFAULT_IN_SIZE	(0x4000)
 
 static struct usb_cdc_ncm_ntb_parameters mbim_gsi_ntb_parameters = {
 	.wLength = sizeof(mbim_gsi_ntb_parameters),
 	.bmNtbFormatsSupported = cpu_to_le16(USB_CDC_NCM_NTB16_SUPPORTED),
-	.dwNtbInMaxSize = cpu_to_le32(0x4000),
+	.dwNtbInMaxSize = cpu_to_le32(MBIM_NTB_DEFAULT_IN_SIZE),
 	.wNdpInDivisor = cpu_to_le16(4),
 	.wNdpInPayloadRemainder = cpu_to_le16(0),
 	.wNdpInAlignment = cpu_to_le16(4),
@@ -799,6 +906,7 @@ static struct usb_endpoint_descriptor mbim_gsi_fs_in_desc = {
 
 	.bEndpointAddress =	USB_DIR_IN,
 	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize =	4*cpu_to_le16(NCM_STATUS_BYTECOUNT),
 };
 
 static struct usb_endpoint_descriptor mbim_gsi_fs_out_desc = {
@@ -807,6 +915,7 @@ static struct usb_endpoint_descriptor mbim_gsi_fs_out_desc = {
 
 	.bEndpointAddress =	USB_DIR_OUT,
 	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize =	4*cpu_to_le16(NCM_STATUS_BYTECOUNT),
 };
 
 static struct usb_descriptor_header *mbim_gsi_fs_function[] = {
@@ -962,64 +1071,9 @@ static struct usb_gadget_strings *mbim_gsi_strings[] = {
 	NULL,
 };
 
-/* Microsoft OS Descriptors */
-
-/*
- * We specify our own bMS_VendorCode byte which Windows will use
- * as the bRequest value in subsequent device get requests.
- */
-#define MBIM_VENDOR_CODE	0xA5
-
-/* Microsoft OS String */
-static u8 mbim_gsi_os_string[] = {
-	18, /* sizeof(mtp_os_string) */
-	USB_DT_STRING,
-	/* Signature field: "MSFT100" */
-	'M', 0, 'S', 0, 'F', 0, 'T', 0, '1', 0, '0', 0, '0', 0,
-	/* vendor code */
-	MBIM_VENDOR_CODE,
-	/* padding */
-	0
-};
-
-/* Microsoft Extended Configuration Descriptor Header Section */
-struct mbim_gsi_ext_config_desc_header {
-	__le32	dwLength;
-	__u16	bcdVersion;
-	__le16	wIndex;
-	__u8	bCount;
-	__u8	reserved[7];
-};
-
-/* Microsoft Extended Configuration Descriptor Function Section */
-struct mbim_gsi_ext_config_desc_function {
-	__u8	bFirstInterfaceNumber;
-	__u8	bInterfaceCount;
-	__u8	compatibleID[8];
-	__u8	subCompatibleID[8];
-	__u8	reserved[6];
-};
-
-/* Microsoft Extended Configuration Descriptor */
-static struct {
-	struct mbim_gsi_ext_config_desc_header	header;
-	struct mbim_gsi_ext_config_desc_function    function;
-} mbim_gsi_ext_config_desc = {
-	.header = {
-		.dwLength = cpu_to_le32(sizeof(mbim_gsi_ext_config_desc)),
-		.bcdVersion = cpu_to_le16(0x0100),
-		.wIndex = cpu_to_le16(4),
-		.bCount = 1,
-	},
-	.function = {
-		.bFirstInterfaceNumber = 0,
-		.bInterfaceCount = 1,
-		.compatibleID = { 'A', 'L', 'T', 'R', 'C', 'F', 'G' },
-		/* .subCompatibleID = DYNAMIC */
-	},
-};
 /* ecm device descriptors */
-#define ECM_QC_STATUS_BYTECOUNT		16	/* 8 byte header + data */
+#define ECM_QC_LOG2_STATUS_INTERVAL_MSEC	5
+#define ECM_QC_STATUS_BYTECOUNT			16 /* 8 byte header + data */
 
 /* interface descriptor: */
 static struct usb_interface_descriptor ecm_gsi_control_intf = {
@@ -1111,6 +1165,7 @@ static struct usb_endpoint_descriptor ecm_gsi_fs_in_desc = {
 
 	.bEndpointAddress =	USB_DIR_IN,
 	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize =	cpu_to_le16(ECM_QC_STATUS_BYTECOUNT),
 };
 
 static struct usb_endpoint_descriptor ecm_gsi_fs_out_desc = {
@@ -1119,6 +1174,7 @@ static struct usb_endpoint_descriptor ecm_gsi_fs_out_desc = {
 
 	.bEndpointAddress =	USB_DIR_OUT,
 	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize =	cpu_to_le16(ECM_QC_STATUS_BYTECOUNT),
 };
 
 static struct usb_descriptor_header *ecm_gsi_fs_function[] = {
@@ -1283,6 +1339,14 @@ static struct usb_interface_descriptor qdss_gsi_data_intf_desc = {
 	.bInterfaceProtocol =	0xff,
 };
 
+static struct usb_endpoint_descriptor qdss_gsi_fs_data_desc = {
+	.bLength              =	 USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType      =	 USB_DT_ENDPOINT,
+	.bEndpointAddress     =	 USB_DIR_IN,
+	.bmAttributes         =	 USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize       =	 cpu_to_le16(64),
+};
+
 static struct usb_endpoint_descriptor qdss_gsi_hs_data_desc = {
 	.bLength              =	 USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType      =	 USB_DT_ENDPOINT,
@@ -1307,6 +1371,12 @@ static struct usb_ss_ep_comp_descriptor qdss_gsi_data_ep_comp_desc = {
 	.wBytesPerInterval    =	 0,
 };
 
+static struct usb_descriptor_header *qdss_gsi_fs_data_only_desc[] = {
+	(struct usb_descriptor_header *) &qdss_gsi_data_intf_desc,
+	(struct usb_descriptor_header *) &qdss_gsi_fs_data_desc,
+	NULL,
+};
+
 static struct usb_descriptor_header *qdss_gsi_hs_data_only_desc[] = {
 	(struct usb_descriptor_header *) &qdss_gsi_data_intf_desc,
 	(struct usb_descriptor_header *) &qdss_gsi_hs_data_desc,
@@ -1322,7 +1392,7 @@ static struct usb_descriptor_header *qdss_gsi_ss_data_only_desc[] = {
 
 /* string descriptors: */
 static struct usb_string qdss_gsi_string_defs[] = {
-	[0].s = "QDSS DATA",
+	[0].s = "DPL Data",
 	{}, /* end of list */
 };
 
@@ -1333,6 +1403,93 @@ static struct usb_gadget_strings qdss_gsi_string_table = {
 
 static struct usb_gadget_strings *qdss_gsi_strings[] = {
 	&qdss_gsi_string_table,
+	NULL,
+};
+
+/* gps device descriptor */
+static struct usb_interface_descriptor gps_interface_desc = {
+	.bLength =		USB_DT_INTERFACE_SIZE,
+	.bDescriptorType =	USB_DT_INTERFACE,
+	.bNumEndpoints =	1,
+	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC,
+	.bInterfaceSubClass =	USB_CLASS_VENDOR_SPEC,
+	.bInterfaceProtocol =	USB_CLASS_VENDOR_SPEC,
+	/* .iInterface = DYNAMIC */
+};
+
+/* Full speed support */
+static struct usb_endpoint_descriptor gps_fs_notify_desc = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bEndpointAddress =	USB_DIR_IN,
+	.bmAttributes =		USB_ENDPOINT_XFER_INT,
+	.wMaxPacketSize =	cpu_to_le16(GPS_MAX_NOTIFY_SIZE),
+	.bInterval =		1 << LOG2_STATUS_INTERVAL_MSEC,
+};
+
+static struct usb_descriptor_header *gps_fs_function[] = {
+	(struct usb_descriptor_header *) &gps_interface_desc,
+	(struct usb_descriptor_header *) &gps_fs_notify_desc,
+	NULL,
+};
+
+/* High speed support */
+static struct usb_endpoint_descriptor gps_hs_notify_desc  = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bEndpointAddress =	USB_DIR_IN,
+	.bmAttributes =		USB_ENDPOINT_XFER_INT,
+	.wMaxPacketSize =	cpu_to_le16(GPS_MAX_NOTIFY_SIZE),
+	.bInterval =		LOG2_STATUS_INTERVAL_MSEC + 4,
+};
+
+static struct usb_descriptor_header *gps_hs_function[] = {
+	(struct usb_descriptor_header *) &gps_interface_desc,
+	(struct usb_descriptor_header *) &gps_hs_notify_desc,
+	NULL,
+};
+
+/* Super speed support */
+static struct usb_endpoint_descriptor gps_ss_notify_desc  = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bEndpointAddress =	USB_DIR_IN,
+	.bmAttributes =		USB_ENDPOINT_XFER_INT,
+	.wMaxPacketSize =	cpu_to_le16(GPS_MAX_NOTIFY_SIZE),
+	.bInterval =		LOG2_STATUS_INTERVAL_MSEC + 4,
+};
+
+static struct usb_ss_ep_comp_descriptor gps_ss_notify_comp_desc = {
+	.bLength =		sizeof(gps_ss_notify_comp_desc),
+	.bDescriptorType =	USB_DT_SS_ENDPOINT_COMP,
+
+	/* the following 3 values can be tweaked if necessary */
+	/* .bMaxBurst =		0, */
+	/* .bmAttributes =	0, */
+	.wBytesPerInterval =	cpu_to_le16(GPS_MAX_NOTIFY_SIZE),
+};
+
+static struct usb_descriptor_header *gps_ss_function[] = {
+	(struct usb_descriptor_header *) &gps_interface_desc,
+	(struct usb_descriptor_header *) &gps_ss_notify_desc,
+	(struct usb_descriptor_header *) &gps_ss_notify_comp_desc,
+	NULL,
+};
+
+/* String descriptors */
+
+static struct usb_string gps_string_defs[] = {
+	[0].s = "GPS",
+	{  } /* end of list */
+};
+
+static struct usb_gadget_strings gps_string_table = {
+	.language =		0x0409,	/* en-us */
+	.strings =		gps_string_defs,
+};
+
+static struct usb_gadget_strings *gps_strings[] = {
+	&gps_string_table,
 	NULL,
 };
 #endif

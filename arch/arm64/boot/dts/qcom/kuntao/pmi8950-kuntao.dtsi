@@ -1,0 +1,71 @@
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&spmi_bus {
+	qcom,pmi8950@2 {
+		pmi8950_mpps: mpps {
+			//mpp@a000 {
+			//	/* Host detect */
+			//	status = "ok";
+			//	qcom,mode = <4>; /* AIN input */
+			//	qcom,ain-route = <0>; /* AMUX 5 */
+			//	qcom,master-en = <1>;
+			//	qcom,src-sel = <0>; /* Function constant */
+			//};
+
+			//mpp@a200 {
+			//	qcom,mode = <1>;		/* Digital output */
+			//	qcom,output-type = <0>;		/* CMOS logic */
+			//	qcom,vin-sel = <0>;
+			//	qcom,src-sel = <5>;		/* DTEST2 */
+			//	qcom,master-en = <1>;		/* Enable GPIO */
+			//	qcom,invert = <0>;
+			//	status = "okay";
+			//};
+		};
+
+		qcom,leds@a100 {
+			status = "disabled";
+		};
+	};
+
+	qcom,pmi8950@3 {
+		labibb: qpnp-labibb-regulator {
+			status = "ok";
+			qcom,qpnp-labibb-mode = "amoled";
+			qcom,swire-control;
+		};
+
+		wled: qcom,leds@d800 {
+			qcom,disp-type-amoled;
+			qcom,loop-ea-gm = <1>;
+			qcom,vref-psm-mv = <550>;
+			qcom,ovp-mv = <31000>;
+			qcom,lcd-psm-ctrl;
+		};
+
+		flash_led: qcom,leds@d300 {
+			pinctrl-names = "flash_led_enable", "flash_led_disable";
+			pinctrl-0 = <&rear_flash_led_enable>;
+			pinctrl-1 = <&rear_flash_led_disable>;
+		};
+
+		pmi_haptic: qcom,haptics@c000 {
+			qcom,play-mode = "buffer";
+			qcom,wave-play-rate-us = <4263>;
+			qcom,vmax-mv = <3200>;
+			qcom,ilim-ma = <100>;
+			qcom,brake-pattern = [03 02 00 00];
+			qcom,wave-samples = [5c 5c 5c 5c 5c 5c 5c 5c];
+		};
+	};
+};

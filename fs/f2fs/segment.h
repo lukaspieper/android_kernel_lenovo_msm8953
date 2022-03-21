@@ -6,6 +6,7 @@
  *             http://www.samsung.com/
  */
 #include <linux/blkdev.h>
+#include <linux/backing-dev.h>
 
 /* constant macro */
 #define NULL_SEGNO			((unsigned int)(~0))
@@ -758,7 +759,7 @@ static inline unsigned long long get_mtime(struct f2fs_sb_info *sbi,
 						bool base_time)
 {
 	struct sit_info *sit_i = SIT_I(sbi);
-	time64_t diff, now = CURRENT_TIME_SEC.tv_sec;
+	time64_t diff, now = ktime_get_real_seconds();
 
 	if (now >= sit_i->mounted_time)
 		return sit_i->elapsed_time + now - sit_i->mounted_time;
@@ -810,7 +811,7 @@ static inline bool sec_usage_check(struct f2fs_sb_info *sbi, unsigned int secno)
  */
 static inline int nr_pages_to_skip(struct f2fs_sb_info *sbi, int type)
 {
-	if (sbi->sb->s_bdi->dirty_exceeded)
+	if (sbi->sb->s_bdi->wb.dirty_exceeded)
 		return 0;
 
 	if (type == DATA)

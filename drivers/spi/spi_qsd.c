@@ -129,9 +129,8 @@ static inline int msm_spi_request_gpios(struct msm_spi *dd)
 						spi_rsrcs[i]);
 				if (result) {
 					dev_err(dd->dev,
-					"%s: gpio_request for pin %d "
-					"failed with error %d\n"
-					, __func__, dd->spi_gpios[i], result);
+					"error %d gpio_request for pin %d\n",
+					result, dd->spi_gpios[i]);
 					goto error;
 				}
 			}
@@ -265,7 +264,7 @@ static long msm_spi_clk_max_rate(struct clk *clk, unsigned long rate)
 		 || ((cur < rate) && (step_direction < 0))) {
 			step_direction = -step_direction;
 			step_size >>= 1;
-		 }
+		}
 	}
 	return nearest_low;
 }
@@ -432,7 +431,6 @@ static void msm_spi_calculate_fifo_size(struct msm_spi *dd)
 fifo_size_err:
 	dd->use_dma = 0;
 	pr_err("%s: invalid FIFO size, SPI_IO_MODES=0x%x\n", __func__, spi_iom);
-	return;
 }
 
 static void msm_spi_read_word_from_fifo(struct msm_spi *dd)
@@ -448,11 +446,11 @@ static void msm_spi_read_word_from_fifo(struct msm_spi *dd)
 		for (i = 0; (i < read_bytes) &&
 			     dd->rx_bytes_remaining; i++) {
 			/* The data format depends on bytes_per_word:
-			   4 bytes: 0x12345678
-			   3 bytes: 0x00123456
-			   2 bytes: 0x00001234
-			   1 byte : 0x00000012
-			*/
+			 * 4 bytes: 0x12345678
+			 * 3 bytes: 0x00123456
+			 * 2 bytes: 0x00001234
+			 * 1 byte : 0x00000012
+			 */
 			shift = BITS_PER_BYTE * i;
 			*dd->read_buf++ = (data_in & (0xFF << shift)) >> shift;
 			dd->rx_bytes_remaining--;
@@ -481,7 +479,7 @@ static inline void msm_spi_udelay(unsigned int delay_usecs)
 	 * would negate the usage of usleep
 	 */
 	if (delay_usecs > 20)
-		usleep_range(delay_usecs, delay_usecs);
+		usleep_range(delay_usecs, delay_usecs + 1);
 	else if (delay_usecs)
 		udelay(delay_usecs);
 }
@@ -511,8 +509,7 @@ static inline int msm_spi_wait_valid(struct msm_spi *dd)
 	while (!msm_spi_is_valid_state(dd)) {
 		if (time_after(jiffies, timeout)) {
 			if (!msm_spi_is_valid_state(dd)) {
-				dev_err(dd->dev, "%s: SPI operational state"
-					"not valid\n", __func__);
+				dev_err(dd->dev, "Invalid SPI operational state\n");
 				return -ETIMEDOUT;
 			} else
 				return 0;
@@ -526,11 +523,13 @@ static inline int msm_spi_set_state(struct msm_spi *dd,
 				    enum msm_spi_state state)
 {
 	enum msm_spi_state cur_state;
+
 	if (msm_spi_wait_valid(dd))
 		return -EIO;
 	cur_state = readl_relaxed(dd->base + SPI_STATE);
 	/* Per spec:
-	   For PAUSE_STATE to RESET_STATE, two writes of (10) are required */
+	 * For PAUSE_STATE to RESET_STATE, two writes of (10) are required
+	 */
 	if (((cur_state & SPI_OP_STATE) == SPI_OP_STATE_PAUSE) &&
 			(state == SPI_OP_STATE_RESET)) {
 		writel_relaxed(SPI_OP_STATE_CLEAR_BITS, dd->base + SPI_STATE);
@@ -592,6 +591,7 @@ msm_spi_calc_spi_config_loopback_and_input_first(u32 spi_config, u8 mode)
 static void msm_spi_set_spi_config(struct msm_spi *dd, int bpw)
 {
 	u32 spi_config = readl_relaxed(dd->base + SPI_CONFIG);
+
 	spi_config = msm_spi_calc_spi_config_loopback_and_input_first(
 					spi_config, dd->spi->mode);
 
@@ -677,9 +677,10 @@ static int msm_spi_bam_pipe_disconnect(struct msm_spi *dd,
 						struct msm_spi_bam_pipe  *pipe)
 {
 	int ret = sps_disconnect(pipe->handle);
+
 	if (ret) {
 		dev_dbg(dd->dev, "%s disconnect bam %s pipe failed\n",
-							__func__, pipe->name);
+			__func__, pipe->name);
 		return ret;
 	}
 	return 0;
@@ -701,14 +702,14 @@ static int msm_spi_bam_pipe_connect(struct msm_spi *dd,
 
 	ret = sps_connect(pipe->handle, config);
 	if (ret) {
-		dev_err(dd->dev, "%s: sps_connect(%s:0x%p):%d",
+		dev_err(dd->dev, "%s: sps_connect(%s:0x%pK):%d",
 				__func__, pipe->name, pipe->handle, ret);
 		return ret;
 	}
 
 	ret = sps_register_event(pipe->handle, &event);
 	if (ret) {
-		dev_err(dd->dev, "%s sps_register_event(hndl:0x%p %s):%d",
+		dev_err(dd->dev, "%s sps_register_event(hndl:0x%pK %s):%d",
 				__func__, pipe->handle, pipe->name, ret);
 		msm_spi_bam_pipe_disconnect(dd, pipe);
 		return ret;
@@ -738,7 +739,7 @@ static void msm_spi_bam_pipe_flush(struct msm_spi *dd,
 
 static void msm_spi_bam_flush(struct msm_spi *dd)
 {
-	dev_dbg(dd->dev, "%s flushing bam for recovery\n" , __func__);
+	dev_dbg(dd->dev, "%s flushing bam for recovery\n", __func__);
 
 	msm_spi_bam_pipe_flush(dd, SPI_BAM_CONSUMER_PIPE);
 	msm_spi_bam_pipe_flush(dd, SPI_BAM_PRODUCER_PIPE);
@@ -794,7 +795,7 @@ msm_spi_bam_process_tx(struct msm_spi *dd, u32 *bytes_to_send, u32 desc_cnt)
 
 	/*
 	 * set flags for last descriptor only
-	*/
+	 */
 	if ((desc_cnt == 1)
 		|| (*bytes_to_send == data_xfr_size))
 		cons_flags = SPS_IOVEC_FLAG_EOT | SPS_IOVEC_FLAG_NWD;
@@ -914,6 +915,7 @@ msm_spi_bam_next_transfer(struct msm_spi *dd)
 static int msm_spi_dma_send_next(struct msm_spi *dd)
 {
 	int ret = 0;
+
 	if (dd->tx_mode == SPI_BAM_MODE)
 		ret = msm_spi_bam_next_transfer(dd);
 	return ret;
@@ -928,7 +930,7 @@ static inline void msm_spi_ack_transfer(struct msm_spi *dd)
 	mb();
 }
 
-/* Figure which irq occured and call the relevant functions */
+/* Figure which irq occurred and call the relevant functions */
 static inline irqreturn_t msm_spi_qup_irq(int irq, void *dev_id)
 {
 	u32 op, ret = IRQ_NONE;
@@ -941,6 +943,7 @@ static inline irqreturn_t msm_spi_qup_irq(int irq, void *dev_id)
 	if (readl_relaxed(dd->base + SPI_ERROR_FLAGS) ||
 	    readl_relaxed(dd->base + QUP_ERROR_FLAGS)) {
 		struct spi_master *master = dev_get_drvdata(dd->dev);
+
 		ret |= msm_spi_error_irq(irq, master);
 	}
 
@@ -951,13 +954,11 @@ static inline irqreturn_t msm_spi_qup_irq(int irq, void *dev_id)
 	 * processing of interrupt.
 	 */
 	mb();
-	if (op & SPI_OP_INPUT_SERVICE_FLAG) {
+	if (op & SPI_OP_INPUT_SERVICE_FLAG)
 		ret |= msm_spi_input_irq(irq, dev_id);
-	}
 
-	if (op & SPI_OP_OUTPUT_SERVICE_FLAG) {
+	if (op & SPI_OP_OUTPUT_SERVICE_FLAG)
 		ret |= msm_spi_output_irq(irq, dev_id);
-	}
 
 	if (dd->tx_mode != SPI_BAM_MODE) {
 		if (!dd->rx_done) {
@@ -1144,6 +1145,7 @@ error:
 static int msm_spi_dma_map_buffers(struct msm_spi *dd)
 {
 	int ret = 0;
+
 	if (dd->tx_mode == SPI_BAM_MODE)
 		ret = msm_spi_bam_map_buffers(dd);
 	return ret;
@@ -1156,7 +1158,7 @@ static void msm_spi_bam_unmap_buffers(struct msm_spi *dd)
 	void *tx_buf, *rx_buf;
 	u32  tx_len, rx_len;
 
-	dev = &dd->spi->dev;
+	dev = dd->dev;
 	xfr = dd->cur_transfer;
 
 	tx_buf = (void *)xfr->tx_buf;
@@ -1185,11 +1187,11 @@ static inline void msm_spi_dma_unmap_buffers(struct msm_spi *dd)
  *
  * Start using DMA if:
  * 1. Is supported by HW
- * 2. Is not diabled by platfrom data
+ * 2. Is not diabled by platform data
  * 3. Transfer size is greater than 3*block size.
  * 4. Buffers are aligned to cache line.
  * 5. Bytes-per-word is 8,16 or 32.
-  */
+ */
 static inline bool
 msm_spi_use_dma(struct msm_spi *dd, struct spi_transfer *tr, u8 bpw)
 {
@@ -1252,6 +1254,7 @@ msm_spi_set_transfer_mode(struct msm_spi *dd, u8 bpw, u32 read_count)
 static void msm_spi_set_qup_io_modes(struct msm_spi *dd)
 {
 	u32 spi_iom;
+
 	spi_iom = readl_relaxed(dd->base + SPI_IO_MODES);
 	/* Set input and output transfer mode: FIFO, DMOV, or BAM */
 	spi_iom &= ~(SPI_IO_M_INPUT_MODE | SPI_IO_M_OUTPUT_MODE);
@@ -1274,10 +1277,6 @@ static void msm_spi_set_qup_io_modes(struct msm_spi *dd)
 		dd->pack_words = false;
 	}
 
-	/*if (dd->mode == SPI_BAM_MODE) {
-		spi_iom |= SPI_IO_C_NO_TRI_STATE;
-		spi_iom &= ~(SPI_IO_C_CS_SELECT | SPI_IO_C_CS_N_POLARITY);
-	}*/
 	writel_relaxed(spi_iom, dd->base + SPI_IO_MODES);
 }
 
@@ -1328,7 +1327,8 @@ static u32 msm_spi_set_spi_io_control(struct msm_spi *dd)
 static void msm_spi_set_qup_op_mask(struct msm_spi *dd)
 {
 	/* mask INPUT and OUTPUT service flags in to prevent IRQs on FIFO status
-	 * change in BAM mode */
+	 * change in BAM mode
+	 */
 	u32 mask = (dd->tx_mode == SPI_BAM_MODE) ?
 		QUP_OP_MASK_OUTPUT_SERVICE_FLAG | QUP_OP_MASK_INPUT_SERVICE_FLAG
 		: 0;
@@ -1395,10 +1395,13 @@ static int msm_spi_process_transfer(struct msm_spi *dd)
 	if (dd->spi->mode & SPI_LOOP)
 		int_loopback = 1;
 
-	if (msm_spi_set_state(dd, SPI_OP_STATE_RESET))
+	ret = msm_spi_set_state(dd, SPI_OP_STATE_RESET);
+	if (ret < 0) {
 		dev_err(dd->dev,
 			"%s: Error setting QUP to reset-state",
 			__func__);
+		return ret;
+	}
 
 	msm_spi_set_transfer_mode(dd, bpw, read_count);
 	msm_spi_set_mx_counts(dd, read_count);
@@ -1418,9 +1421,9 @@ static int msm_spi_process_transfer(struct msm_spi *dd)
 	msm_spi_set_qup_op_mask(dd);
 
 	/* The output fifo interrupt handler will handle all writes after
-	   the first. Restricting this to one write avoids contention
-	   issues and race conditions between this thread and the int handler
-	*/
+	 * the first. Restricting this to one write avoids contention
+	 * issues and race conditions between this thread and the int handler
+	 */
 	if (dd->tx_mode != SPI_BAM_MODE) {
 		if (msm_spi_prepare_for_write(dd))
 			goto transfer_end;
@@ -1452,23 +1455,21 @@ static int msm_spi_process_transfer(struct msm_spi *dd)
 	/* Assume success, this might change later upon transaction result */
 	do {
 		if (dd->write_buf &&
-			!wait_for_completion_timeout(&dd->tx_transfer_complete,
-						 timeout)) {
-				dev_err(dd->dev,
-					"%s: SPI Tx transaction timeout\n",
-					__func__);
-				status = -EIO;
-				break;
+		    !wait_for_completion_timeout(&dd->tx_transfer_complete,
+		    timeout)) {
+			dev_err(dd->dev, "%s: SPI Tx transaction timeout\n",
+				__func__);
+			status = -EIO;
+			break;
 		}
 
 		if (dd->read_buf &&
-			!wait_for_completion_timeout(&dd->rx_transfer_complete,
-						 timeout)) {
-				dev_err(dd->dev,
-					"%s: SPI Rx transaction timeout\n",
-					__func__);
-				status = -EIO;
-				break;
+		    !wait_for_completion_timeout(&dd->rx_transfer_complete,
+		    timeout)) {
+			dev_err(dd->dev, "%s: SPI Rx transaction timeout\n",
+				__func__);
+			status = -EIO;
+			break;
 		}
 	} while (msm_spi_dma_send_next(dd));
 
@@ -1542,6 +1543,7 @@ static inline void msm_spi_set_cs(struct spi_device *spi, bool set_flag)
 static void reset_core(struct msm_spi *dd)
 {
 	u32 spi_ioc;
+
 	msm_spi_register_init(dd);
 	/*
 	 * The SPI core generates a bogus input overrun error on some targets,
@@ -1553,7 +1555,7 @@ static void reset_core(struct msm_spi *dd)
 
 	spi_ioc = readl_relaxed(dd->base + SPI_IO_CONTROL);
 	spi_ioc |= SPI_IO_C_NO_TRI_STATE;
-	writel_relaxed(spi_ioc , dd->base + SPI_IO_CONTROL);
+	writel_relaxed(spi_ioc, dd->base + SPI_IO_CONTROL);
 	/*
 	 * Ensure that the IO control is written to before returning.
 	 */
@@ -1648,7 +1650,7 @@ static int msm_spi_transfer_one(struct spi_master *master,
 	     (xfer->bits_per_word < 4 || xfer->bits_per_word > 32)) ||
 	    (xfer->tx_buf == NULL && xfer->rx_buf == NULL)) {
 		dev_err(dd->dev,
-			"Invalid transfer: %d Hz, %d bpw tx=%p, rx=%p\n",
+			"Invalid transfer: %d Hz, %d bpw tx=%pK, rx=%pK\n",
 			xfer->speed_hz, xfer->bits_per_word,
 			xfer->tx_buf, xfer->rx_buf);
 		return -EINVAL;
@@ -1827,16 +1829,14 @@ static int msm_spi_setup(struct spi_device *spi)
 	mb();
 	if (dd->pdata->is_shared)
 		put_local_resources(dd);
+	/* Counter-part of system-resume when runtime-pm is not enabled. */
+	if (!pm_runtime_enabled(dd->dev))
+		msm_spi_pm_suspend_runtime(dd->dev);
 
 no_resources:
 	mutex_unlock(&dd->core_lock);
-	/* Counter-part of system-resume when runtime-pm is not enabled. */
-	if (!pm_runtime_enabled(dd->dev)) {
-		msm_spi_pm_suspend_runtime(dd->dev);
-	} else {
-		pm_runtime_mark_last_busy(dd->dev);
-		pm_runtime_put_autosuspend(dd->dev);
-	}
+	pm_runtime_mark_last_busy(dd->dev);
+	pm_runtime_put_autosuspend(dd->dev);
 
 err_setup_exit:
 	return rc;
@@ -1968,12 +1968,13 @@ static ssize_t set_stats(struct device *dev, struct device_attribute *attr,
 			 const char *buf, size_t count)
 {
 	struct msm_spi *dd = dev_get_drvdata(dev);
+
 	dd->stat_rx = 0;
 	dd->stat_tx = 0;
 	return count;
 }
 
-static DEVICE_ATTR(stats, S_IRUGO | S_IWUSR, show_stats, set_stats);
+static DEVICE_ATTR(stats, 0644, show_stats, set_stats);
 
 static struct attribute *dev_attrs[] = {
 	&dev_attr_stats.attr,
@@ -1997,7 +1998,7 @@ static void msm_spi_bam_pipe_teardown(struct msm_spi *dd,
 	dma_free_coherent(dd->dev, pipe->config.desc.size,
 		pipe->config.desc.base, pipe->config.desc.phys_base);
 	sps_free_endpoint(pipe->handle);
-	pipe->handle = 0;
+	pipe->handle = NULL;
 	pipe->teardown_required = false;
 }
 
@@ -2011,7 +2012,7 @@ static int msm_spi_bam_pipe_init(struct msm_spi *dd,
 	struct sps_connect *pipe_conf = &pipe->config;
 
 	pipe->name   = (pipe_dir == SPI_BAM_CONSUMER_PIPE) ? "cons" : "prod";
-	pipe->handle = 0;
+	pipe->handle = NULL;
 	pipe_handle  = sps_alloc_endpoint();
 	if (!pipe_handle) {
 		dev_err(dd->dev, "%s: Failed to allocate BAM endpoint\n"
@@ -2201,16 +2202,16 @@ static int msm_spi_dt_to_pdata_populate(struct platform_device *pdev,
 /**
  * msm_spi_dt_to_pdata: create pdata and read gpio config from device tree
  */
-struct msm_spi_platform_data *msm_spi_dt_to_pdata(
+static struct msm_spi_platform_data *msm_spi_dt_to_pdata(
 			struct platform_device *pdev, struct msm_spi *dd)
 {
 	struct msm_spi_platform_data *pdata;
 
 	pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
-	if (!pdata) {
-		pr_err("Unable to allocate platform data\n");
+	if (!pdata)
 		return NULL;
-	} else {
+
+	if (pdata) {
 		struct msm_spi_dt_to_pdata_map map[] = {
 		{"spi-max-frequency",
 			&pdata->max_clock_speed,         DT_SGST, DT_U32,   0},
@@ -2276,6 +2277,7 @@ struct msm_spi_platform_data *msm_spi_dt_to_pdata(
 static int msm_spi_get_qup_hw_ver(struct device *dev, struct msm_spi *dd)
 {
 	u32 data = readl_relaxed(dd->base + QUP_HARDWARE_VER);
+
 	return (data >= QUP_HARDWARE_VER_2_1_1) ? SPI_QUP_VERSION_BFAM
 						: SPI_QUP_VERSION_NONE;
 }
@@ -2485,6 +2487,7 @@ static int msm_spi_probe(struct platform_device *pdev)
 		master->dev.of_node = pdev->dev.of_node;
 		pdata = msm_spi_dt_to_pdata(pdev, dd);
 		if (!pdata) {
+			dev_err(&pdev->dev, "platform data allocation failed\n");
 			rc = -ENOMEM;
 			goto err_probe_exit;
 		}
@@ -2545,13 +2548,14 @@ static int msm_spi_probe(struct platform_device *pdev)
 		rc = msm_spi_bam_get_resources(dd, pdev, master);
 		if (rc) {
 			dev_warn(dd->dev,
-					"%s: Faild to get BAM resources",
+					"%s: Failed to get BAM resources",
 					__func__);
 			goto skip_dma_resources;
 		}
 		dd->use_dma = 1;
 	}
 
+	spi_dma_mask(&pdev->dev);
 skip_dma_resources:
 
 	spin_lock_init(&dd->queue_lock);
@@ -2664,8 +2668,8 @@ static int msm_spi_pm_resume_runtime(struct device *device)
 		ret = init_resources(pdev);
 		if (ret != 0)
 			return ret;
-		else
-			dd->is_init_complete = true;
+
+		dd->is_init_complete = true;
 	}
 	msm_spi_clk_path_init(dd);
 	msm_spi_clk_path_vote(dd, dd->pdata->max_clock_speed);
@@ -2745,14 +2749,14 @@ static int msm_spi_remove(struct platform_device *pdev)
 	clk_put(dd->clk);
 	clk_put(dd->pclk);
 	msm_spi_clk_path_teardown(dd);
-	platform_set_drvdata(pdev, 0);
+	platform_set_drvdata(pdev, NULL);
 	spi_unregister_master(master);
 	spi_master_put(master);
 
 	return 0;
 }
 
-static struct of_device_id msm_spi_dt_match[] = {
+static const struct of_device_id msm_spi_dt_match[] = {
 	{
 		.compatible = "qcom,spi-qup-v2",
 	},
@@ -2774,11 +2778,9 @@ static struct platform_driver msm_spi_driver = {
 	},
 	.probe		= msm_spi_probe,
 	.remove		= msm_spi_remove,
-	.probe		= msm_spi_probe,
 };
 
 module_platform_driver(msm_spi_driver);
 
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("0.4");
 MODULE_ALIAS("platform:"SPI_DRV_NAME);

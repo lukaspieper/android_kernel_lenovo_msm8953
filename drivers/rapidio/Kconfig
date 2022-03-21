@@ -25,7 +25,7 @@ config RAPIDIO_ENABLE_RX_TX_PORTS
 config RAPIDIO_DMA_ENGINE
 	bool "DMA Engine support for RapidIO"
 	depends on RAPIDIO
-	depends on DMADEVICES
+	select DMADEVICES
 	select DMA_ENGINE
 	help
 	  Say Y here if you want to use DMA Engine frameork for RapidIO data
@@ -66,6 +66,23 @@ config RAPIDIO_ENUM_BASIC
 	  mechanism similar to one described in RapidIO specification Annex 1.
 
 endchoice
+
+config RAPIDIO_CHMAN
+	tristate "RapidIO Channelized Messaging driver"
+	depends on RAPIDIO
+	help
+	  This option includes RapidIO channelized messaging driver which
+	  provides socket-like interface to allow sharing of single RapidIO
+	  messaging mailbox between multiple user-space applications.
+	  See "Documentation/rapidio/rio_cm.txt" for driver description.
+
+config RAPIDIO_MPORT_CDEV
+	tristate "RapidIO /dev mport device driver"
+	depends on RAPIDIO
+	help
+	  This option includes generic RapidIO mport device driver which
+	  allows to user space applications to perform RapidIO-specific
+	  operations through selected RapidIO mport.
 
 menu "RapidIO Switch drivers"
 	depends on RAPIDIO

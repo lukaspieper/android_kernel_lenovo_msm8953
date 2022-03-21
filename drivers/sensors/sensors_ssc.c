@@ -27,63 +27,20 @@
 #include <linux/delay.h>
 #include <linux/sysfs.h>
 #include <linux/workqueue.h>
-#include <linux/io.h>
 
 #include <soc/qcom/subsystem_restart.h>
 
 #define IMAGE_LOAD_CMD 1
 #define IMAGE_UNLOAD_CMD 0
+#define SSR_RESET_CMD 1
 #define CLASS_NAME	"ssc"
 #define DRV_NAME	"sensors"
 #define DRV_VERSION	"2.00"
 #ifdef CONFIG_COMPAT
-#define DSPS_IOCTL_READ_SLOW_TIMER32 _IOR(DSPS_IOCTL_MAGIC, 3, compat_uint_t)
+#define DSPS_IOCTL_READ_SLOW_TIMER32	_IOR(DSPS_IOCTL_MAGIC, 3, compat_uint_t)
 #endif
 
-static void __iomem *qdsp6ss_qtmr_base;
-static uint32_t qdsp6ss_qtmr_hi_offset;
-static uint32_t qdsp6ss_qtmr_lo_offset;
-
-struct msm_ssc_sensors_data {
-	uint32_t qtmr_base;
-	uint32_t qtmr_length;
-	uint32_t qtmr_hi_offset;
-	uint32_t qtmr_lo_offset;
-};
-
-static inline uint64_t qdsp6_get_counter_value(void)
-{
-	uint32_t cvall = 0;
-	uint32_t cvalh = 0;
-	uint32_t thigh = 0;
-
-	if (qdsp6ss_qtmr_base != NULL) {
-		do {
-			cvalh = __raw_readl(qdsp6ss_qtmr_base +
-			    qdsp6ss_qtmr_hi_offset);
-			cvall = __raw_readl(qdsp6ss_qtmr_base +
-			    qdsp6ss_qtmr_lo_offset);
-			thigh = __raw_readl(qdsp6ss_qtmr_base +
-			    qdsp6ss_qtmr_hi_offset);
-		} while (cvalh != thigh);
-	} else {
-		pr_err("qdsp6ss_qtmr_base is NULL\n");
-	}
-
-	return ((uint64_t) cvalh << 32) | cvall;
-}
-
-static ssize_t qdsp_qtimer_show(struct device *dev,
-				struct device_attribute *attr,
-				char *buf)
-{
-	uint64_t qdsp_qtimer_value = 0;
-
-	qdsp_qtimer_value = qdsp6_get_counter_value();
-	return snprintf(buf, 20, "%llx\n", qdsp_qtimer_value);
-}
-
-static DEVICE_ATTR(qdsp_qtimer, S_IRUGO , qdsp_qtimer_show, NULL);
+#define QTICK_DIV_FACTOR	0x249F
 
 struct sns_ssc_control_s {
 	struct class *dev_class;
@@ -97,6 +54,10 @@ static ssize_t slpi_boot_store(struct kobject *kobj,
 	struct kobj_attribute *attr,
 	const char *buf, size_t count);
 
+static ssize_t slpi_ssr_store(struct kobject *kobj,
+	struct kobj_attribute *attr,
+	const char *buf, size_t count);
+
 struct slpi_loader_private {
 	void *pil_h;
 	struct kobject *boot_slpi_obj;
@@ -106,9 +67,12 @@ struct slpi_loader_private {
 static struct kobj_attribute slpi_boot_attribute =
 	__ATTR(boot, 0220, NULL, slpi_boot_store);
 
+static struct kobj_attribute slpi_ssr_attribute =
+	__ATTR(ssr, 0220, NULL, slpi_ssr_store);
+
 static struct attribute *attrs[] = {
 	&slpi_boot_attribute.attr,
-	&dev_attr_qdsp_qtimer.attr,
+	&slpi_ssr_attribute.attr,
 	NULL,
 };
 
@@ -119,6 +83,8 @@ static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 {
 	struct platform_device *pdev = slpi_private;
 	struct slpi_loader_private *priv = NULL;
+	int ret;
+	const char *firmware_name = NULL;
 
 	if (!pdev) {
 		dev_err(&pdev->dev, "%s: Platform device null\n", __func__);
@@ -131,6 +97,13 @@ static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 		goto fail;
 	}
 
+	ret = of_property_read_string(pdev->dev.of_node,
+		"qcom,firmware-name", &firmware_name);
+	if (ret < 0) {
+		pr_err("can't get fw name.\n");
+		goto fail;
+	}
+
 	priv = platform_get_drvdata(pdev);
 	if (!priv) {
 		dev_err(&pdev->dev,
@@ -138,14 +111,14 @@ static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 		goto fail;
 	}
 
-	priv->pil_h = subsystem_get("slpi");
+	priv->pil_h = subsystem_get_with_fwname("slpi", firmware_name);
 	if (IS_ERR(priv->pil_h)) {
 		dev_err(&pdev->dev, "%s: pil get failed,\n",
 			__func__);
 		goto fail;
 	}
 
-	dev_err(&pdev->dev, "%s: SLPI image is loaded\n", __func__);
+	dev_dbg(&pdev->dev, "%s: SLPI image is loaded\n", __func__);
 	return;
 
 fail:
@@ -154,7 +127,7 @@ fail:
 
 static void slpi_loader_do(struct platform_device *pdev)
 {
-	dev_info(&pdev->dev, "%s: scheduling work to load SLPI fw\n", __func__);
+	dev_dbg(&pdev->dev, "%s: scheduling work to load SLPI fw\n", __func__);
 	schedule_work(&slpi_ldr_work);
 }
 
@@ -172,6 +145,44 @@ static void slpi_loader_unload(struct platform_device *pdev)
 		subsystem_put(priv->pil_h);
 		priv->pil_h = NULL;
 	}
+}
+
+static ssize_t slpi_ssr_store(struct kobject *kobj,
+	struct kobj_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	int ssr_cmd = 0;
+	struct subsys_device *sns_dev = NULL;
+	struct platform_device *pdev = slpi_private;
+	struct slpi_loader_private *priv = NULL;
+
+	pr_debug("%s: going to call slpi_ssr\n", __func__);
+
+	if (kstrtoint(buf, 10, &ssr_cmd) < 0)
+		return -EINVAL;
+
+	if (ssr_cmd != SSR_RESET_CMD)
+		return -EINVAL;
+
+	priv = platform_get_drvdata(pdev);
+	if (!priv)
+		return -EINVAL;
+
+	sns_dev = (struct subsys_device *)priv->pil_h;
+	if (!sns_dev)
+		return -EINVAL;
+
+	dev_err(&pdev->dev, "Something went wrong with SLPI, restarting\n");
+
+	/* subsystem_restart_dev has worker queue to handle */
+	if (subsystem_restart_dev(sns_dev) != 0) {
+		dev_err(&pdev->dev, "subsystem_restart_dev failed\n");
+		return -EINVAL;
+	}
+
+	dev_dbg(&pdev->dev, "SLPI restarted\n");
+	return count;
 }
 
 static ssize_t slpi_boot_store(struct kobject *kobj,
@@ -194,48 +205,10 @@ static ssize_t slpi_boot_store(struct kobject *kobj,
 	return count;
 }
 
-static int msm_ssc_sensors_dt_parse(struct platform_device *pdev,
-		struct msm_ssc_sensors_data *ssc_sensors_data)
-{
-	int ret = -EINVAL;
-	uint32_t qtimer_prop[2];
-
-	ret = of_property_read_u32(pdev->dev.of_node,
-		    "qcom,qtimer-cntpct-hi-offset",
-		    &ssc_sensors_data->qtmr_hi_offset);
-	if (ret) {
-		dev_err(&pdev->dev, "%s: get qdsp timer cntpct hi offset fail\n",
-			__func__);
-		return ret;
-	}
-
-	ret = of_property_read_u32(pdev->dev.of_node,
-		    "qcom,qtimer-cntpct-lo-offset",
-		    &ssc_sensors_data->qtmr_lo_offset);
-	if (ret) {
-		dev_err(&pdev->dev, "%s: get qdsp timer cntpct lo offset fail\n",
-			__func__);
-		return ret;
-	}
-
-	ret = of_property_read_u32_array(pdev->dev.of_node,
-			"qcom,qdsp-timer-base", &qtimer_prop[0], 2);
-	if (!ret) {
-		ssc_sensors_data->qtmr_base = qtimer_prop[0];
-		ssc_sensors_data->qtmr_length = qtimer_prop[1];
-	} else {
-		dev_err(&pdev->dev, "%s: get qdsp timer base fail\n",
-			__func__);
-	}
-
-	return ret;
-}
-
 static int slpi_loader_init_sysfs(struct platform_device *pdev)
 {
 	int ret = -EINVAL;
 	struct slpi_loader_private *priv = NULL;
-	struct msm_ssc_sensors_data ssc_sensors_data;
 
 	slpi_private = NULL;
 
@@ -267,21 +240,6 @@ static int slpi_loader_init_sysfs(struct platform_device *pdev)
 						__func__);
 		ret = -ENOMEM;
 		goto error_return;
-	}
-
-	ret = msm_ssc_sensors_dt_parse(pdev, &ssc_sensors_data);
-	if (!ret) {
-		qdsp6ss_qtmr_hi_offset = ssc_sensors_data.qtmr_hi_offset;
-		qdsp6ss_qtmr_lo_offset = ssc_sensors_data.qtmr_lo_offset;
-		qdsp6ss_qtmr_base = ioremap(ssc_sensors_data.qtmr_base,
-			ssc_sensors_data.qtmr_length);
-		if (qdsp6ss_qtmr_base == NULL) {
-			dev_err(&pdev->dev, "%s: qdsp timer ioremap fail\n",
-				__func__);
-		}
-	} else {
-		dev_info(&pdev->dev, "%s: Could not parse dt\n",
-			__func__);
 	}
 
 	ret = sysfs_create_group(priv->boot_slpi_obj, priv->attr_group);
@@ -329,23 +287,24 @@ static int slpi_loader_remove(struct platform_device *pdev)
 }
 
 /*
- * Read QTimer clock ticks and scale down to 32KHz clock as used
+ * Read virtual QTimer clock ticks and scale down to 32KHz clock as used
  * in DSPS
  */
 static u32 sns_read_qtimer(void)
 {
 	u64 val;
-	val = arch_counter_get_cntpct();
+
+	val = arch_counter_get_cntvct();
 	/*
 	 * To convert ticks from 19.2 Mhz clock to 32768 Hz clock:
 	 * x = (value * 32768) / 19200000
-	 * This is same as first left shift the value by 4 bits, i.e. mutiply
-	 * by 16, and then divide by 9375. The latter is preferable since
+	 * This is same as first left shift the value by 4 bits, i.e. multiply
+	 * by 16, and then divide by 0x249F. The latter is preferable since
 	 * QTimer tick (value) is 56-bit, so (value * 32768) could overflow,
 	 * while (value * 16) will never do
 	 */
 	val <<= 4;
-	do_div(val, 9375);
+	do_div(val, QTICK_DIV_FACTOR);
 
 	return (u32)val;
 }

@@ -450,9 +450,9 @@ struct qseecom_continue_blocked_request_ireq {
 #define IS_OWNER_TRUSTED_OS(owner_id) \
 			(((owner_id >= 50) && (owner_id <= 63)) ? 1:0)
 
-#define TZ_SYSCALL_PARAM_TYPE_VAL              0x0     /** type of value */
-#define TZ_SYSCALL_PARAM_TYPE_BUF_RO           0x1     /** type of buffer read-only */
-#define TZ_SYSCALL_PARAM_TYPE_BUF_RW           0x2     /** type of buffer read-write */
+#define TZ_SYSCALL_PARAM_TYPE_VAL              0x0     /* type of value */
+#define TZ_SYSCALL_PARAM_TYPE_BUF_RO           0x1     /* type of buffer RO */
+#define TZ_SYSCALL_PARAM_TYPE_BUF_RW           0x2     /* type of buffer RW */
 
 #define TZ_OS_APP_START_ID \
 	TZ_SYSCALL_CREATE_SMC_ID(TZ_OWNER_QSEE_OS, TZ_SVC_APP_MGR, 0x01)

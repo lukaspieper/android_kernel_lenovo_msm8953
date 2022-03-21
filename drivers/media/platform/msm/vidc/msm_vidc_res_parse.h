@@ -1,5 +1,5 @@
 
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,11 +16,14 @@
 #define DT_PARSE
 #include <linux/of.h>
 #include "msm_vidc_resources.h"
+#include "msm_vidc_common.h"
 void msm_vidc_free_platform_resources(
 		struct msm_vidc_platform_resources *res);
 
 int read_hfi_type(struct platform_device *pdev);
 
+int read_platform_resources_from_drv_data(
+		struct msm_vidc_core *core);
 int read_platform_resources_from_dt(
 		struct msm_vidc_platform_resources *res);
 

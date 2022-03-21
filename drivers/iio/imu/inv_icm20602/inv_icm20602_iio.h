@@ -1,9 +1,11 @@
 /*
  * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Copyright (C) 2012 Invensense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -32,7 +34,6 @@
  * otherwise use SMD IRQ to trigger
  */
 #define INV20602_DEVICE_IRQ_TRIGGER    0
-extern int icm20602_debug_enable;
 
 #if INV20602_DEVICE_IRQ_TRIGGER
 #define INV20602_SMD_IRQ_TRIGGER    0
@@ -40,22 +41,16 @@ extern int icm20602_debug_enable;
 #define INV20602_SMD_IRQ_TRIGGER    1
 #endif
 
+#define ICM20602_LDO_VTG_MIN_UV 1800000
+#define ICM20602_LDO_VTG_MAX_UV 1800000
 
-#define dev_dbginfo(fmt, ...) \
-	do { \
-		if (icm20602_debug_enable > 0) { \
-			printk(fmt, ##__VA_ARGS__);	  \
-		} \
-	} while (0)
-
-#define dev_dbgerr(fmt, ...) printk(fmt, ##__VA_ARGS__)
 #define INV_ICM20602_TIME_STAMP_TOR           5
 #define ICM20602_PACKAGE_SIZE 14
 
 /* device enum */
 enum inv_devices {
 	INV_ICM20602,
-	INV_NUM_PARTS
+	INV_NUM_PARTS,
 };
 
 enum _mpu_err {
@@ -71,7 +66,7 @@ enum inv_icm20602_gyro_fsr_e {
 	ICM20602_GYRO_FSR_500DPS,
 	ICM20602_GYRO_FSR_1000DPS,
 	ICM20602_GYRO_FSR_2000DPS,
-	ICM20602_GYRO_FSR_NUM
+	ICM20602_GYRO_FSR_NUM,
 };
 
 /* Accelerometor Full Scale Range Enum */
@@ -80,7 +75,7 @@ enum inv_icm20602_acc_fsr_e {
 	ICM20602_ACC_FSR_4G,
 	ICM20602_ACC_FSR_8G,
 	ICM20602_ACC_FSR_16G,
-	ICM20602_ACC_FSR_NUM
+	ICM20602_ACC_FSR_NUM,
 };
 
 /* scan element definition */
@@ -111,7 +106,7 @@ enum inv_icm20602_gyro_sample_rate_e {
 	ICM20602_SAMPLE_RATE_100HZ = 100,
 	ICM20602_SAMPLE_RATE_200HZ = 200,
 	ICM20602_SAMPLE_RATE_500HZ = 500,
-	ICM20602_SAMPLE_RATE_1000HZ = 1000
+	ICM20602_SAMPLE_RATE_1000HZ = 1000,
 };
 
 /* this is for ACCEL CONFIGURATION 2 reg */
@@ -123,7 +118,7 @@ enum inv_icm20602_acc_lpf_e {
 	ICM20602_ACCLFP_10,
 	ICM20602_ACCLFP_5,
 	ICM20602_ACCLFP_420_NOLPF,
-	ICM20602_ACCLPF_NUM = 7
+	ICM20602_ACCLPF_NUM = 7,
 };
 
 /* IIO attribute address */
@@ -138,13 +133,13 @@ enum inv_icm20602_fs_e {
 	INV_ICM20602_FS_500DPS,
 	INV_ICM20602_FS_1000DPS,
 	INV_ICM20602_FS_2000DPS,
-	NUM_ICM20602_FS
+	NUM_ICM20602_FS,
 };
 
 enum inv_icm20602_clock_sel_e {
 	INV_ICM20602_CLK_INTERNAL = 0,
 	INV_ICM20602_CLK_PLL,
-	INV_NUM_CLK
+	INV_NUM_CLK,
 };
 
 enum inv_icm20602_spi_freq {
@@ -164,9 +159,9 @@ struct inv_icm20602_platform_data {
 };
 
 struct X_Y_Z {
-	u32 X;
-	u32 Y;
-	u32 Z;
+	u8 X;
+	u8 Y;
+	u8 Z;
 };
 
 enum RAW_TYPE {
@@ -188,7 +183,7 @@ struct icm20602_user_config {
 	uint32_t user_fps_in_ms;
 
 	bool fifo_enabled;
-	uint32_t fifo_waterlevel;
+	uint16_t fifo_waterlevel;
 	struct X_Y_Z wake_on_motion;
 };
 
@@ -265,27 +260,30 @@ struct struct_icm20602_real_data {
 
 struct struct_icm20602_data {
 	s64 timestamps;
-	struct struct_icm20602_raw_data raw_data;
-	struct struct_icm20602_real_data real_data;
+	u8 *raw_data;
 };
 
 extern struct iio_trigger *inv_trig;
 irqreturn_t inv_icm20602_irq_handler(int irq, void *p);
 irqreturn_t inv_icm20602_read_fifo_fn(int irq, void *p);
-int inv_icm20602_reset_fifo(struct iio_dev *indio_dev);
 
 int inv_icm20602_probe_trigger(struct iio_dev *indio_dev);
 void inv_icm20602_remove_trigger(struct inv_icm20602_state *st);
 int inv_icm20602_validate_trigger(struct iio_dev *indio_dev,
 				struct iio_trigger *trig);
+int icm20602_int_status(struct inv_icm20602_state *st, u8 *int_status);
+int icm20602_int_wm_status(struct inv_icm20602_state *st, u8 *int_status);
+int icm20602_reset_fifo(struct inv_icm20602_state *st);
+int icm20602_fifo_count(struct inv_icm20602_state *st, u16 *fifo_count);
 
 int icm20602_read_raw(struct inv_icm20602_state *st,
-		struct struct_icm20602_real_data *real_data, u8 type);
-
+		struct struct_icm20602_real_data *real_data, uint32_t type);
 int icm20602_init_reg_map(void);
 int icm20602_init_device(struct inv_icm20602_state *st);
 int icm20602_detect(struct inv_icm20602_state *st);
 int icm20602_read_fifo(struct inv_icm20602_state *st,
 	void *buf, const int size);
 int icm20602_start_fifo(struct inv_icm20602_state *st);
+int icm20602_stop_fifo(struct inv_icm20602_state *st);
+bool icm20602_self_test(struct inv_icm20602_state *st);
 #endif

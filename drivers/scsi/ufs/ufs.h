@@ -65,6 +65,10 @@
 #define UFS_MAX_LUNS		(SCSI_W_LUN_BASE + UFS_UPIU_MAX_UNIT_NUM_ID)
 #define UFS_UPIU_WLUN_ID	(1 << 7)
 #define UFS_UPIU_MAX_GENERAL_LUN	8
+#define UFS_MAX_WLUS			4
+#define UFS_MAX_LUS	(UFS_UPIU_MAX_GENERAL_LUN + UFS_MAX_WLUS)
+
+#define QUERY_DESC_IDN_CONFIGURATION	QUERY_DESC_IDN_CONFIGURAION
 
 /* Well known logical unit id in LUN field of UPIU */
 enum {
@@ -144,19 +148,13 @@ enum desc_header_offset {
 	QUERY_DESC_DESC_TYPE_OFFSET	= 0x01,
 };
 
-enum ufs_desc_max_size {
-	QUERY_DESC_DEVICE_MAX_SIZE		= 0x40,
-	QUERY_DESC_CONFIGURAION_MAX_SIZE	= 0x90,
-	QUERY_DESC_UNIT_MAX_SIZE		= 0x23,
-	QUERY_DESC_INTERCONNECT_MAX_SIZE	= 0x06,
-	/*
-	 * Max. 126 UNICODE characters (2 bytes per character) plus 2 bytes
-	 * of descriptor header.
-	 */
-	QUERY_DESC_STRING_MAX_SIZE		= 0xFE,
-	QUERY_DESC_GEOMETRY_MAZ_SIZE		= 0x44,
-	QUERY_DESC_POWER_MAX_SIZE		= 0x62,
-	QUERY_DESC_RFU_MAX_SIZE			= 0x00,
+enum ufs_desc_def_size {
+	QUERY_DESC_DEVICE_DEF_SIZE		= 0x40,
+	QUERY_DESC_CONFIGURATION_DEF_SIZE	= 0x90,
+	QUERY_DESC_UNIT_DEF_SIZE		= 0x23,
+	QUERY_DESC_INTERCONNECT_DEF_SIZE	= 0x06,
+	QUERY_DESC_GEOMETRY_DEF_SIZE		= 0x44,
+	QUERY_DESC_POWER_DEF_SIZE		= 0x62,
 };
 
 /* Unit descriptor parameters offsets in bytes*/
@@ -261,6 +259,15 @@ enum bkops_status {
 	BKOPS_STATUS_MAX		 = BKOPS_STATUS_CRITICAL,
 };
 
+/* bRefClkFreq attribute values */
+enum ref_clk_freq {
+	REF_CLK_FREQ_19_2_MHZ	= 0x0,
+	REF_CLK_FREQ_26_MHZ	= 0x1,
+	REF_CLK_FREQ_38_4_MHZ	= 0x2,
+	REF_CLK_FREQ_52_MHZ	= 0x3,
+	REF_CLK_FREQ_MAX	= REF_CLK_FREQ_52_MHZ,
+};
+
 /* Query response result code */
 enum {
 	QUERY_RESULT_SUCCESS                    = 0x00,
@@ -296,6 +303,7 @@ enum {
 	MASK_QUERY_DATA_SEG_LEN         = 0xFFFF,
 	MASK_RSP_UPIU_DATA_SEG_LEN	= 0xFFFF,
 	MASK_RSP_EXCEPTION_EVENT        = 0x10000,
+	MASK_TM_SERVICE_RESP		= 0xFF,
 };
 
 /* Task management service response */
@@ -484,10 +492,31 @@ struct ufs_vreg_info {
 	struct ufs_vreg *vdd_hba;
 };
 
+/* Possible values for bDeviceSubClass of device descriptor */
+enum {
+	UFS_DEV_EMBEDDED_BOOTABLE	= 0x00,
+	UFS_DEV_EMBEDDED_NON_BOOTABLE	= 0x01,
+	UFS_DEV_REMOVABLE_BOOTABLE	= 0x02,
+	UFS_DEV_REMOVABLE_NON_BOOTABLE	= 0x03,
+};
+
 struct ufs_dev_info {
+	/* device descriptor info */
+	u8	b_device_sub_class;
+	u16	w_manufacturer_id;
+	u8	i_product_name;
+	u16	w_spec_version;
+
+	/* query flags */
 	bool f_power_on_wp_en;
+
 	/* Keeps information if any of the LU is power on write protected */
 	bool is_lu_power_on_wp;
+	/* is Unit Attention Condition cleared on UFS Device LUN? */
+	unsigned is_ufs_dev_wlun_ua_cleared:1;
+
+	/* Device deviations from standard UFS device spec. */
+	unsigned int quirks;
 };
 
 #endif /* End of Header */

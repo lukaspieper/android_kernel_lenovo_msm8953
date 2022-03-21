@@ -15,6 +15,9 @@
 
 #include <linux/kernel.h>
 
+#define USB_QDSS_CH_MDM	"qdss_mdm"
+#define USB_QDSS_CH_MSM	"qdss"
+
 struct qdss_request {
 	char *buf;
 	int length;
@@ -26,8 +29,8 @@ struct qdss_request {
 struct usb_qdss_ch {
 	const char *name;
 	struct list_head list;
-	void (*notify)(void *priv, unsigned event, struct qdss_request *d_req,
-		struct usb_qdss_ch *);
+	void (*notify)(void *priv, unsigned int event,
+		struct qdss_request *d_req, struct usb_qdss_ch *ch);
 	void *priv;
 	void *priv_usb;
 	int app_conn;
@@ -41,20 +44,21 @@ enum qdss_state {
 	USB_QDSS_CTRL_WRITE_DONE,
 };
 
-#ifdef CONFIG_USB_G_ANDROID
+#if IS_ENABLED(CONFIG_USB_F_QDSS)
 struct usb_qdss_ch *usb_qdss_open(const char *name, void *priv,
-	void (*notify)(void *, unsigned, struct qdss_request *,
-		struct usb_qdss_ch *));
+	void (*notify)(void *priv, unsigned int event,
+		struct qdss_request *d_req, struct usb_qdss_ch *ch));
 void usb_qdss_close(struct usb_qdss_ch *ch);
 int usb_qdss_alloc_req(struct usb_qdss_ch *ch, int n_write, int n_read);
 void usb_qdss_free_req(struct usb_qdss_ch *ch);
 int usb_qdss_read(struct usb_qdss_ch *ch, struct qdss_request *d_req);
-int usb_qdss_data_write(struct usb_qdss_ch *ch, struct qdss_request *d_req);
+int usb_qdss_write(struct usb_qdss_ch *ch, struct qdss_request *d_req);
 int usb_qdss_ctrl_write(struct usb_qdss_ch *ch, struct qdss_request *d_req);
 int usb_qdss_ctrl_read(struct usb_qdss_ch *ch, struct qdss_request *d_req);
 #else
 static inline struct usb_qdss_ch *usb_qdss_open(const char *name, void *priv,
-	void (*n)(void *, u32, struct qdss_request *, struct usb_qdss_ch *))
+		void (*n)(void *, unsigned int event,
+		struct qdss_request *d, struct usb_qdss_ch *c))
 {
 	return ERR_PTR(-ENODEV);
 }
@@ -89,6 +93,6 @@ static inline int usb_qdss_alloc_req(struct usb_qdss_ch *c, int n_wr, int n_rd)
 static inline void usb_qdss_close(struct usb_qdss_ch *ch) { }
 
 static inline void usb_qdss_free_req(struct usb_qdss_ch *ch) { }
-#endif
+#endif /* CONFIG_USB_F_QDSS */
 
 #endif

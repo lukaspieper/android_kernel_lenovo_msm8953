@@ -49,6 +49,8 @@ int pmc56_overflow(void)
 {
 	struct event event;
 
+	SKIP_IF(!ebb_is_supported());
+
 	/* Use PMC2 so we set PMCjCE, which enables PMC5/6 */
 	event_init(&event, 0x2001e);
 	event_leader_ebb_init(&event);
@@ -73,6 +75,8 @@ int pmc56_overflow(void)
 
 	ebb_global_disable();
 	ebb_freeze_pmcs();
+
+	count_pmc(2, sample_period);
 
 	dump_ebb_state();
 

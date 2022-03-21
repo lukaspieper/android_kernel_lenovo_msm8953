@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -41,6 +41,7 @@ static irqreturn_t msm_udc_irq(int irq, void *data)
 static void ci13xxx_msm_suspend(void)
 {
 	struct device *dev = _udc->gadget.dev.parent;
+
 	dev_dbg(dev, "ci13xxx_msm_suspend\n");
 
 	if (_udc_ctxt.wake_irq && !_udc_ctxt.wake_irq_state) {
@@ -53,6 +54,7 @@ static void ci13xxx_msm_suspend(void)
 static void ci13xxx_msm_resume(void)
 {
 	struct device *dev = _udc->gadget.dev.parent;
+
 	dev_dbg(dev, "ci13xxx_msm_resume\n");
 
 	if (_udc_ctxt.wake_irq && _udc_ctxt.wake_irq_state) {
@@ -68,17 +70,10 @@ static void ci13xxx_msm_disconnect(void)
 	struct usb_phy *phy = udc->transceiver;
 
 	if (phy && (phy->flags & ENABLE_DP_MANUAL_PULLUP)) {
-		u32 temp;
-
 		usb_phy_io_write(phy,
 				ULPI_MISC_A_VBUSVLDEXT |
 				ULPI_MISC_A_VBUSVLDEXTSEL,
 				ULPI_CLR(ULPI_MISC_A));
-
-		/* Notify LINK of VBUS LOW */
-		temp = readl_relaxed(USB_USBCMD);
-		temp &= ~USBCMD_SESS_VLD_CTRL;
-		writel_relaxed(temp, USB_USBCMD);
 
 		/*
 		 * Add memory barrier as it is must to complete
@@ -123,9 +118,9 @@ static void ci13xxx_msm_connect(void)
 			ULPI_MISC_A_VBUSVLDEXTSEL,
 			ULPI_SET(ULPI_MISC_A));
 
-		temp = readl_relaxed(USB_GENCONFIG2);
-		temp |= GENCFG2_SESS_VLD_CTRL_EN;
-		writel_relaxed(temp, USB_GENCONFIG2);
+		temp = readl_relaxed(USB_GENCONFIG_2);
+		temp |= GENCONFIG_2_SESS_VLD_CTRL_EN;
+		writel_relaxed(temp, USB_GENCONFIG_2);
 
 		temp = readl_relaxed(USB_USBCMD);
 		temp |= USBCMD_SESS_VLD_CTRL;
@@ -194,7 +189,7 @@ static void ci13xxx_msm_mark_err_event(void)
 	otg->err_event_seen = true;
 }
 
-static void ci13xxx_msm_notify_event(struct ci13xxx *udc, unsigned event)
+static void ci13xxx_msm_notify_event(struct ci13xxx *udc, unsigned int event)
 {
 	struct device *dev = udc->gadget.dev.parent;
 
@@ -227,7 +222,6 @@ static void ci13xxx_msm_notify_event(struct ci13xxx *udc, unsigned event)
 	case CI13XXX_CONTROLLER_UDC_STARTED_EVENT:
 		dev_info(dev,
 			 "CI13XXX_CONTROLLER_UDC_STARTED_EVENT received\n");
-		udc->gadget.interrupt_num = _udc_ctxt.irq;
 		break;
 	default:
 		dev_dbg(dev, "unknown ci13xxx_udc event\n");
@@ -333,6 +327,7 @@ gpio_free:
 static void ci13xxx_msm_uninstall_wake_gpio(struct platform_device *pdev)
 {
 	struct pinctrl_state *set_state;
+
 	dev_dbg(&pdev->dev, "ci13xxx_msm_uninstall_wake_gpio\n");
 
 	if (_udc_ctxt.wake_gpio) {

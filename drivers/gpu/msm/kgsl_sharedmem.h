@@ -1,4 +1,4 @@
-/* Copyright (c) 2002,2007-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2002,2007-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -57,6 +57,9 @@ int kgsl_cache_range_op(struct kgsl_memdesc *memdesc,
 			uint64_t offset, uint64_t size,
 			unsigned int op);
 
+void kgsl_memdesc_init(struct kgsl_device *device,
+			struct kgsl_memdesc *memdesc, uint64_t flags);
+
 void kgsl_process_init_sysfs(struct kgsl_device *device,
 		struct kgsl_process_private *private);
 void kgsl_process_uninit_sysfs(struct kgsl_process_private *private);
@@ -90,6 +93,18 @@ kgsl_memdesc_get_align(const struct kgsl_memdesc *memdesc)
 }
 
 /*
+ * kgsl_memdesc_get_pagesize - Get pagesize based on alignment
+ * @memdesc - the memdesc
+ *
+ * Returns the pagesize based on memdesc alignment
+ */
+static inline int
+kgsl_memdesc_get_pagesize(const struct kgsl_memdesc *memdesc)
+{
+	return (1 << kgsl_memdesc_get_align(memdesc));
+}
+
+/*
  * kgsl_memdesc_get_cachemode - Get cache mode of a memdesc
  * @memdesc: the memdesc
  *
@@ -119,8 +134,9 @@ kgsl_memdesc_set_align(struct kgsl_memdesc *memdesc, unsigned int align)
 	if (align > 32)
 		align = 32;
 
-	memdesc->flags &= ~KGSL_MEMALIGN_MASK;
-	memdesc->flags |= (align << KGSL_MEMALIGN_SHIFT) & KGSL_MEMALIGN_MASK;
+	memdesc->flags &= ~(uint64_t)KGSL_MEMALIGN_MASK;
+	memdesc->flags |= (uint64_t)((align << KGSL_MEMALIGN_SHIFT) &
+					KGSL_MEMALIGN_MASK);
 	return 0;
 }
 
@@ -209,12 +225,19 @@ kgsl_memdesc_has_guard_page(const struct kgsl_memdesc *memdesc)
  *
  * Returns guard page size
  */
-static inline int
-kgsl_memdesc_guard_page_size(const struct kgsl_mmu *mmu,
-				const struct kgsl_memdesc *memdesc)
+static inline uint64_t
+kgsl_memdesc_guard_page_size(const struct kgsl_memdesc *memdesc)
 {
-	return kgsl_memdesc_is_secured(memdesc) ? mmu->secure_align_mask + 1 :
-								PAGE_SIZE;
+	if (!kgsl_memdesc_has_guard_page(memdesc))
+		return 0;
+
+	if (kgsl_memdesc_is_secured(memdesc)) {
+		if (memdesc->pagetable != NULL &&
+				memdesc->pagetable->mmu != NULL)
+			return memdesc->pagetable->mmu->secure_align_mask + 1;
+	}
+
+	return PAGE_SIZE;
 }
 
 /*
@@ -239,10 +262,7 @@ kgsl_memdesc_use_cpu_map(const struct kgsl_memdesc *memdesc)
 static inline uint64_t
 kgsl_memdesc_footprint(const struct kgsl_memdesc *memdesc)
 {
-	uint64_t size = memdesc->size;
-	if (kgsl_memdesc_has_guard_page(memdesc))
-		size += SZ_4K;
-	return size;
+	return  memdesc->size + kgsl_memdesc_guard_page_size(memdesc);
 }
 
 /*
@@ -265,8 +285,8 @@ static inline int kgsl_allocate_global(struct kgsl_device *device,
 {
 	int ret;
 
-	memdesc->flags = flags;
-	memdesc->priv = priv;
+	kgsl_memdesc_init(device, memdesc, flags);
+	memdesc->priv |= priv;
 
 	if (((memdesc->priv & KGSL_MEMDESC_CONTIG) != 0) ||
 		(kgsl_mmu_get_mmutype(device) == KGSL_MMU_TYPE_NONE))
@@ -274,8 +294,12 @@ static inline int kgsl_allocate_global(struct kgsl_device *device,
 						(size_t) size);
 	else {
 		ret = kgsl_sharedmem_page_alloc_user(memdesc, (size_t) size);
-		if (ret == 0)
-			kgsl_memdesc_map(memdesc);
+		if (ret == 0) {
+			if (kgsl_memdesc_map(memdesc) == NULL) {
+				kgsl_sharedmem_free(memdesc);
+				ret = -ENOMEM;
+			}
+		}
 	}
 
 	if (ret == 0)

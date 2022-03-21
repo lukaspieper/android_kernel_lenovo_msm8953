@@ -11,29 +11,6 @@
 #include <linux/kallsyms.h>
 #include <linux/stacktrace.h>
 
-int snprint_stack_trace(char *buf, int buf_len, struct stack_trace *trace,
-			int spaces)
-{
-	int ret = 0;
-	int i;
-
-	if (WARN_ON(!trace->entries))
-		return 0;
-
-	for (i = 0; i < trace->nr_entries; i++) {
-		unsigned long ip = trace->entries[i];
-		int printed = snprintf(buf, buf_len, "%*c[<%p>] %pS\n",
-				1 + spaces, ' ',
-				(void *) ip, (void *) ip);
-		buf_len -= printed;
-		ret += printed;
-		buf += printed;
-	}
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(snprint_stack_trace);
-
 void print_stack_trace(struct stack_trace *trace, int spaces)
 {
 	int i;
@@ -41,12 +18,40 @@ void print_stack_trace(struct stack_trace *trace, int spaces)
 	if (WARN_ON(!trace->entries))
 		return;
 
-	for (i = 0; i < trace->nr_entries; i++) {
-		printk("%*c", 1 + spaces, ' ');
-		print_ip_sym(trace->entries[i]);
-	}
+	for (i = 0; i < trace->nr_entries; i++)
+		printk("%*c%pS\n", 1 + spaces, ' ', (void *)trace->entries[i]);
 }
 EXPORT_SYMBOL_GPL(print_stack_trace);
+
+int snprint_stack_trace(char *buf, size_t size,
+			struct stack_trace *trace, int spaces)
+{
+	int i;
+	int generated;
+	int total = 0;
+
+	if (WARN_ON(!trace->entries))
+		return 0;
+
+	for (i = 0; i < trace->nr_entries; i++) {
+		generated = snprintf(buf, size, "%*c%pS\n", 1 + spaces, ' ',
+				     (void *)trace->entries[i]);
+
+		total += generated;
+
+		/* Assume that generated isn't a negative number */
+		if (generated >= size) {
+			buf += size;
+			size = 0;
+		} else {
+			buf += generated;
+			size -= generated;
+		}
+	}
+
+	return total;
+}
+EXPORT_SYMBOL_GPL(snprint_stack_trace);
 
 /*
  * Architectures that do not implement save_stack_trace_tsk or

@@ -156,7 +156,7 @@ struct fb_cursor_user {
 #define FB_EVENT_GET_REQ                0x0D
 /*      Unbind from the console if possible */
 #define FB_EVENT_FB_UNBIND              0x0E
-/*      CONSOLE-SPECIFIC: remap all consoles to new fb - for vga switcheroo */
+/*      CONSOLE-SPECIFIC: remap all consoles to new fb - for vga_switcheroo */
 #define FB_EVENT_REMAP_ALL_CONSOLE      0x0F
 /*      A hardware display blank early change occured */
 #define FB_EARLY_EVENT_BLANK		0x10
@@ -175,9 +175,27 @@ struct fb_blit_caps {
 	u32 flags;
 };
 
+#ifdef CONFIG_FB_NOTIFY
 extern int fb_register_client(struct notifier_block *nb);
 extern int fb_unregister_client(struct notifier_block *nb);
 extern int fb_notifier_call_chain(unsigned long val, void *v);
+#else
+static inline int fb_register_client(struct notifier_block *nb)
+{
+	return 0;
+};
+
+static inline int fb_unregister_client(struct notifier_block *nb)
+{
+	return 0;
+};
+
+static inline int fb_notifier_call_chain(unsigned long val, void *v)
+{
+	return 0;
+};
+#endif
+
 /*
  * Pixmap structure definition
  *
@@ -278,9 +296,6 @@ struct fb_ops {
 	/* Draws cursor */
 	int (*fb_cursor) (struct fb_info *info, struct fb_cursor *cursor);
 
-	/* Rotates the display */
-	void (*fb_rotate)(struct fb_info *info, int angle);
-
 	/* wait for blit idle, optional */
 	int (*fb_sync)(struct fb_info *info);
 
@@ -290,15 +305,15 @@ struct fb_ops {
 
 	/* perform fb specific ioctl v2 (optional) - provides file param */
 	int (*fb_ioctl_v2)(struct fb_info *info, unsigned int cmd,
-			unsigned long arg, struct file *file);
+					unsigned long arg, struct file *file);
 
 	/* Handle 32bit compat ioctl (optional) */
-	int (*fb_compat_ioctl)(struct fb_info *info, unsigned cmd,
+	int (*fb_compat_ioctl)(struct fb_info *info, unsigned int cmd,
 			unsigned long arg);
 
 	/* Handle 32bit compat ioctl (optional) */
-	int (*fb_compat_ioctl_v2)(struct fb_info *info, unsigned cmd,
-			unsigned long arg, struct file *file);
+	int (*fb_compat_ioctl_v2)(struct fb_info *info, unsigned int cmd,
+				  unsigned long arg, struct file *file);
 
 	/* perform fb specific mmap */
 	int (*fb_mmap)(struct fb_info *info, struct vm_area_struct *vma);
@@ -470,6 +485,16 @@ struct fb_info {
 	struct fb_videomode *mode;	/* current mode */
 	struct file *file;		/* current file node */
 
+#ifdef CONFIG_FB_BACKLIGHT
+	/* assigned backlight device */
+	/* set before framebuffer registration, 
+	   remove after unregister */
+	struct backlight_device *bl_dev;
+
+	/* Backlight level curve */
+	struct mutex bl_curve_mutex;	
+	u8 bl_curve[FB_BACKLIGHT_LEVELS];
+#endif
 #ifdef CONFIG_FB_DEFERRED_IO
 	struct delayed_work deferred_work;
 	struct fb_deferred_io *fbdefio;
@@ -482,7 +507,10 @@ struct fb_info {
 #ifdef CONFIG_FB_TILEBLITTING
 	struct fb_tile_ops *tileops;    /* Tile Blitting */
 #endif
-	char __iomem *screen_base;	/* Virtual address */
+	union {
+		char __iomem *screen_base;	/* Virtual address */
+		char *screen_buffer;
+	};
 	unsigned long screen_size;	/* Amount of ioremapped VRAM or 0 */ 
 	void *pseudo_palette;		/* Fake palette of 16 colors */ 
 #define FBINFO_STATE_RUNNING	0
@@ -654,6 +682,7 @@ static inline void __fb_pad_aligned_buffer(u8 *dst, u32 d_pitch,
 }
 
 /* drivers/video/fb_defio.c */
+int fb_deferred_io_mmap(struct fb_info *info, struct vm_area_struct *vma);
 extern void fb_deferred_io_init(struct fb_info *info);
 extern void fb_deferred_io_open(struct fb_info *info,
 				struct inode *inode,
@@ -712,8 +741,6 @@ extern int fb_parse_edid(unsigned char *edid, struct fb_var_screeninfo *var);
 extern const unsigned char *fb_firmware_edid(struct device *device);
 extern void fb_edid_to_monspecs(unsigned char *edid,
 				struct fb_monspecs *specs);
-extern void fb_edid_add_monspecs(unsigned char *edid,
-				 struct fb_monspecs *specs);
 extern void fb_destroy_modedb(struct fb_videomode *modedb);
 extern int fb_find_mode_cvt(struct fb_videomode *mode, int margins, int rb);
 extern unsigned char *fb_ddc_read(struct i2c_adapter *adapter);
@@ -725,7 +752,9 @@ extern int fb_videomode_from_videomode(const struct videomode *vm,
 				       struct fb_videomode *fbmode);
 
 /* drivers/video/modedb.c */
-#define VESA_MODEDB_SIZE 34
+#define VESA_MODEDB_SIZE 43
+#define DMT_SIZE 0x50
+
 extern void fb_var_to_videomode(struct fb_videomode *mode,
 				const struct fb_var_screeninfo *var);
 extern void fb_videomode_to_var(struct fb_var_screeninfo *var,
@@ -776,9 +805,16 @@ struct fb_videomode {
 	u32 flag;
 };
 
+struct dmt_videomode {
+	u32 dmt_id;
+	u32 std_2byte_code;
+	u32 cvt_3byte_code;
+	const struct fb_videomode *mode;
+};
+
 extern const char *fb_mode_option;
 extern const struct fb_videomode vesa_modes[];
-extern const struct fb_videomode cea_modes[64];
+extern const struct dmt_videomode dmt_modes[];
 
 struct fb_modelist {
 	struct list_head list;

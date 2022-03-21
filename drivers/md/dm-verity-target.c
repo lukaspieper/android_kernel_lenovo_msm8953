@@ -17,6 +17,7 @@
 #include "dm-verity.h"
 #include "dm-verity-fec.h"
 
+#include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/reboot.h>
 #include <linux/vmalloc.h>
@@ -30,16 +31,19 @@
 
 #define DM_VERITY_MAX_CORRUPTED_ERRS	100
 
+#define DM_VERITY_OPT_DEVICE_WAIT	"device_wait"
 #define DM_VERITY_OPT_LOGGING		"ignore_corruption"
 #define DM_VERITY_OPT_RESTART		"restart_on_corruption"
 #define DM_VERITY_OPT_IGN_ZEROES	"ignore_zero_blocks"
 #define DM_VERITY_OPT_AT_MOST_ONCE	"check_at_most_once"
 
-#define DM_VERITY_OPTS_MAX		(2 + DM_VERITY_OPTS_FEC)
+#define DM_VERITY_OPTS_MAX		(3 + DM_VERITY_OPTS_FEC)
 
 static unsigned dm_verity_prefetch_cluster = DM_VERITY_DEFAULT_PREFETCH_SIZE;
 
 module_param_named(prefetch_cluster, dm_verity_prefetch_cluster, uint, S_IRUGO | S_IWUSR);
+
+static int dm_device_wait;
 
 struct dm_verity_prefetch_work {
 	struct work_struct work;
@@ -63,6 +67,14 @@ struct dm_verity_prefetch_work {
 struct buffer_aux {
 	int hash_verified;
 };
+/*
+ * While system shutdown, skip verity work for I/O error.
+ */
+static inline bool verity_is_system_shutting_down(void)
+{
+	return system_state == SYSTEM_HALT || system_state == SYSTEM_POWER_OFF
+		|| system_state == SYSTEM_RESTART;
+}
 
 /*
  * Initialize struct buffer_aux for a freshly created buffer.
@@ -235,8 +247,12 @@ out:
 	if (v->mode == DM_VERITY_MODE_LOGGING)
 		return 0;
 
-	if (v->mode == DM_VERITY_MODE_RESTART)
+	if (v->mode == DM_VERITY_MODE_RESTART) {
+#ifdef CONFIG_DM_VERITY_AVB
+		dm_verity_avb_error_handler();
+#endif
 		kernel_restart("dm-verity device corrupted");
+	}
 
 	return 1;
 }
@@ -356,7 +372,7 @@ int verity_for_bv_block(struct dm_verity *v, struct dm_verity_io *io,
 				       size_t len))
 {
 	unsigned todo = 1 << v->data_dev_block_bits;
-	struct bio *bio = dm_bio_from_per_bio_data(io, v->ti->per_bio_data_size);
+	struct bio *bio = dm_bio_from_per_bio_data(io, v->ti->per_io_data_size);
 
 	do {
 		int r;
@@ -403,7 +419,7 @@ static inline void verity_bv_skip_block(struct dm_verity *v,
 					struct dm_verity_io *io,
 					struct bvec_iter *iter)
 {
-	struct bio *bio = dm_bio_from_per_bio_data(io, v->ti->per_bio_data_size);
+	struct bio *bio = dm_bio_from_per_bio_data(io, v->ti->per_io_data_size);
 
 	bio_advance_iter(bio, iter, 1 << v->data_dev_block_bits);
 }
@@ -484,14 +500,14 @@ static int verity_verify_io(struct dm_verity_io *io)
 static void verity_finish_io(struct dm_verity_io *io, int error)
 {
 	struct dm_verity *v = io->v;
-	struct bio *bio = dm_bio_from_per_bio_data(io, v->ti->per_bio_data_size);
+	struct bio *bio = dm_bio_from_per_bio_data(io, v->ti->per_io_data_size);
 
 	bio->bi_end_io = io->orig_bi_end_io;
-	bio->bi_private = io->orig_bi_private;
+	bio->bi_error = error;
 
 	verity_fec_finish_io(io);
 
-	bio_endio_nodec(bio, error);
+	bio_endio(bio);
 }
 
 static void verity_work(struct work_struct *w)
@@ -501,12 +517,13 @@ static void verity_work(struct work_struct *w)
 	verity_finish_io(io, verity_verify_io(io));
 }
 
-static void verity_end_io(struct bio *bio, int error)
+static void verity_end_io(struct bio *bio)
 {
 	struct dm_verity_io *io = bio->bi_private;
 
-	if (error && !verity_fec_is_enabled(io->v)) {
-		verity_finish_io(io, error);
+	if (bio->bi_error &&
+		(!verity_fec_is_enabled(io->v) || verity_is_system_shutting_down())) {
+		verity_finish_io(io, bio->bi_error);
 		return;
 	}
 
@@ -598,10 +615,9 @@ int verity_map(struct dm_target *ti, struct bio *bio)
 	if (bio_data_dir(bio) == WRITE)
 		return -EIO;
 
-	io = dm_per_bio_data(bio, ti->per_bio_data_size);
+	io = dm_per_bio_data(bio, ti->per_io_data_size);
 	io->v = v;
 	io->orig_bi_end_io = bio->bi_end_io;
-	io->orig_bi_private = bio->bi_private;
 	io->block = bio->bi_iter.bi_sector >> (v->data_dev_block_bits - SECTOR_SHIFT);
 	io->n_blocks = bio->bi_iter.bi_size >> v->data_dev_block_bits;
 
@@ -687,36 +703,19 @@ void verity_status(struct dm_target *ti, status_type_t type,
 }
 EXPORT_SYMBOL_GPL(verity_status);
 
-int verity_ioctl(struct dm_target *ti, unsigned cmd,
-			unsigned long arg)
+int verity_prepare_ioctl(struct dm_target *ti,
+		struct block_device **bdev, fmode_t *mode)
 {
 	struct dm_verity *v = ti->private;
-	int r = 0;
+
+	*bdev = v->data_dev->bdev;
 
 	if (v->data_start ||
 	    ti->len != i_size_read(v->data_dev->bdev->bd_inode) >> SECTOR_SHIFT)
-		r = scsi_verify_blk_ioctl(NULL, cmd);
-
-	return r ? : __blkdev_driver_ioctl(v->data_dev->bdev, v->data_dev->mode,
-				     cmd, arg);
+		return 1;
+	return 0;
 }
-EXPORT_SYMBOL_GPL(verity_ioctl);
-
-int verity_merge(struct dm_target *ti, struct bvec_merge_data *bvm,
-			struct bio_vec *biovec, int max_size)
-{
-	struct dm_verity *v = ti->private;
-	struct request_queue *q = bdev_get_queue(v->data_dev->bdev);
-
-	if (!q->merge_bvec_fn)
-		return max_size;
-
-	bvm->bi_bdev = v->data_dev->bdev;
-	bvm->bi_sector = verity_map_sector(v, bvm->bi_sector);
-
-	return min(max_size, q->merge_bvec_fn(q, bvm, biovec));
-}
-EXPORT_SYMBOL_GPL(verity_merge);
+EXPORT_SYMBOL_GPL(verity_prepare_ioctl);
 
 int verity_iterate_devices(struct dm_target *ti,
 				  iterate_devices_callout_fn fn, void *data)
@@ -824,6 +823,38 @@ out:
 	return r;
 }
 
+static int verity_parse_pre_opt_args(struct dm_arg_set *as,
+					struct dm_verity *v)
+{
+	int r;
+	unsigned int argc;
+	const char *arg_name;
+	struct dm_target *ti = v->ti;
+	static struct dm_arg _args[] = {
+		{0, DM_VERITY_OPTS_MAX, "Invalid number of feature args"},
+	};
+
+	r = dm_read_arg_group(_args, as, &argc, &ti->error);
+	if (r)
+		return -EINVAL;
+
+	if (!argc)
+		return 0;
+
+	do {
+		arg_name = dm_shift_arg(as);
+		argc--;
+
+		if (!strcasecmp(arg_name, DM_VERITY_OPT_DEVICE_WAIT)) {
+			dm_device_wait = 1;
+			continue;
+		}
+
+	} while (argc);
+
+	return 0;
+}
+
 static int verity_parse_opt_args(struct dm_arg_set *as, struct dm_verity *v)
 {
 	int r;
@@ -872,6 +903,8 @@ static int verity_parse_opt_args(struct dm_arg_set *as, struct dm_verity *v)
 			r = verity_fec_parse_opt_args(as, v, &argc, arg_name);
 			if (r)
 				return r;
+			continue;
+		} else if (!strcasecmp(arg_name, DM_VERITY_OPT_DEVICE_WAIT)) {
 			continue;
 		}
 
@@ -931,6 +964,15 @@ int verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 		goto bad;
 	}
 
+	/* Optional parameters which are parsed pre required args. */
+	if ((argc - 10)) {
+		as.argc = argc - 10;
+		as.argv = argv + 10;
+		r = verity_parse_pre_opt_args(&as, v);
+		if (r < 0)
+			goto bad;
+	}
+
 	if (sscanf(argv[0], "%u%c", &num, &dummy) != 1 ||
 	    num > 1) {
 		ti->error = "Invalid version";
@@ -939,14 +981,24 @@ int verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	}
 	v->version = num;
 
+retry_dev1:
 	r = dm_get_device(ti, argv[1], FMODE_READ, &v->data_dev);
 	if (r) {
+		if (r == -ENODEV && dm_device_wait) {
+			msleep(100);
+			goto retry_dev1;
+		}
 		ti->error = "Data device lookup failed";
 		goto bad;
 	}
 
+retry_dev2:
 	r = dm_get_device(ti, argv[2], FMODE_READ, &v->hash_dev);
 	if (r) {
+		if (r == -ENODEV && dm_device_wait) {
+			msleep(100);
+			goto retry_dev2;
+		}
 		ti->error = "Data device lookup failed";
 		goto bad;
 	}
@@ -1009,6 +1061,15 @@ int verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 		v->tfm = NULL;
 		goto bad;
 	}
+
+	/*
+	 * dm-verity performance can vary greatly depending on which hash
+	 * algorithm implementation is used.  Help people debug performance
+	 * problems by logging the ->cra_driver_name.
+	 */
+	DMINFO("%s using implementation \"%s\"", v->alg_name,
+	       crypto_shash_alg(v->tfm)->base.cra_driver_name);
+
 	v->digest_size = crypto_shash_digestsize(v->tfm);
 	if ((1 << v->hash_dev_block_bits) < v->digest_size * 2) {
 		ti->error = "Digest size too big";
@@ -1060,6 +1121,14 @@ int verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 			goto bad;
 	}
 
+#ifdef CONFIG_DM_ANDROID_VERITY_AT_MOST_ONCE_DEFAULT_ENABLED
+	if (!v->validated_blocks) {
+		r = verity_alloc_most_once(v);
+		if (r)
+			goto bad;
+	}
+#endif
+
 	v->hash_per_block_bits =
 		__fls((1 << v->hash_dev_block_bits) / v->digest_size);
 
@@ -1108,24 +1177,22 @@ int verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	}
 
 	/* WQ_UNBOUND greatly improves performance when running on ramdisk */
-	v->verify_wq = alloc_workqueue("kverityd",
-				       WQ_HIGHPRI | WQ_MEM_RECLAIM | WQ_UNBOUND,
-				       num_online_cpus());
+	v->verify_wq = alloc_workqueue("kverityd", WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM | WQ_UNBOUND, num_online_cpus());
 	if (!v->verify_wq) {
 		ti->error = "Cannot allocate workqueue";
 		r = -ENOMEM;
 		goto bad;
 	}
 
-	ti->per_bio_data_size = sizeof(struct dm_verity_io) +
+	ti->per_io_data_size = sizeof(struct dm_verity_io) +
 				v->shash_descsize + v->digest_size * 2;
 
 	r = verity_fec_ctr(v);
 	if (r)
 		goto bad;
 
-	ti->per_bio_data_size = roundup(ti->per_bio_data_size,
-					__alignof__(struct dm_verity_io));
+	ti->per_io_data_size = roundup(ti->per_io_data_size,
+				       __alignof__(struct dm_verity_io));
 
 	return 0;
 
@@ -1144,8 +1211,7 @@ static struct target_type verity_target = {
 	.dtr		= verity_dtr,
 	.map		= verity_map,
 	.status		= verity_status,
-	.ioctl		= verity_ioctl,
-	.merge		= verity_merge,
+	.prepare_ioctl	= verity_prepare_ioctl,
 	.iterate_devices = verity_iterate_devices,
 	.io_hints	= verity_io_hints,
 };

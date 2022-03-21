@@ -1,8 +1,8 @@
 /*
-
  * drivers/staging/android/ion/compat_ion.h
  *
  * Copyright (C) 2013 Google, Inc.
+ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and

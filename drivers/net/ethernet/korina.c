@@ -152,7 +152,7 @@ static inline void korina_abort_dma(struct net_device *dev,
 	       writel(0x10, &ch->dmac);
 
 	       while (!(readl(&ch->dmas) & DMA_STAT_HALT))
-		       dev->trans_start = jiffies;
+		       netif_trans_update(dev);
 
 	       writel(0, &ch->dmas);
        }
@@ -283,7 +283,7 @@ static int korina_send_packet(struct sk_buff *skb, struct net_device *dev)
 	}
 	dma_cache_wback((u32) td, sizeof(*td));
 
-	dev->trans_start = jiffies;
+	netif_trans_update(dev);
 	spin_unlock_irqrestore(&lp->lock, flags);
 
 	return NETDEV_TX_OK;
@@ -622,7 +622,7 @@ korina_tx_dma_interrupt(int irq, void *dev_id)
 				&(lp->tx_dma_regs->dmandptr));
 			lp->tx_chain_status = desc_empty;
 			lp->tx_chain_head = lp->tx_chain_tail;
-			dev->trans_start = jiffies;
+			netif_trans_update(dev);
 		}
 		if (dmas & DMA_STAT_ERR)
 			printk(KERN_ERR "%s: DMA error\n", dev->name);
@@ -811,7 +811,7 @@ static int korina_init(struct net_device *dev)
 	/* reset ethernet logic */
 	writel(0, &lp->eth_regs->ethintfc);
 	while ((readl(&lp->eth_regs->ethintfc) & ETH_INT_FC_RIP))
-		dev->trans_start = jiffies;
+		netif_trans_update(dev);
 
 	/* Enable Ethernet Interface */
 	writel(ETH_INT_FC_EN, &lp->eth_regs->ethintfc);
@@ -1188,7 +1188,7 @@ out:
 	return rc;
 
 probe_err_register:
-	kfree((struct dma_desc *)KSEG0ADDR(lp->td_ring));
+	kfree(lp->td_ring);
 probe_err_td_ring:
 	iounmap(lp->tx_dma_regs);
 probe_err_dma_tx:
@@ -1208,7 +1208,6 @@ static int korina_remove(struct platform_device *pdev)
 	iounmap(lp->eth_regs);
 	iounmap(lp->rx_dma_regs);
 	iounmap(lp->tx_dma_regs);
-	kfree((struct dma_desc *)KSEG0ADDR(lp->td_ring));
 
 	unregister_netdev(bif->dev);
 	free_netdev(bif->dev);

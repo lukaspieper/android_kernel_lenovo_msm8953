@@ -1,7 +1,6 @@
-/* arch/arm/mach-msm/clock.c
- *
+/*
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2017, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -96,7 +95,7 @@ static int update_vdd(struct clk_vdd_class *vdd_class)
 			goto set_voltage_fail;
 
 		if (ua) {
-			rc = regulator_set_optimum_mode(r[i], ua[new_base + i]);
+			rc = regulator_set_load(r[i], ua[new_base + i]);
 			rc = rc > 0 ? 0 : rc;
 			if (rc)
 				goto set_mode_fail;
@@ -124,7 +123,7 @@ enable_disable_fail:
 	if (ua) {
 		regulator_set_voltage(r[i], uv[cur_base + i],
 			vdd_class->use_max_uV ? INT_MAX : uv[max_lvl + i]);
-		regulator_set_optimum_mode(r[i], ua[cur_base + i]);
+		regulator_set_load(r[i], ua[cur_base + i]);
 	}
 
 set_mode_fail:
@@ -136,7 +135,7 @@ set_voltage_fail:
 		regulator_set_voltage(r[i], uv[cur_base + i],
 			vdd_class->use_max_uV ? INT_MAX : uv[max_lvl + i]);
 		if (ua)
-			regulator_set_optimum_mode(r[i], ua[cur_base + i]);
+			regulator_set_load(r[i], ua[cur_base + i]);
 		if (cur_lvl == 0 || cur_lvl == vdd_class->num_levels)
 			regulator_disable(r[i]);
 		else if (level == 0)
@@ -472,7 +471,7 @@ int clk_reset(struct clk *clk, enum clk_reset_action action)
 		return -EINVAL;
 
 	if (!clk->ops->reset)
-		return -ENOSYS;
+		return -EINVAL;
 
 	return clk->ops->reset(clk, action);
 }
@@ -667,7 +666,7 @@ int clk_set_rate(struct clk *clk, unsigned long rate)
 		goto out;
 
 	if (!clk->ops->set_rate) {
-		rc = -ENOSYS;
+		rc = -EINVAL;
 		goto out;
 	}
 
@@ -743,7 +742,7 @@ long clk_round_rate(struct clk *clk, unsigned long rate)
 	else if (clk->rate)
 		rrate = clk->rate;
 	else
-		return -ENOSYS;
+		return -EINVAL;
 
 	if (rrate > fmax)
 		return -EINVAL;
@@ -757,7 +756,7 @@ int clk_set_max_rate(struct clk *clk, unsigned long rate)
 		return -EINVAL;
 
 	if (!clk->ops->set_max_rate)
-		return -ENOSYS;
+		return -EINVAL;
 
 	return clk->ops->set_max_rate(clk, rate);
 }
@@ -785,6 +784,7 @@ EXPORT_SYMBOL(clk_get_parent_sel);
 int clk_set_parent(struct clk *clk, struct clk *parent)
 {
 	int rc = 0;
+
 	if (IS_ERR_OR_NULL(clk))
 		return -EINVAL;
 
@@ -792,7 +792,7 @@ int clk_set_parent(struct clk *clk, struct clk *parent)
 		return 0;
 
 	if (!clk->ops->set_parent)
-		return -ENOSYS;
+		return -EINVAL;
 
 	mutex_lock(&clk->prepare_lock);
 	if (clk->parent == parent && !(clk->flags & CLKFLAG_NO_RATE_CACHE))
@@ -819,7 +819,7 @@ int clk_set_flags(struct clk *clk, unsigned long flags)
 	if (IS_ERR_OR_NULL(clk))
 		return -EINVAL;
 	if (!clk->ops->set_flags)
-		return -ENOSYS;
+		return -EINVAL;
 
 	return clk->ops->set_flags(clk, flags);
 }
@@ -841,7 +841,7 @@ int clk_set_duty_cycle(struct clk *clk, u32 numerator, u32 denominator)
 	}
 
 	if (!clk->ops->set_duty_cycle)
-		return -ENOSYS;
+		return -EINVAL;
 
 	return clk->ops->set_duty_cycle(clk, numerator, denominator);
 }
@@ -852,7 +852,7 @@ static LIST_HEAD(initdata_list);
 static void init_sibling_lists(struct clk_lookup *clock_tbl, size_t num_clocks)
 {
 	struct clk *clk, *parent;
-	unsigned n;
+	unsigned long n;
 
 	for (n = 0; n < num_clocks; n++) {
 		clk = clock_tbl[n].clk;
@@ -882,11 +882,8 @@ static void vdd_class_init(struct clk_vdd_class *vdd)
 		pr_err("failed to vote for %s\n", vdd->class_name);
 
 	v = kmalloc(sizeof(*v), GFP_KERNEL);
-	if (!v) {
-		pr_err("Unable to kmalloc. %s will be stuck at max.\n",
-			vdd->class_name);
+	if (!v)
 		return;
-	}
 
 	v->vdd_class = vdd;
 	list_add_tail(&v->list, &handoff_vdd_list);
@@ -1102,9 +1099,8 @@ static struct device **derive_device_list(struct clk *clk,
 		}
 
 		for_each_possible_cpu(cpu) {
-			if (of_get_cpu_node(cpu, NULL) == dev_node) {
+			if (of_get_cpu_node(cpu, NULL) == dev_node)
 				device_list[j] = get_cpu_device(cpu);
-			}
 		}
 
 		if (device_list[j])
@@ -1294,7 +1290,7 @@ static void populate_clock_opp_table(struct device_node *np,
 				goto err_round_rate;
 
 			ret = add_and_print_opp(clk, device_list, count,
-							rate, uv , n);
+							rate, uv, n);
 			if (ret)
 				goto err_round_rate;
 

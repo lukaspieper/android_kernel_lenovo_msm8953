@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2015, 2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,7 +30,7 @@ enum {
 };
 
 struct mdm_drv {
-	unsigned mode;
+	unsigned int mode;
 	struct esoc_eng cmd_eng;
 	struct completion boot_done;
 	struct completion req_eng_wait;
@@ -48,7 +48,8 @@ static int esoc_msm_restart_handler(struct notifier_block *nb,
 	struct mdm_drv *mdm_drv = container_of(nb, struct mdm_drv,
 					esoc_restart);
 	struct esoc_clink *esoc_clink = mdm_drv->esoc_clink;
-	const struct esoc_clink_ops *clink_ops = esoc_clink->clink_ops;
+	const struct esoc_clink_ops * const clink_ops = esoc_clink->clink_ops;
+
 	if (action == SYS_RESTART) {
 		if (mdm_dbg_stall_notify(ESOC_PRIMARY_REBOOT))
 			return NOTIFY_OK;
@@ -61,6 +62,7 @@ static void mdm_handle_clink_evt(enum esoc_evt evt,
 					struct esoc_eng *eng)
 {
 	struct mdm_drv *mdm_drv = to_mdm_drv(eng);
+
 	switch (evt) {
 	case ESOC_INVALID_STATE:
 		mdm_drv->boot_fail = true;
@@ -101,7 +103,6 @@ static void mdm_ssr_fn(struct work_struct *work)
 	 * If restarting esoc fails, the SSR framework triggers a kernel panic
 	 */
 	esoc_clink_request_ssr(mdm_drv->esoc_clink);
-	return;
 }
 
 static void mdm_crash_shutdown(const struct subsys_desc *mdm_subsys)
@@ -110,9 +111,11 @@ static void mdm_crash_shutdown(const struct subsys_desc *mdm_subsys)
 					container_of(mdm_subsys,
 							struct esoc_clink,
 								subsys);
-	const struct esoc_clink_ops *clink_ops = esoc_clink->clink_ops;
+	const struct esoc_clink_ops * const clink_ops = esoc_clink->clink_ops;
+
 	if (mdm_dbg_stall_notify(ESOC_PRIMARY_CRASH))
 		return;
+
 	clink_ops->notify(ESOC_PRIMARY_CRASH, esoc_clink);
 }
 
@@ -123,7 +126,7 @@ static int mdm_subsys_shutdown(const struct subsys_desc *crashed_subsys,
 	struct esoc_clink *esoc_clink =
 	 container_of(crashed_subsys, struct esoc_clink, subsys);
 	struct mdm_drv *mdm_drv = esoc_get_drv_data(esoc_clink);
-	const struct esoc_clink_ops *clink_ops = esoc_clink->clink_ops;
+	const struct esoc_clink_ops * const clink_ops = esoc_clink->clink_ops;
 
 	if (mdm_drv->mode == CRASH || mdm_drv->mode == PEER_CRASH) {
 		if (mdm_dbg_stall_cmd(ESOC_PREPARE_DEBUG))
@@ -168,7 +171,7 @@ static int mdm_subsys_powerup(const struct subsys_desc *crashed_subsys)
 				container_of(crashed_subsys, struct esoc_clink,
 								subsys);
 	struct mdm_drv *mdm_drv = esoc_get_drv_data(esoc_clink);
-	const struct esoc_clink_ops *clink_ops = esoc_clink->clink_ops;
+	const struct esoc_clink_ops * const clink_ops = esoc_clink->clink_ops;
 	int timeout = INT_MAX;
 
 	if (!esoc_clink->auto_boot && !esoc_req_eng_enabled(esoc_clink)) {
@@ -220,7 +223,7 @@ static int mdm_subsys_ramdumps(int want_dumps,
 	struct esoc_clink *esoc_clink =
 				container_of(crashed_subsys, struct esoc_clink,
 								subsys);
-	const struct esoc_clink_ops *clink_ops = esoc_clink->clink_ops;
+	const struct esoc_clink_ops * const clink_ops = esoc_clink->clink_ops;
 
 	if (want_dumps) {
 		ret = clink_ops->cmd_exe(ESOC_EXE_DEBUG, esoc_clink);
@@ -250,7 +253,7 @@ int esoc_ssr_probe(struct esoc_clink *esoc_clink, struct esoc_drv *drv)
 	struct esoc_eng *esoc_eng;
 
 	mdm_drv = devm_kzalloc(&esoc_clink->dev, sizeof(*mdm_drv), GFP_KERNEL);
-	if (IS_ERR(mdm_drv))
+	if (IS_ERR_OR_NULL(mdm_drv))
 		return PTR_ERR(mdm_drv);
 	esoc_eng = &mdm_drv->cmd_eng;
 	esoc_eng->handle_clink_evt = mdm_handle_clink_evt;
@@ -307,11 +310,7 @@ static struct esoc_compat compat_table[] = {
 		.data = NULL,
 	},
 	{
-		.name = "MDM9x45",
-		.data = NULL,
-	},
-	{
-		.name = "APQ8096",
+		.name = "SDXPOORWILLS",
 		.data = NULL,
 	},
 };

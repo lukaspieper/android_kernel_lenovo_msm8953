@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015, 2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,6 +31,7 @@ struct diag_smd_info {
 	struct work_struct open_work;
 	struct work_struct close_work;
 	struct work_struct read_work;
+	struct work_struct late_init_work;
 	struct diagfwd_info *fwd_ctxt;
 };
 
@@ -46,5 +47,13 @@ int diag_smd_init(void);
 void diag_smd_early_exit(void);
 void diag_smd_invalidate(void *ctxt, struct diagfwd_info *fwd_ctxt);
 int diag_smd_check_state(void *ctxt);
+
+#ifndef CONFIG_DIAG_USES_SMD
+#define _diag_smd_exit(void)
+#define _diag_smd_init(void)
+#else
+#define _diag_smd_exit(void) diag_smd_exit(void)
+#define _diag_smd_init(void) diag_smd_init(void)
+#endif
 
 #endif

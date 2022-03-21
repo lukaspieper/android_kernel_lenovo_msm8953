@@ -1,4 +1,5 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/*
+ * Copyright (c) 2014-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -234,6 +235,13 @@
 #define clk_ext_pclk0_clk_src			0x087c1612
 #define clk_ext_byte0_clk_src			0xfb32f31e
 
+#define clk_dsi0pll_byte_clk_src		0xbbaa30be
+#define clk_dsi0pll_pixel_clk_src		0x45b3260f
+#define clk_dsi0pll_vco_clk			0x15940d40
+#define clk_dsi1pll_byte_clk_src		0x63930a8f
+#define clk_dsi1pll_pixel_clk_src		0x0e4c9b56
+#define clk_dsi1pll_vco_clk			0x99797b50
+
 #define clk_dsi_pll0_byte_clk_src		0x44539836
 #define clk_dsi_pll0_pixel_clk_src		0x5767c287
 #define clk_dsi_pll1_byte_clk_src		0x73e88d02
@@ -302,6 +310,8 @@
 #define clk_bb_clk2_a				0x59682706
 #define clk_bb_clk2_pin				0x498938e5
 #define clk_bb_clk2_a_pin			0x52513787
+#define clk_bb_clk3				0x3a9e99a8
+#define clk_bb_clk3_pin				0x3a96c14c
 #define clk_rf_clk1				0xaabeea5a
 #define clk_rf_clk1_a				0x72a10cb8
 #define clk_rf_clk1_pin				0x8f463562
@@ -316,7 +326,6 @@
 #define clk_div_clk2_a				0x4bd7bfa8
 #define clk_ln_bb_clk				0x3ab0b36d
 #define clk_ln_bb_a_clk				0xc7257ea8
-
 
 /* clock_debug controlled clocks */
 #define clk_gcc_debug_mux			0x8121ac15
@@ -339,6 +348,14 @@
 
 #define clk_audio_ap_clk			0x312ac429
 #define clk_audio_pmi_clk			0xb7ba2274
+#define clk_audio_ap_clk2			0xf0fbaf5b
 #define clk_audio_lpass_mclk			0x575ec22b
+
+/* GCC block resets */
+#define GCC_CAMSS_MICRO_BCR			0
+#define GCC_USB_FS_BCR				1
+#define GCC_USB_HS_BCR				2
+#define GCC_USB2_HS_PHY_ONLY_BCR		3
+#define GCC_QUSB2_PHY_BCR			4
 
 #endif

@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -122,20 +122,11 @@ int ipa_rm_resource_consumer_request_work(struct ipa_rm_resource_cons *consumer,
 		bool dec_client_on_err)
 {
 	int driver_result;
-	int result = 0;
 
 	IPA_RM_DBG_LOW("calling driver CB\n");
 	driver_result = consumer->request_resource();
 	IPA_RM_DBG_LOW("driver CB returned with %d\n", driver_result);
-
-	if (driver_result == 0 ||
-		driver_result == -EPERM) {
-		/*
-		 * Go ahead and handle suspend of
-		 * resources in case of -EPERM return,
-		 * as the client driver is unloaded and
-		 * Holb drop is enabled
-		 */
+	if (driver_result == 0) {
 		if (notify_completion) {
 			ipa_rm_resource_consumer_handle_cb(consumer,
 					IPA_RM_RESOURCE_GRANTED);
@@ -149,11 +140,9 @@ int ipa_rm_resource_consumer_request_work(struct ipa_rm_resource_cons *consumer,
 		consumer->resource.needed_bw -= prod_needed_bw;
 		if (dec_client_on_err)
 			consumer->usage_count--;
-		result = driver_result;
-	} else
-		result = driver_result;
+	}
 
-	return result;
+	return driver_result;
 }
 
 int ipa_rm_resource_consumer_request(
@@ -339,7 +328,7 @@ static int ipa_rm_resource_producer_create(struct ipa_rm_resource **resource,
 
 	(*resource) = (struct ipa_rm_resource *) (*producer);
 	(*resource)->type = IPA_RM_PRODUCER;
-	*max_peers = IPA_RM_RESOURCE_CONS_MAX;
+	*max_peers = IPA_RM_RESOURCE_MAX;
 	goto bail;
 register_fail:
 	kfree(*producer);
@@ -382,7 +371,7 @@ static int ipa_rm_resource_consumer_create(struct ipa_rm_resource **resource,
 	(*resource) = (struct ipa_rm_resource *) (*consumer);
 	(*resource)->type = IPA_RM_CONSUMER;
 	init_completion(&((*consumer)->request_consumer_in_progress));
-	*max_peers = IPA_RM_RESOURCE_PROD_MAX;
+	*max_peers = IPA_RM_RESOURCE_MAX;
 bail:
 	return result;
 }
@@ -757,8 +746,8 @@ int ipa_rm_resource_delete_dependency(struct ipa_rm_resource *resource,
 	case IPA_RM_RELEASE_IN_PROGRESS:
 		if (((struct ipa_rm_resource_prod *)
 			resource)->pending_release > 0)
-				((struct ipa_rm_resource_prod *)
-					resource)->pending_release--;
+			((struct ipa_rm_resource_prod *)
+				resource)->pending_release--;
 		if (depends_on->state == IPA_RM_RELEASE_IN_PROGRESS &&
 			((struct ipa_rm_resource_prod *)
 			resource)->pending_release == 0) {
@@ -772,8 +761,8 @@ int ipa_rm_resource_delete_dependency(struct ipa_rm_resource *resource,
 		release_consumer = true;
 		if (((struct ipa_rm_resource_prod *)
 			resource)->pending_request > 0)
-				((struct ipa_rm_resource_prod *)
-					resource)->pending_request--;
+			((struct ipa_rm_resource_prod *)
+				resource)->pending_request--;
 		if (depends_on->state == IPA_RM_REQUEST_IN_PROGRESS &&
 			((struct ipa_rm_resource_prod *)
 				resource)->pending_request == 0) {

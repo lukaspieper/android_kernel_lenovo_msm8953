@@ -2,22 +2,27 @@
  * /proc/uid support
  */
 
-#include <linux/cpufreq.h>
+#include <linux/cpufreq_times.h>
 #include <linux/fs.h>
 #include <linux/hashtable.h>
 #include <linux/init.h>
 #include <linux/proc_fs.h>
+#include <linux/rtmutex.h>
 #include <linux/sched.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include "internal.h"
 
-struct proc_dir_entry *proc_uid;
+static struct proc_dir_entry *proc_uid;
 
 #define UID_HASH_BITS 10
 
 static DECLARE_HASHTABLE(proc_uid_hash_table, UID_HASH_BITS);
 
+/*
+ * use rt_mutex here to avoid priority inversion between high-priority readers
+ * of these files and tasks calling proc_register_uid().
+ */
 static DEFINE_RT_MUTEX(proc_uid_lock); /* proc_uid_hash_table */
 
 struct uid_hash_entry {
@@ -26,7 +31,7 @@ struct uid_hash_entry {
 };
 
 /* Caller must hold proc_uid_lock */
-static bool uid_hash_entry_exists(uid_t uid)
+static bool uid_hash_entry_exists_locked(uid_t uid)
 {
 	struct uid_hash_entry *entry;
 
@@ -44,7 +49,7 @@ void proc_register_uid(kuid_t kuid)
 	uid_t uid = from_kuid_munged(current_user_ns(), kuid);
 
 	rt_mutex_lock(&proc_uid_lock);
-	exists = uid_hash_entry_exists(uid);
+	exists = uid_hash_entry_exists_locked(uid);
 	rt_mutex_unlock(&proc_uid_lock);
 	if (exists)
 		return;
@@ -55,11 +60,10 @@ void proc_register_uid(kuid_t kuid)
 	entry->uid = uid;
 
 	rt_mutex_lock(&proc_uid_lock);
-	if (uid_hash_entry_exists(uid)) {
+	if (uid_hash_entry_exists_locked(uid))
 		kfree(entry);
-	} else {
+	else
 		hash_add(proc_uid_hash_table, &entry->hash, uid);
-	}
 	rt_mutex_unlock(&proc_uid_lock);
 }
 
@@ -79,8 +83,8 @@ struct uid_entry {
 	.fop	= FOP,					\
 }
 
-#ifdef CONFIG_CPU_FREQ_STAT
-const struct file_operations proc_uid_time_in_state_operations = {
+#ifdef CONFIG_CPU_FREQ_TIMES
+static const struct file_operations proc_uid_time_in_state_operations = {
 	.open		= single_uid_time_in_state_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -89,16 +93,16 @@ const struct file_operations proc_uid_time_in_state_operations = {
 #endif
 
 static const struct uid_entry uid_base_stuff[] = {
-#ifdef CONFIG_CPU_FREQ_STAT
+#ifdef CONFIG_CPU_FREQ_TIMES
 	NOD("time_in_state", 0444, NULL, &proc_uid_time_in_state_operations),
 #endif
 };
 
-const struct inode_operations proc_uid_def_inode_operations = {
+static const struct inode_operations proc_uid_def_inode_operations = {
 	.setattr	= proc_setattr,
 };
 
-struct inode *proc_uid_make_inode(struct super_block *sb, kuid_t kuid)
+static struct inode *proc_uid_make_inode(struct super_block *sb, kuid_t kuid)
 {
 	struct inode *inode;
 
@@ -170,7 +174,7 @@ static int proc_uid_base_readdir(struct file *file, struct dir_context *ctx)
 		return 0;
 
 	for (u = uid_base_stuff + (ctx->pos - 2);
-	     u <= uid_base_stuff + nents - 1; u++) {
+	     u < uid_base_stuff + nents; u++) {
 		if (!proc_fill_cache(file, ctx, u->name, u->len,
 				     proc_uident_instantiate, NULL, u))
 			break;
@@ -258,7 +262,7 @@ static struct dentry *proc_uid_lookup(struct inode *dir, struct dentry *dentry,
 	bool uid_exists;
 
 	rt_mutex_lock(&proc_uid_lock);
-	uid_exists = uid_hash_entry_exists(uid);
+	uid_exists = uid_hash_entry_exists_locked(uid);
 	rt_mutex_unlock(&proc_uid_lock);
 	if (uid_exists) {
 		kuid_t kuid = make_kuid(current_user_ns(), uid);

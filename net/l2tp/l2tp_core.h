@@ -58,7 +58,6 @@ struct l2tp_session_cfg {
 	int			debug;		/* bitmask of debug message
 						 * categories */
 	u16			vlan_id;	/* VLAN pseudowire only */
-	u16			offset;		/* offset to payload */
 	u16			l2specific_len;	/* Layer 2 specific length */
 	u16			l2specific_type; /* Layer 2 specific type */
 	u8			cookie[8];	/* optional cookie */
@@ -85,8 +84,6 @@ struct l2tp_session {
 	int			cookie_len;
 	u8			peer_cookie[8];
 	int			peer_cookie_len;
-	u16			offset;		/* offset from end of L2TP header
-						   to beginning of data */
 	u16			l2specific_len;
 	u16			l2specific_type;
 	u16			hdr_len;
@@ -130,7 +127,7 @@ struct l2tp_session {
 	void (*session_close)(struct l2tp_session *session);
 	void (*ref)(struct l2tp_session *session);
 	void (*deref)(struct l2tp_session *session);
-#if defined(CONFIG_L2TP_DEBUGFS) || defined(CONFIG_L2TP_DEBUGFS_MODULE)
+#if IS_ENABLED(CONFIG_L2TP_DEBUGFS)
 	void (*show)(struct seq_file *m, void *priv);
 #endif
 	uint8_t			priv[0];	/* private data */
@@ -189,7 +186,6 @@ struct l2tp_tunnel {
 #ifdef CONFIG_DEBUG_FS
 	void (*show)(struct seq_file *m, void *arg);
 #endif
-	int (*recv_payload_hook)(struct sk_buff *skb);
 	void (*old_sk_destruct)(struct sock *);
 	struct sock		*sock;		/* Parent socket */
 	int			fd;		/* Parent fd, if tunnel socket
@@ -270,7 +266,7 @@ int l2tp_session_delete(struct l2tp_session *session);
 void l2tp_session_free(struct l2tp_session *session);
 void l2tp_recv_common(struct l2tp_session *session, struct sk_buff *skb,
 		      unsigned char *ptr, unsigned char *optr, u16 hdrflags,
-		      int length, int (*payload_hook)(struct sk_buff *skb));
+		      int length);
 int l2tp_session_queue_purge(struct l2tp_session *session);
 int l2tp_udp_encap_recv(struct sock *sk, struct sk_buff *skb);
 void l2tp_session_set_header_len(struct l2tp_session *session, int version);
@@ -371,5 +367,8 @@ do {									\
 	l2tp_printk(ptr, type, pr_info, fmt, ##__VA_ARGS__)
 #define l2tp_dbg(ptr, type, fmt, ...)					\
 	l2tp_printk(ptr, type, pr_debug, fmt, ##__VA_ARGS__)
+
+#define MODULE_ALIAS_L2TP_PWTYPE(type) \
+	MODULE_ALIAS("net-l2tp-type-" __stringify(type))
 
 #endif /* _L2TP_CORE_H_ */

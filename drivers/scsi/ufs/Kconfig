@@ -60,6 +60,14 @@ config SCSI_UFSHCD_PCI
 
 	  If unsure, say N.
 
+config SCSI_UFS_DWC_TC_PCI
+	tristate "DesignWare pci support using a G210 Test Chip"
+	depends on SCSI_UFSHCD_PCI
+	---help---
+	  Synopsys Test Chip is a PHY for prototyping purposes.
+
+	  If unsure, say N.
+
 config SCSI_UFSHCD_PLATFORM
 	tristate "Platform bus based UFS Controller support"
 	depends on SCSI_UFSHCD
@@ -73,7 +81,7 @@ config SCSI_UFSHCD_PLATFORM
 
 config SCSI_UFS_QCOM
 	tristate "QCOM specific hooks to UFS controller platform driver"
-	depends on SCSI_UFSHCD_PLATFORM && ARCH_MSM
+	depends on SCSI_UFSHCD_PLATFORM && ARCH_QCOM
 	select PHY_QCOM_UFS
 	help
 	  This selects the QCOM specific additions to UFSHCD platform driver.
@@ -106,3 +114,15 @@ config SCSI_UFS_TEST
 	The UFS unit-tests register as a block device test utility to
 	the test-iosched and will be initiated when the test-iosched will
 	be chosen to be the active I/O scheduler.
+
+config SCSI_UFSHCD_CMD_LOGGING
+	bool "Universal Flash Storage host controller driver layer command logging support"
+	depends on SCSI_UFSHCD
+	help
+	  This selects the UFS host controller driver layer command logging.
+	  UFS host controller driver layer command logging records all the
+	  command information sent from UFS host controller for debugging
+	  purpose.
+
+	  Select this if you want above mentioned debug information captured.
+	  If unsure, say N.

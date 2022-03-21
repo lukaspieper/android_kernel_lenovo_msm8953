@@ -65,25 +65,40 @@
 #endif
 
 /*
+ * Feature detection for gnu_inline (gnu89 extern inline semantics). Either
+ * __GNUC_STDC_INLINE__ is defined (not using gnu89 extern inline semantics,
+ * and we opt in to the gnu89 semantics), or __GNUC_STDC_INLINE__ is not
+ * defined so the gnu89 semantics are the default.
+ */
+#ifdef __GNUC_STDC_INLINE__
+# define __gnu_inline	__attribute__((gnu_inline))
+#else
+# define __gnu_inline
+#endif
+
+/*
  * Force always-inline if the user requests it so via the .config,
  * or if gcc is too old.
  * GCC does not warn about unused static inline functions for
  * -Wunused-function.  This turns out to avoid the need for complex #ifdef
  * directives.  Suppress the warning in clang as well by using "unused"
  * function attribute, which is redundant but not harmful for gcc.
+ * Prefer gnu_inline, so that extern inline functions do not emit an
+ * externally visible function. This makes extern inline behave as per gnu89
+ * semantics rather than c99. This prevents multiple symbol definition errors
+ * of extern inline functions at link time.
+ * A lot of inline functions can cause havoc with function tracing.
  */
 #if !defined(CONFIG_ARCH_SUPPORTS_OPTIMIZED_INLINING) ||		\
     !defined(CONFIG_OPTIMIZE_INLINING) || (__GNUC__ < 4)
-#define inline inline		__attribute__((always_inline,unused)) notrace
-#define __inline__ __inline__	__attribute__((always_inline,unused)) notrace
-#define __inline __inline	__attribute__((always_inline,unused)) notrace
+#define inline \
+	inline __attribute__((always_inline, unused)) notrace __gnu_inline
 #else
-/* A lot of inline functions can cause havoc with function tracing */
-#define inline inline		__attribute__((unused)) notrace
-#define __inline__ __inline__	__attribute__((unused)) notrace
-#define __inline __inline	__attribute__((unused)) notrace
+#define inline inline		__attribute__((unused)) notrace __gnu_inline
 #endif
 
+#define __inline__ inline
+#define __inline inline
 #define __always_inline	inline __attribute__((always_inline))
 #define  noinline	__attribute__((noinline))
 
@@ -91,6 +106,10 @@
 #define __packed	__attribute__((packed))
 #define __weak		__attribute__((weak))
 #define __alias(symbol)	__attribute__((alias(#symbol)))
+
+#ifdef RETPOLINE
+#define __noretpoline __attribute__((indirect_branch("keep")))
+#endif
 
 /*
  * it doesn't make sense on ARM (currently the only user of __naked)
@@ -118,14 +137,13 @@
  * would be.
  * [...]
  */
-#define __pure				__attribute__((pure))
-#define __aligned(x)			__attribute__((aligned(x)))
-#define __printf(a, b)			__attribute__((format(printf, a, b)))
-#define __scanf(a, b)			__attribute__((format(scanf, a, b)))
-#define  noinline			__attribute__((noinline))
-#define __attribute_const__		__attribute__((__const__))
-#define __maybe_unused			__attribute__((unused))
-#define __always_unused			__attribute__((unused))
+#define __pure			__attribute__((pure))
+#define __aligned(x)		__attribute__((aligned(x)))
+#define __printf(a, b)		__attribute__((format(printf, a, b)))
+#define __scanf(a, b)		__attribute__((format(scanf, a, b)))
+#define __attribute_const__	__attribute__((__const__))
+#define __maybe_unused		__attribute__((unused))
+#define __always_unused		__attribute__((unused))
 
 /* gcc version specific checks */
 
@@ -147,6 +165,7 @@
 
 #if GCC_VERSION >= 30400
 #define __must_check		__attribute__((warn_unused_result))
+#define __malloc		__attribute__((__malloc__))
 #endif
 
 #if GCC_VERSION >= 40000
@@ -162,7 +181,7 @@
 #define __compiler_offsetof(a, b)					\
 	__builtin_offsetof(a, b)
 
-#if GCC_VERSION >= 40100 && GCC_VERSION < 40600
+#if GCC_VERSION >= 40100
 # define __compiletime_object_size(obj) __builtin_object_size(obj, 0)
 #endif
 
@@ -191,7 +210,29 @@
 #endif /* __CHECKER__ */
 #endif /* GCC_VERSION >= 40300 */
 
+#if GCC_VERSION >= 40400
+#define __optimize(level)	__attribute__((__optimize__(level)))
+#endif /* GCC_VERSION >= 40400 */
+
 #if GCC_VERSION >= 40500
+
+#ifndef __CHECKER__
+#ifdef LATENT_ENTROPY_PLUGIN
+#define __latent_entropy __attribute__((latent_entropy))
+#endif
+#endif
+
+#ifdef CONFIG_STACK_VALIDATION
+#define annotate_unreachable() ({					\
+	asm("1:\t\n"							\
+	    ".pushsection .discard.unreachable\t\n"			\
+	    ".long 1b\t\n"						\
+	    ".popsection\t\n");						\
+})
+#else
+#define annotate_unreachable()
+#endif
+
 /*
  * calling noreturn functions, __builtin_unreachable() and __builtin_trap()
  * confuse the stack allocation in gcc, leading to overly large stack
@@ -212,6 +253,7 @@
  */
 #define unreachable() \
 	do {					\
+		annotate_unreachable();		\
 		barrier_before_unreachable();	\
 		__builtin_unreachable();	\
 	} while (0)
@@ -223,9 +265,29 @@
 
 #if GCC_VERSION >= 40600
 /*
- * Tell the optimizer that something else uses this function or variable.
+ * When used with Link Time Optimization, gcc can optimize away C functions or
+ * variables which are referenced only from assembly code.  __visible tells the
+ * optimizer that something else uses this function or variable, thus preventing
+ * this.
  */
 #define __visible	__attribute__((externally_visible))
+#endif
+
+
+#if GCC_VERSION >= 40900 && !defined(__CHECKER__)
+/*
+ * __assume_aligned(n, k): Tell the optimizer that the returned
+ * pointer can be assumed to be k modulo n. The second argument is
+ * optional (default 0), so we use a variadic macro to make the
+ * shorthand.
+ *
+ * Beware: Do not apply this to functions which may return
+ * ERR_PTRs. Also, it is probably unwise to apply it to functions
+ * returning extra information in the low bits (but in that case the
+ * compiler should see some alignment anyway, when the return value is
+ * massaged by 'flags = ptr & 3; ptr &= ~3;').
+ */
+#define __assume_aligned(a, ...) __attribute__((__assume_aligned__(a, ## __VA_ARGS__)))
 #endif
 
 /*
@@ -239,17 +301,23 @@
  */
 #define asm_volatile_goto(x...)	do { asm goto(x); asm (""); } while (0)
 
-#ifdef CONFIG_ARCH_USE_BUILTIN_BSWAP
+/*
+ * sparse (__CHECKER__) pretends to be gcc, but can't do constant
+ * folding in __builtin_bswap*() (yet), so don't set these for it.
+ */
+#if defined(CONFIG_ARCH_USE_BUILTIN_BSWAP) && !defined(__CHECKER__)
 #if GCC_VERSION >= 40400
 #define __HAVE_BUILTIN_BSWAP32__
 #define __HAVE_BUILTIN_BSWAP64__
 #endif
-#if GCC_VERSION >= 40800 || (defined(__powerpc__) && GCC_VERSION >= 40600)
+#if GCC_VERSION >= 40800
 #define __HAVE_BUILTIN_BSWAP16__
 #endif
-#endif /* CONFIG_ARCH_USE_BUILTIN_BSWAP */
+#endif /* CONFIG_ARCH_USE_BUILTIN_BSWAP && !__CHECKER__ */
 
-#if GCC_VERSION >= 50000
+#if GCC_VERSION >= 70000
+#define KASAN_ABI_VERSION 5
+#elif GCC_VERSION >= 50000
 #define KASAN_ABI_VERSION 4
 #elif GCC_VERSION >= 40902
 #define KASAN_ABI_VERSION 3
@@ -279,3 +347,7 @@
  * code
  */
 #define uninitialized_var(x) x = x
+
+#if GCC_VERSION >= 50100
+#define COMPILER_HAS_GENERIC_BUILTIN_OVERFLOW 1
+#endif

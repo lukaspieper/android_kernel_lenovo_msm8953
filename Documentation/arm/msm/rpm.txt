@@ -24,7 +24,7 @@ RPM exposes a separate region of registers to each of the RPM masters.
 In general, each register represents some shared resource(s).  At a
 very basic level, a master requests resources by writing to the
 registers, then generating an interrupt to RPM.  RPM processes the
-request, writes acknowledgement to the registers, then generates an
+request, writes acknowledgment to the registers, then generates an
 interrupt to the master.
 
 In addition to the master-specific regions, RPM also exposes a shared

@@ -25,8 +25,7 @@
 #include <linux/slab.h>
 #include "pci.h"
 
-
-void pci_update_resource(struct pci_dev *dev, int resno)
+static void pci_std_update_resource(struct pci_dev *dev, int resno)
 {
 	struct pci_bus_region region;
 	bool disable;
@@ -34,6 +33,10 @@ void pci_update_resource(struct pci_dev *dev, int resno)
 	u32 new, check, mask;
 	int reg;
 	struct resource *res = dev->resource + resno;
+
+	/* Per SR-IOV spec 3.4.1.11, VF BARs are RO zero */
+	if (dev->is_virtfn)
+		return;
 
 	/*
 	 * Ignore resources for unimplemented BARs and unused resource slots
@@ -60,7 +63,7 @@ void pci_update_resource(struct pci_dev *dev, int resno)
 		mask = (u32)PCI_BASE_ADDRESS_IO_MASK;
 		new |= res->flags & ~PCI_BASE_ADDRESS_IO_MASK;
 	} else if (resno == PCI_ROM_RESOURCE) {
-		mask = (u32)PCI_ROM_ADDRESS_MASK;
+		mask = PCI_ROM_ADDRESS_MASK;
 	} else {
 		mask = (u32)PCI_BASE_ADDRESS_MEM_MASK;
 		new |= res->flags & ~PCI_BASE_ADDRESS_MEM_MASK;
@@ -117,6 +120,16 @@ void pci_update_resource(struct pci_dev *dev, int resno)
 		pci_write_config_word(dev, PCI_COMMAND, cmd);
 }
 
+void pci_update_resource(struct pci_dev *dev, int resno)
+{
+	if (resno <= PCI_ROM_RESOURCE)
+		pci_std_update_resource(dev, resno);
+#ifdef CONFIG_PCI_IOV
+	else if (resno >= PCI_IOV_RESOURCES && resno <= PCI_IOV_RESOURCE_END)
+		pci_iov_update_resource(dev, resno);
+#endif
+}
+
 int pci_claim_resource(struct pci_dev *dev, int resource)
 {
 	struct resource *res = &dev->resource[resource];
@@ -127,6 +140,14 @@ int pci_claim_resource(struct pci_dev *dev, int resource)
 			 resource, res);
 		return -EINVAL;
 	}
+
+	/*
+	 * If we have a shadow copy in RAM, the PCI device doesn't respond
+	 * to the shadow range, so we don't need to claim it, and upstream
+	 * bridges don't need to route the range to the device.
+	 */
+	if (res->flags & IORESOURCE_ROM_SHADOW)
+		return 0;
 
 	root = pci_find_parent_resource(dev, res);
 	if (!root) {
@@ -189,6 +210,7 @@ static int pci_revert_fw_address(struct resource *res, struct pci_dev *dev,
 	end = res->end;
 	res->start = fw_addr;
 	res->end = res->start + size - 1;
+	res->flags &= ~IORESOURCE_UNSET;
 
 	root = pci_find_parent_resource(dev, res);
 	if (!root) {
@@ -206,6 +228,7 @@ static int pci_revert_fw_address(struct resource *res, struct pci_dev *dev,
 			 resno, res, conflict->name, conflict);
 		res->start = start;
 		res->end = end;
+		res->flags |= IORESOURCE_UNSET;
 		return -EBUSY;
 	}
 	return 0;
@@ -281,6 +304,9 @@ int pci_assign_resource(struct pci_dev *dev, int resno)
 	resource_size_t align, size;
 	int ret;
 
+	if (res->flags & IORESOURCE_PCI_FIXED)
+		return 0;
+
 	res->flags |= IORESOURCE_UNSET;
 	align = pci_resource_alignment(dev, res);
 	if (!align) {
@@ -325,6 +351,9 @@ int pci_reassign_resource(struct pci_dev *dev, int resno, resource_size_t addsiz
 	unsigned long flags;
 	resource_size_t new_size;
 	int ret;
+
+	if (res->flags & IORESOURCE_PCI_FIXED)
+		return 0;
 
 	flags = res->flags;
 	res->flags |= IORESOURCE_UNSET;

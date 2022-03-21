@@ -1,6 +1,6 @@
 /*
- *  vl53l0x_interrupt_threshold_setting.h - Linux kernel modules
- *  for STM VL53L0 FlightSense TOF sensor
+ *  vl53l0x_interrupt_threshold_settings.h - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,9 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
-
-
 
 #ifndef _VL_INTERRUPT_THRESHOLD_SETTINGS_H_
 #define _VL_INTERRUPT_THRESHOLD_SETTINGS_H_

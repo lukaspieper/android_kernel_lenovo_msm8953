@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, 2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,18 +17,9 @@
 #include <linux/devfreq.h>
 #include <linux/platform_device.h>
 #include <media/msm_vidc.h>
+#include <linux/soc/qcom/llcc-qcom.h>
+
 #define MAX_BUFFER_TYPES 32
-
-struct version_table {
-	u32 version_mask;
-	u32 version_shift;
-};
-
-struct load_freq_table {
-	u32 load;
-	u32 freq;
-	u32 supported_codecs;
-};
 
 struct dcvs_table {
 	u32 load;
@@ -40,11 +31,6 @@ struct dcvs_table {
 struct dcvs_limit {
 	u32 min_mbpf;
 	u32 fps;
-};
-
-struct imem_ab_table {
-	u32 core_freq;
-	u32 imem_ab;
 };
 
 struct reg_value_pair {
@@ -101,9 +87,10 @@ struct regulator_set {
 struct clock_info {
 	const char *name;
 	struct clk *clk;
-	struct load_freq_table *load_freq_tbl;
 	u32 count;
 	bool has_scaling;
+	bool has_mem_retention;
+	bool disable_memcore_only;
 };
 
 struct clock_set {
@@ -121,18 +108,12 @@ struct bus_info {
 	struct devfreq_dev_profile devfreq_prof;
 	struct devfreq *devfreq;
 	struct msm_bus_client_handle *client;
+	bool is_prfm_gov_used;
 };
 
 struct bus_set {
 	struct bus_info *bus_tbl;
 	u32 count;
-};
-
-enum imem_type {
-	IMEM_NONE,
-	IMEM_OCMEM,
-	IMEM_VMEM,
-	IMEM_MAX,
 };
 
 struct allowed_clock_rates_table {
@@ -141,12 +122,25 @@ struct allowed_clock_rates_table {
 
 struct clock_profile_entry {
 	u32 codec_mask;
-	u32 cycles;
-	u32 low_power_factor;
+	u32 vpp_cycles;
+	u32 vsp_cycles;
+	u32 low_power_cycles;
 };
 
 struct clock_freq_table {
 	struct clock_profile_entry *clk_prof_entries;
+	u32 count;
+};
+
+struct subcache_info {
+	const char *name;
+	bool isactive;
+	bool isset;
+	struct llcc_slice_desc *subcache;
+};
+
+struct subcache_set {
+	struct subcache_info *subcache_tbl;
 	u32 count;
 };
 
@@ -155,25 +149,22 @@ struct msm_vidc_platform_resources {
 	phys_addr_t register_base;
 	uint32_t register_size;
 	uint32_t irq;
-	struct version_table *pf_ver_tbl;
-	struct version_table *pf_cap_tbl;
-	struct version_table *pf_speedbin_tbl;
+	uint32_t sku_version;
 	struct allowed_clock_rates_table *allowed_clks_tbl;
 	u32 allowed_clks_tbl_size;
 	struct clock_freq_table clock_freq_tbl;
-	struct load_freq_table *load_freq_tbl;
-	uint32_t load_freq_tbl_size;
 	struct dcvs_table *dcvs_tbl;
 	uint32_t dcvs_tbl_size;
 	struct dcvs_limit *dcvs_limit;
-	struct imem_ab_table *imem_ab_tbl;
-	u32 imem_ab_tbl_size;
+	bool sys_cache_present;
+	bool sys_cache_res_set;
+	struct subcache_set subcache_set;
 	struct reg_set reg_set;
 	struct addr_set qdss_addr_set;
 	struct buffer_usage_set buffer_usage_set;
-	uint32_t imem_size;
-	enum imem_type imem_type;
 	uint32_t max_load;
+	uint32_t max_hq_mbs_per_frame;
+	uint32_t max_hq_fps;
 	struct platform_device *pdev;
 	struct regulator_set regulator_set;
 	struct clock_set clock_set;
@@ -187,17 +178,25 @@ struct msm_vidc_platform_resources {
 	const char *fw_name;
 	const char *hfi_version;
 	bool never_unload_fw;
+	bool debug_timeout;
 	uint32_t pm_qos_latency_us;
 	uint32_t max_inst_count;
 	uint32_t max_secure_inst_count;
+	int msm_vidc_hw_rsp_timeout;
+	int msm_vidc_firmware_unload_delay;
+	uint32_t msm_vidc_pwr_collapse_delay;
+	bool non_fatal_pagefaults;
+	bool cache_pagetables;
+	struct msm_vidc_codec_data *codec_data;
+	int codec_data_count;
+	struct msm_vidc_csc_coeff *csc_coeff_data;
+	bool enable_max_resolution;
 };
 
 static inline bool is_iommu_present(struct msm_vidc_platform_resources *res)
 {
 	return !list_empty(&res->context_banks);
 }
-
-extern uint32_t msm_vidc_pwr_collapse_delay;
 
 #endif
 

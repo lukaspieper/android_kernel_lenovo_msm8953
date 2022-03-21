@@ -329,7 +329,7 @@ static int sdcardfs_read_super(struct vfsmount *mnt, struct super_block *sb,
 	sb->s_op = &sdcardfs_sops;
 
 	/* get a new inode and allocate our root dentry */
-	inode = sdcardfs_iget(sb, lower_path.dentry->d_inode, 0);
+	inode = sdcardfs_iget(sb, d_inode(lower_path.dentry), 0);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto out_sput;
@@ -361,15 +361,15 @@ static int sdcardfs_read_super(struct vfsmount *mnt, struct super_block *sb,
 	sb_info->obbpath_s = kzalloc(PATH_MAX, GFP_KERNEL);
 	mutex_lock(&sdcardfs_super_list_lock);
 	if (sb_info->options.multiuser) {
-		setup_derived_state(sb->s_root->d_inode, PERM_PRE_ROOT,
+		setup_derived_state(d_inode(sb->s_root), PERM_PRE_ROOT,
 				sb_info->options.fs_user_id, AID_ROOT);
 		snprintf(sb_info->obbpath_s, PATH_MAX, "%s/obb", dev_name);
 	} else {
-		setup_derived_state(sb->s_root->d_inode, PERM_ROOT,
+		setup_derived_state(d_inode(sb->s_root), PERM_ROOT,
 				sb_info->options.fs_user_id, AID_ROOT);
 		snprintf(sb_info->obbpath_s, PATH_MAX, "%s/Android/obb", dev_name);
 	}
-	fixup_tmp_permissions(sb->s_root->d_inode);
+	fixup_tmp_permissions(d_inode(sb->s_root));
 	sb_info->sb = sb;
 	list_add(&sb_info->list, &sdcardfs_super_list);
 	mutex_unlock(&sdcardfs_super_list_lock);

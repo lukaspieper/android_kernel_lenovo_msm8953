@@ -25,10 +25,9 @@
 
 #include <net/sock.h>
 
-/* definitions for the R2R wire protcol */
+/* definitions for the R2R wire protocol */
 #define IPC_ROUTER_V1		1
-/*
- * Ambiguous definition but will enable multiplexing IPC_ROUTER_V2 packets
+/* Ambiguous definition but will enable multiplexing IPC_ROUTER_V2 packets
  * with an existing alternate transport in user-space, if needed.
  */
 #define IPC_ROUTER_V2		3
@@ -96,10 +95,12 @@ struct msm_ipc_sock {
  * This function is used to create an IPC Router port. The port is used for
  * communication locally or outside the subsystem.
  */
-struct msm_ipc_port *msm_ipc_router_create_raw_port(void *endpoint,
-	void (*notify)(unsigned event, void *oob_data,
-		       size_t oob_data_len, void *priv),
-	void *priv);
+struct msm_ipc_port *
+msm_ipc_router_create_raw_port(void *endpoint,
+			       void (*notify)(unsigned int event,
+					      void *oob_data,
+					      size_t oob_data_len, void *priv),
+			       void *priv);
 int msm_ipc_router_send_to(struct msm_ipc_port *src,
 			   struct sk_buff_head *data,
 			   struct msm_ipc_addr *dest,
@@ -109,17 +110,16 @@ int msm_ipc_router_read(struct msm_ipc_port *port_ptr,
 			size_t buf_len);
 
 int msm_ipc_router_recv_from(struct msm_ipc_port *port_ptr,
-		      struct rr_packet **pkt,
-		      struct msm_ipc_addr *src_addr,
-		      long timeout);
+			     struct rr_packet **pkt,
+			     struct msm_ipc_addr *src_addr, long timeout);
 int msm_ipc_router_register_server(struct msm_ipc_port *server_port,
-			    struct msm_ipc_addr *name);
+				   struct msm_ipc_addr *name);
 int msm_ipc_router_unregister_server(struct msm_ipc_port *server_port);
 
 int msm_ipc_router_init_sockets(void);
 void msm_ipc_router_exit_sockets(void);
 
-void msm_ipc_sync_sec_rule(uint32_t service, uint32_t instance, void *rule);
+void msm_ipc_sync_sec_rule(u32 service, u32 instance, void *rule);
 
 void msm_ipc_sync_default_sec_rule(void *rule);
 

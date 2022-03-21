@@ -44,7 +44,6 @@ static inline struct esoc_desc *devm_register_esoc_client(struct device *dev,
 static inline void devm_unregister_esoc_client(struct device *dev,
 						struct esoc_desc *esoc_desc)
 {
-	return;
 }
 static inline int esoc_register_client_notifier(struct notifier_block *nb)
 {

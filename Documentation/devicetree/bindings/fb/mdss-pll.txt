@@ -1,8 +1,7 @@
-Qualcomm MDSS pll for DSI/EDP/HDMI
+Qualcomm Technologies, Inc. MDSS pll for DSI/EDP/HDMI
 
-mdss-pll is a pll controller device which supports pll devices that
-are compatable with MIPI display serial interface specification,
-HDMI and edp.
+mdss-pll is a pll controller device which supports pll devices that are
+compatiable with MIPI display serial interface specification, HDMI and edp.
 
 Required properties:
 - compatible:		Compatible name used in the driver. Should be one of:
@@ -15,7 +14,7 @@ Required properties:
 			"qcom,mdss_hdmi_pll_8996_v2", "qcom,mdss_dsi_pll_8996_v2",
 			"qcom,mdss_hdmi_pll_8996_v3", "qcom,mdss_dsi_pll_8952",
 			"qcom,mdss_dsi_pll_8937", "qcom,mdss_hdmi_pll_8996_v3_1p8",
-			"qcom,mdss_dsi_pll_8953"
+			"qcom,mdss_dsi_pll_8953", "qcom,mdss_dsi_pll_sdm439"
 - cell-index:		Specifies the controller used
 - reg:			offset and length of the register set for the device.
 - reg-names :		names to refer to register sets related to this device

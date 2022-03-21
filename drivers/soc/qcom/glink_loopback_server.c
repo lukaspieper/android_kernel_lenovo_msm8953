@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -140,7 +140,9 @@ static struct ctl_ch_info ctl_ch_tbl[] = {
 	{"LOOPBACK_CTL_APSS", "mpss", "smem"},
 	{"LOOPBACK_CTL_APSS", "lpass", "smem"},
 	{"LOOPBACK_CTL_APSS", "dsps", "smem"},
+	{"LOOPBACK_CTL_APSS", "cdsp", "smem"},
 	{"LOOPBACK_CTL_APSS", "spss", "mailbox"},
+	{"LOOPBACK_CTL_APSS", "wdsp", "spi"},
 };
 
 static DEFINE_MUTEX(ctl_ch_list_lock);
@@ -193,7 +195,7 @@ int glink_lbsrv_send_response(void *handle, uint32_t req_id, uint32_t req_type,
 	resp_pkt->response = response;
 
 	return glink_tx(handle, (void *)LINEAR, (void *)resp_pkt,
-			sizeof(struct resp), 0);
+			sizeof(struct resp), GLINK_TX_REQ_INTENT);
 }
 
 static uint32_t calc_delay_ms(uint32_t random_delay, uint32_t delay_ms)
@@ -810,6 +812,7 @@ void glink_lpbsrv_notify_tx_done(void *handle, const void *priv,
 				 const void *pkt_priv, const void *ptr)
 {
 	struct ch_info *tx_done_ch_info = (struct ch_info *)priv;
+
 	LBSRV_INFO("%s:%s:%s %s: end (Success) TX_DONE ptr[%p]\n",
 			tx_done_ch_info->transport, tx_done_ch_info->edge,
 			tx_done_ch_info->name, __func__, ptr);
@@ -819,7 +822,8 @@ void glink_lpbsrv_notify_tx_done(void *handle, const void *priv,
 				(uint32_t)(uintptr_t)pkt_priv);
 }
 
-void glink_lpbsrv_notify_state(void *handle, const void *priv, unsigned event)
+void glink_lpbsrv_notify_state(void *handle, const void *priv,
+				unsigned int event)
 {
 	int ret;
 	uint32_t delay_ms;
@@ -898,6 +902,7 @@ bool glink_lpbsrv_rmt_rx_intent_req_cb(void *handle, const void *priv,
 {
 	struct rmt_rx_intent_req_work_info *tmp_work_info;
 	struct ch_info *tmp_ch_info = (struct ch_info *)priv;
+
 	LBSRV_INFO("%s:%s:%s %s: QUEUE RX INTENT to receive size[%zu]\n",
 		   tmp_ch_info->transport, tmp_ch_info->edge, tmp_ch_info->name,
 		   __func__, sz);
@@ -1046,7 +1051,6 @@ static void glink_lbsrv_rmt_rx_intent_req_worker(struct work_struct *work)
 			  tmp_work_info->req_intent_size);
 	}
 	kfree(tmp_work_info);
-	return;
 }
 
 static void glink_lbsrv_queue_rx_intent_worker(struct work_struct *work)
@@ -1139,7 +1143,7 @@ static void glink_lbsrv_tx_worker(struct work_struct *work)
 			return;
 		}
 
-		flags = 0;
+		flags = GLINK_TX_REQ_INTENT;
 		if (tmp_work_info->tracer_pkt) {
 			flags |= GLINK_TX_TRACER_PKT;
 			tracer_pkt_log_event(tmp_work_info->data,
@@ -1224,7 +1228,6 @@ static void glink_lbsrv_link_state_worker(struct work_struct *work)
 
 	}
 	kfree(ls_info);
-	return;
 }
 
 /**

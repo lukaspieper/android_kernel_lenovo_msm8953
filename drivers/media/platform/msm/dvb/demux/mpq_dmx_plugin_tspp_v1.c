@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,6 +14,7 @@
 #include <linux/module.h>
 #include <linux/kthread.h>
 #include <linux/vmalloc.h>
+#include <linux/dma-buf.h>
 #include <linux/qcom_tspp.h>
 #include "mpq_dvb_debug.h"
 #include "mpq_dmx_plugin_common.h"
@@ -91,12 +92,12 @@ static int tspp_notification_size =
 static int tspp_channel_timeout = TSPP_CHANNEL_TIMEOUT;
 static int tspp_out_ion_heap = ION_QSECOM_HEAP_ID;
 
-module_param(allocation_mode, int, S_IRUGO | S_IWUSR);
-module_param(tspp_out_buffer_size, int, S_IRUGO | S_IWUSR);
-module_param(tspp_desc_size, int, S_IRUGO | S_IWUSR);
-module_param(tspp_notification_size, int, S_IRUGO | S_IWUSR);
-module_param(tspp_channel_timeout, int, S_IRUGO | S_IWUSR);
-module_param(tspp_out_ion_heap, int, S_IRUGO | S_IWUSR);
+module_param(allocation_mode, int, 0644);
+module_param(tspp_out_buffer_size, int, 0644);
+module_param(tspp_desc_size, int, 0644);
+module_param(tspp_notification_size, int, 0644);
+module_param(tspp_channel_timeout, int, 0644);
+module_param(tspp_out_ion_heap, int, 0644);
 
 /* The following structure hold singleton information
  * required for dmx implementation on top of TSPP.
@@ -189,6 +190,10 @@ static struct
 
 		/* Mutex protecting the data-structure */
 		struct mutex mutex;
+
+		/* ion dma buffer mapping structure */
+		struct tspp_ion_dma_buf_info ch_ion_dma_buf;
+
 	} tsif[TSIF_COUNT];
 
 	/* ION client used for TSPP data buffer allocation */
@@ -196,7 +201,8 @@ static struct
 } mpq_dmx_tspp_info;
 
 static void *tspp_mem_allocator(int channel_id, u32 size,
-				phys_addr_t *phys_base, void *user)
+				phys_addr_t *phys_base, dma_addr_t *dma_base,
+				void *user)
 {
 	void *virt_addr = NULL;
 	int i = TSPP_GET_TSIF_NUM(channel_id);
@@ -211,6 +217,10 @@ static void *tspp_mem_allocator(int channel_id, u32 size,
 
 	*phys_base =
 		(mpq_dmx_tspp_info.tsif[i].ch_mem_heap_phys_base +
+		(mpq_dmx_tspp_info.tsif[i].buff_index * size));
+
+	*dma_base =
+		(mpq_dmx_tspp_info.tsif[i].ch_ion_dma_buf.dma_map_base +
 		(mpq_dmx_tspp_info.tsif[i].buff_index * size));
 
 	mpq_dmx_tspp_info.tsif[i].buff_index++;
@@ -353,7 +363,7 @@ static void mpq_dmx_tspp_aggregated_process(int tsif, int channel_id)
 	int i;
 
 	while ((tspp_data_desc = tspp_get_buffer(0, channel_id)) != NULL) {
-		if (0 == aggregate_count)
+		if (aggregate_count == 0)
 			buff_current_addr_phys = tspp_data_desc->phys_base;
 		notif_size = tspp_data_desc->size / TSPP_RAW_TTS_SIZE;
 		mpq_dmx_tspp_info.tsif[tsif].aggregate_ids[aggregate_count] =
@@ -444,13 +454,13 @@ static int mpq_dmx_tspp_thread(void *arg)
 		mpq_demux = mpq_dmx_tspp_info.tsif[tsif].mpq_demux;
 		mpq_demux->hw_notification_size = 0;
 
-		if (MPQ_DMX_TSPP_CONTIGUOUS_PHYS_ALLOC != allocation_mode &&
+		if (allocation_mode != MPQ_DMX_TSPP_CONTIGUOUS_PHYS_ALLOC &&
 			mpq_sdmx_is_loaded())
 			pr_err_once(
 				"%s: TSPP Allocation mode does not support secure demux.\n",
 				__func__);
 
-		if (MPQ_DMX_TSPP_CONTIGUOUS_PHYS_ALLOC == allocation_mode &&
+		if (allocation_mode == MPQ_DMX_TSPP_CONTIGUOUS_PHYS_ALLOC &&
 			mpq_sdmx_is_loaded()) {
 			mpq_dmx_tspp_aggregated_process(tsif, channel_id);
 		} else {
@@ -539,6 +549,9 @@ static void mpq_dmx_channel_mem_free(int tsif)
 
 	mpq_dmx_tspp_info.tsif[tsif].ch_mem_heap_virt_base = NULL;
 	mpq_dmx_tspp_info.tsif[tsif].ch_mem_heap_handle = NULL;
+
+	tspp_detach_ion_dma_buff(0,
+		&mpq_dmx_tspp_info.tsif[tsif].ch_ion_dma_buf);
 }
 
 /**
@@ -587,6 +600,24 @@ static int mpq_dmx_channel_mem_alloc(int tsif)
 		MPQ_DVB_ERR_PRINT("%s: ion_phys() failed\n", __func__);
 		mpq_dmx_channel_mem_free(tsif);
 		return -ENOMEM;
+	}
+
+	mpq_dmx_tspp_info.tsif[tsif].ch_ion_dma_buf.dbuf = ion_share_dma_buf(
+			mpq_dmx_tspp_info.ion_client,
+			mpq_dmx_tspp_info.tsif[tsif].ch_mem_heap_handle);
+	if (IS_ERR_OR_NULL(mpq_dmx_tspp_info.tsif[tsif].ch_ion_dma_buf.dbuf)) {
+		MPQ_DVB_ERR_PRINT("%s: ion_share_dma_buf failed\n", __func__);
+		mpq_dmx_channel_mem_free(tsif);
+		return -ENOMEM;
+	}
+
+	result = tspp_attach_ion_dma_buff(0,
+				&mpq_dmx_tspp_info.tsif[tsif].ch_ion_dma_buf);
+	if (result) {
+		MPQ_DVB_ERR_PRINT("%s: tspp_attach_ion_dma_buff failed\n",
+					 __func__);
+		mpq_dmx_channel_mem_free(tsif);
+		return result;
 	}
 
 	return 0;
@@ -1634,6 +1665,9 @@ static int mpq_tspp_dmx_write_to_decoder(
 	if (dvb_dmx_is_video_feed(feed))
 		return mpq_dmx_process_video_packet(feed, buf);
 
+	if (dvb_dmx_is_audio_feed(feed))
+		return mpq_dmx_process_audio_packet(feed, buf);
+
 	if (dvb_dmx_is_pcr_feed(feed))
 		return mpq_dmx_process_pcr_packet(feed, buf);
 
@@ -1663,7 +1697,7 @@ static int mpq_tspp_dmx_get_caps(struct dmx_demux *demux,
 
 	caps->caps = DMX_CAP_PULL_MODE | DMX_CAP_VIDEO_DECODER_DATA |
 		DMX_CAP_TS_INSERTION | DMX_CAP_VIDEO_INDEXING |
-		DMX_CAP_AUTO_BUFFER_FLUSH;
+		DMX_CAP_AUDIO_DECODER_DATA | DMX_CAP_AUTO_BUFFER_FLUSH;
 	caps->recording_max_video_pids_indexed = 0;
 	caps->num_decoders = MPQ_ADAPTER_MAX_NUM_OF_INTERFACES;
 	caps->num_demux_devices = CONFIG_DVB_MPQ_NUM_DMX_DEVICES;
@@ -1753,6 +1787,8 @@ static int mpq_tspp_dmx_get_stc(struct dmx_demux *demux, unsigned int num,
 {
 	enum tspp_source source;
 	u32 tcr_counter;
+	u64 avtimer_stc = 0;
+	int tts_source = 0;
 
 	if (!demux || !stc || !base)
 		return -EINVAL;
@@ -1764,11 +1800,18 @@ static int mpq_tspp_dmx_get_stc(struct dmx_demux *demux, unsigned int num,
 	else
 		return -EINVAL;
 
-	tspp_get_ref_clk_counter(0, source, &tcr_counter);
+	if (tspp_get_tts_source(0, &tts_source) < 0)
+		tts_source = TSIF_TTS_TCR;
 
-	*stc = ((u64)tcr_counter) * 256; /* conversion to 27MHz */
-	*base = 300; /* divisor to get 90KHz clock from stc value */
-
+	if (tts_source != TSIF_TTS_LPASS_TIMER) {
+		tspp_get_ref_clk_counter(0, source, &tcr_counter);
+		*stc = ((u64)tcr_counter) * 256; /* conversion to 27MHz */
+		*base = 300; /* divisor to get 90KHz clock from stc value */
+	} else {
+		if (tspp_get_lpass_time_counter(0, source, &avtimer_stc) < 0)
+			return -EINVAL;
+		*stc = avtimer_stc;
+	}
 	return 0;
 }
 
@@ -1839,6 +1882,10 @@ static int mpq_tspp_dmx_init(
 
 	/* Extend dvb-demux debugfs with TSPP statistics. */
 	mpq_dmx_init_debugfs_entries(mpq_demux);
+
+	/* Get the TSIF TTS info */
+	if (tspp_get_tts_source(0, &mpq_demux->ts_packet_timestamp_source) < 0)
+		mpq_demux->ts_packet_timestamp_source = TSIF_TTS_TCR;
 
 	return 0;
 
@@ -1964,7 +2011,5 @@ static void __exit mpq_dmx_tspp_plugin_exit(void)
 module_init(mpq_dmx_tspp_plugin_init);
 module_exit(mpq_dmx_tspp_plugin_exit);
 
-MODULE_DESCRIPTION("Qualcomm demux TSPP version 1 HW Plugin");
+MODULE_DESCRIPTION("Qualcomm Technologies Inc. demux TSPP version 1 HW Plugin");
 MODULE_LICENSE("GPL v2");
-
-

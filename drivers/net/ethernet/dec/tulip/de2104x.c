@@ -91,7 +91,7 @@ MODULE_PARM_DESC (rx_copybreak, "de2104x Breakpoint at which Rx packets are copi
 #define DSL			CONFIG_DE2104X_DSL
 #endif
 
-#define DE_RX_RING_SIZE		128
+#define DE_RX_RING_SIZE		64
 #define DE_TX_RING_SIZE		64
 #define DE_RING_BYTES		\
 		((sizeof(struct de_desc) * DE_RX_RING_SIZE) +	\
@@ -1597,7 +1597,6 @@ static void de_get_drvinfo (struct net_device *dev,struct ethtool_drvinfo *info)
 	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
 	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
 	strlcpy(info->bus_info, pci_name(de->pdev), sizeof(info->bus_info));
-	info->eedump_len = DE_EEPROM_SIZE;
 }
 
 static int de_get_regs_len(struct net_device *dev)

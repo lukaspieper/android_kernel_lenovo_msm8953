@@ -1,5 +1,5 @@
-/* Copyright (c) 2011-2013, 2015, 2019 The Linux Foundation.
- * All rights reserved.
+/* Copyright (c) 2011-2013, 2015, 2017, 2019, The Linux Foundation. All rights
+ * reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -460,8 +460,8 @@ int sps_dma_init(const struct sps_bam_props *bam_props)
 		/* Register the BAM */
 		if (sps_register_bam_device(bam_reg, &h)) {
 			SPS_ERR(sps,
-				"sps:Fail to register BAM-DMA BAM device: "
-					"phys %pa", &bam_props->phys_addr);
+				"sps:Fail to register BAM-DMA BAM device: phys %pa",
+				&bam_props->phys_addr);
 			return SPS_ERROR;
 		}
 
@@ -559,8 +559,8 @@ int sps_alloc_dma_chan(const struct sps_alloc_dma_chan *alloc,
 			/* Just check pipes for safety */
 			if (dev->pipes[pipe_index] != PIPE_INACTIVE ||
 			    dev->pipes[pipe_index + 1] != PIPE_INACTIVE) {
-				SPS_ERR(sps, "sps:BAM-DMA: channel %d state "
-					"error:%d %d",
+				SPS_ERR(sps,
+					"sps:BAM-DMA: channel %d state error:%d %d",
 					pipe_index / 2, dev->pipes[pipe_index],
 				 dev->pipes[pipe_index + 1]);
 				goto exit_err;
@@ -631,8 +631,8 @@ int sps_free_dma_chan(struct sps_dma_chan *chan)
 	pipe_index = chan->dest_pipe_index;
 	if (pipe_index >= dev->num_pipes || ((pipe_index & 1)) ||
 	    (pipe_index + 1) != chan->src_pipe_index) {
-		SPS_ERR(sps, "sps:sps_free_dma_chan. Invalid pipe indices."
-			"num_pipes=%d.dest=%d.src=%d.",
+		SPS_ERR(sps,
+			"sps:sps_free_dma_chan. Invalid pipe indices. num_pipes=%d.dest=%d.src=%d.",
 			dev->num_pipes,
 			chan->dest_pipe_index,
 			chan->src_pipe_index);

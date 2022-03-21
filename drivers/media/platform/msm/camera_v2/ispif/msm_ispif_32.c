@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -60,7 +60,7 @@ static void msm_ispif_io_dump_reg(struct ispif_device *ispif)
 		return;
 	}
 
-	msm_camera_io_dump(ispif->base, 0x250, 0);
+	msm_camera_io_dump(ispif->base, 0x250, 1);
 }
 
 
@@ -210,7 +210,7 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 	return rc;
 }
 
-int msm_ispif_get_ahb_clk_info(struct ispif_device *ispif_dev,
+static int msm_ispif_get_ahb_clk_info(struct ispif_device *ispif_dev,
 	struct platform_device *pdev,
 	struct msm_cam_clk_info *ahb_clk_info)
 {
@@ -296,7 +296,8 @@ static int msm_ispif_reset(struct ispif_device *ispif)
 	int rc = 0;
 	int i;
 
-	BUG_ON(!ispif);
+	if (WARN_ON(!ispif))
+		return -EINVAL;
 
 	memset(ispif->sof_count, 0, sizeof(ispif->sof_count));
 	for (i = 0; i < ispif->vfe_info.num_vfe; i++) {
@@ -343,23 +344,13 @@ static int msm_ispif_reset(struct ispif_device *ispif)
 	return rc;
 }
 
-/*
-static int msm_ispif_subdev_g_chip_ident(struct v4l2_subdev *sd,
-	struct v4l2_dbg_chip_ident *chip)
-{
-	BUG_ON(!chip);
-	chip->ident = V4L2_IDENT_ISPIF;
-	chip->revision = 0;
-	return 0;
-}
-*/
-
 static void msm_ispif_sel_csid_core(struct ispif_device *ispif,
 	uint8_t intftype, uint8_t csid, uint8_t vfe_intf)
 {
 	uint32_t data;
 
-	BUG_ON(!ispif);
+	if (WARN_ON(!ispif))
+		return;
 
 	if (!msm_ispif_is_intf_valid(ispif->csid_version, vfe_intf)) {
 		pr_err("%s: invalid interface type\n", __func__);
@@ -400,7 +391,8 @@ static void msm_ispif_enable_crop(struct ispif_device *ispif,
 {
 	uint32_t data;
 
-	BUG_ON(!ispif);
+	if (WARN_ON(!ispif))
+		return;
 
 	if (!msm_ispif_is_intf_valid(ispif->csid_version, vfe_intf)) {
 		pr_err("%s: invalid interface type\n", __func__);
@@ -422,7 +414,7 @@ static void msm_ispif_enable_crop(struct ispif_device *ispif,
 			ispif->base + ISPIF_VFE_m_PIX_INTF_n_CROP(vfe_intf, 1));
 	else {
 		pr_err("%s: invalid intftype=%d\n", __func__, intftype);
-		BUG_ON(1);
+		WARN_ON(1);
 		return;
 	}
 }
@@ -432,7 +424,8 @@ static void msm_ispif_enable_intf_cids(struct ispif_device *ispif,
 {
 	uint32_t intf_addr, data;
 
-	BUG_ON(!ispif);
+	if (WARN_ON((!ispif)))
+		return;
 
 	if (!msm_ispif_is_intf_valid(ispif->csid_version, vfe_intf)) {
 		pr_err("%s: invalid interface type\n", __func__);
@@ -457,7 +450,7 @@ static void msm_ispif_enable_intf_cids(struct ispif_device *ispif,
 		break;
 	default:
 		pr_err("%s: invalid intftype=%d\n", __func__, intftype);
-		BUG_ON(1);
+		WARN_ON(1);
 		return;
 	}
 
@@ -475,7 +468,8 @@ static int msm_ispif_validate_intf_status(struct ispif_device *ispif,
 	int rc = 0;
 	uint32_t data = 0;
 
-	BUG_ON(!ispif);
+	if (WARN_ON((!ispif)))
+		return -ENODEV;
 
 	if (!msm_ispif_is_intf_valid(ispif->csid_version, vfe_intf)) {
 		pr_err("%s: invalid interface type\n", __func__);
@@ -567,9 +561,12 @@ static uint16_t msm_ispif_get_cids_mask_from_cfg(
 	int i;
 	uint16_t cids_mask = 0;
 
-	BUG_ON(!entry);
+	if (WARN_ON(!entry)) {
+		pr_err("%s: invalid entry", __func__);
+		return cids_mask;
+	}
 
-	for (i = 0; i < entry->num_cids && i < MAX_CID_CH_v2; i++)
+	for (i = 0; i < entry->num_cids && i < MAX_CID_CH_PARAM_ENTRY; i++)
 		cids_mask |= (1 << entry->cids[i]);
 
 	return cids_mask;
@@ -583,8 +580,8 @@ static int msm_ispif_config(struct ispif_device *ispif,
 	enum msm_ispif_intftype intftype;
 	enum msm_ispif_vfe_intf vfe_intf;
 
-	BUG_ON(!ispif);
-	BUG_ON(!params);
+	if (WARN_ON(!ispif) || WARN_ON(!params))
+		return -EINVAL;
 
 	if (ispif->ispif_state != ISPIF_POWER_UP) {
 		pr_err("%s: ispif invalid state %d\n", __func__,
@@ -637,7 +634,7 @@ static int msm_ispif_config(struct ispif_device *ispif,
 		}
 
 		if (ispif->csid_version >= CSID_VERSION_V30)
-				msm_ispif_select_clk_mux(ispif, intftype,
+			msm_ispif_select_clk_mux(ispif, intftype,
 				params->entries[i].csid, vfe_intf);
 
 		rc = msm_ispif_validate_intf_status(ispif, intftype, vfe_intf);
@@ -685,7 +682,7 @@ static int msm_ispif_config(struct ispif_device *ispif,
 	return rc;
 }
 
-static void msm_ispif_intf_cmd(struct ispif_device *ispif, uint32_t cmd_bits,
+static int msm_ispif_intf_cmd(struct ispif_device *ispif, uint32_t cmd_bits,
 	struct msm_ispif_param_data *params)
 {
 	uint8_t vc;
@@ -694,19 +691,19 @@ static void msm_ispif_intf_cmd(struct ispif_device *ispif, uint32_t cmd_bits,
 	enum msm_ispif_cid cid;
 	enum msm_ispif_vfe_intf vfe_intf;
 
-	BUG_ON(!ispif);
-	BUG_ON(!params);
+	if (WARN_ON(!ispif) || WARN_ON(!params))
+		return -EINVAL;
 
 	for (i = 0; i < params->num; i++) {
 		vfe_intf = params->entries[i].vfe_intf;
 		if (!msm_ispif_is_intf_valid(ispif->csid_version, vfe_intf)) {
 			pr_err("%s: invalid interface type\n", __func__);
-			return;
+			return -EINVAL;
 		}
-		if (params->entries[i].num_cids > MAX_CID_CH_v2) {
+		if (params->entries[i].num_cids > MAX_CID_CH_PARAM_ENTRY) {
 			pr_err("%s: out of range of cid_num %d\n",
 				__func__, params->entries[i].num_cids);
-			return;
+			return -EINVAL;
 		}
 	}
 
@@ -744,6 +741,7 @@ static void msm_ispif_intf_cmd(struct ispif_device *ispif, uint32_t cmd_bits,
 				ispif->applied_intf_cmd[vfe_intf].intf_cmd1,
 				ispif->base + ISPIF_VFE_m_INTF_CMD_1(vfe_intf));
 	}
+	return 0;
 }
 
 static int msm_ispif_stop_immediately(struct ispif_device *ispif,
@@ -752,8 +750,8 @@ static int msm_ispif_stop_immediately(struct ispif_device *ispif,
 	int i, rc = 0;
 	uint16_t cid_mask = 0;
 
-	BUG_ON(!ispif);
-	BUG_ON(!params);
+	if (WARN_ON(!ispif) || WARN_ON(!params))
+		return -EINVAL;
 
 	if (ispif->ispif_state != ISPIF_POWER_UP) {
 		pr_err("%s: ispif invalid state %d\n", __func__,
@@ -991,8 +989,8 @@ static int msm_ispif_stop_frame_boundary(struct ispif_device *ispif,
 	enum msm_ispif_vfe_intf vfe_intf;
 	uint32_t stop_flag = 0;
 
-	BUG_ON(!ispif);
-	BUG_ON(!params);
+	if (WARN_ON(!ispif) || WARN_ON(!params))
+		return -EINVAL;
 
 
 	if (ispif->ispif_state != ISPIF_POWER_UP) {
@@ -1068,8 +1066,8 @@ end:
 static void ispif_process_irq(struct ispif_device *ispif,
 	struct ispif_irq_status *out, enum msm_ispif_vfe_intf vfe_id)
 {
-	BUG_ON(!ispif);
-	BUG_ON(!out);
+	if (WARN_ON(!ispif) || WARN_ON(!out))
+		return;
 
 	if (out[vfe_id].ispifIrqStatus0 &
 			ISPIF_IRQ_STATUS_PIX_SOF_MASK) {
@@ -1098,8 +1096,8 @@ static inline void msm_ispif_read_irq_status(struct ispif_irq_status *out,
 {
 	struct ispif_device *ispif = (struct ispif_device *)data;
 
-	BUG_ON(!ispif);
-	BUG_ON(!out);
+	if (WARN_ON(!ispif) || WARN_ON(!out))
+		return;
 
 	out[VFE0].ispifIrqStatus0 = msm_camera_io_r(ispif->base +
 		ISPIF_VFE_m_IRQ_STATUS_0(VFE0));
@@ -1201,7 +1199,10 @@ static int msm_ispif_init(struct ispif_device *ispif,
 {
 	int rc = 0;
 
-	BUG_ON(!ispif);
+	if (WARN_ON(!ispif)) {
+		pr_err("%s: invalid ispif params", __func__);
+		return -EINVAL;
+	}
 
 	if (ispif->ispif_state == ISPIF_POWER_UP) {
 		pr_err("%s: ispif already initted state = %d\n", __func__,
@@ -1275,7 +1276,10 @@ end:
 
 static void msm_ispif_release(struct ispif_device *ispif)
 {
-	BUG_ON(!ispif);
+	if (WARN_ON(!ispif)) {
+		pr_err("%s: invalid ispif params", __func__);
+		return;
+	}
 
 	if (!ispif->base) {
 		pr_err("%s: ispif base is NULL\n", __func__);
@@ -1309,8 +1313,8 @@ static long msm_ispif_cmd(struct v4l2_subdev *sd, void *arg)
 	struct ispif_device *ispif =
 		(struct ispif_device *)v4l2_get_subdevdata(sd);
 
-	BUG_ON(!sd);
-	BUG_ON(!pcdata);
+	if (WARN_ON(!sd) || WARN_ON(!pcdata))
+		return -EINVAL;
 
 	mutex_lock(&ispif->mutex);
 	switch (pcdata->cfg_type) {
@@ -1516,9 +1520,8 @@ static int ispif_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, &ispif->msm_sd.sd);
 
-	media_entity_init(&ispif->msm_sd.sd.entity, 0, NULL, 0);
-	ispif->msm_sd.sd.entity.type = MEDIA_ENT_T_V4L2_SUBDEV;
-	ispif->msm_sd.sd.entity.group_id = MSM_CAMERA_SUBDEV_ISPIF;
+	media_entity_pads_init(&ispif->msm_sd.sd.entity, 0, NULL);
+	ispif->msm_sd.sd.entity.function = MSM_CAMERA_SUBDEV_ISPIF;
 	ispif->msm_sd.sd.entity.name = pdev->name;
 	ispif->msm_sd.close_seq = MSM_SD_CLOSE_1ST_CATEGORY | 0x1;
 	rc = msm_sd_register(&ispif->msm_sd);

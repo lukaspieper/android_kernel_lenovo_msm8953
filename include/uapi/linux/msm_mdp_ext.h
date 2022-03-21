@@ -36,12 +36,12 @@
 #ifdef __LP64
 #define MDP_LAYER_COMMIT_V1_PAD 1
 #else
-#define MDP_LAYER_COMMIT_V1_PAD 3
+#define MDP_LAYER_COMMIT_V1_PAD 2
 #endif
 
-/**********************************************************************
-LAYER FLAG CONFIGURATION
-**********************************************************************/
+/*
+ * LAYER FLAG CONFIGURATION
+ */
 /* left-right layer flip flag */
 #define MDP_LAYER_FLIP_LR		0x1
 
@@ -84,9 +84,21 @@ LAYER FLAG CONFIGURATION
 /* Flag enabled qseed3 scaling for the current layer */
 #define MDP_LAYER_ENABLE_QSEED3_SCALE   0x800
 
-/**********************************************************************
-DESTINATION SCALER FLAG CONFIGURATION
-**********************************************************************/
+/*
+ * layer will work in multirect mode, where single hardware should
+ * fetch multiple rectangles with a single hardware
+ */
+#define MDP_LAYER_MULTIRECT_ENABLE		0x1000
+
+/*
+ * if flag present and multirect is enabled, multirect will work in parallel
+ * fetch mode, otherwise it will default to serial fetch mode.
+ */
+#define MDP_LAYER_MULTIRECT_PARALLEL_MODE	0x2000
+
+/*
+ * DESTINATION SCALER FLAG CONFIGURATION
+ */
 
 /* Enable/disable Destination scaler */
 #define MDP_DESTSCALER_ENABLE		0x1
@@ -104,20 +116,8 @@ DESTINATION SCALER FLAG CONFIGURATION
 #define MDP_DESTSCALER_ENHANCER_UPDATE	0x4
 
 /*
- * layer will work in multirect mode, where single hardware should
- * fetch multiple rectangles with a single hardware
+ * VALIDATE/COMMIT FLAG CONFIGURATION
  */
-#define MDP_LAYER_MULTIRECT_ENABLE		0x1000
-
-/*
- * if flag present and multirect is enabled, multirect will work in parallel
- * fetch mode, otherwise it will default to serial fetch mode.
- */
-#define MDP_LAYER_MULTIRECT_PARALLEL_MODE	0x2000
-
-/**********************************************************************
-VALIDATE/COMMIT FLAG CONFIGURATION
-**********************************************************************/
 
 /*
  * Client enables it to inform that call is to validate layers before commit.
@@ -138,15 +138,34 @@ VALIDATE/COMMIT FLAG CONFIGURATION
  */
 #define MDP_COMMIT_SYNC_FENCE_WAIT		0x04
 
+/* Flag to enable AVR(Adaptive variable refresh) feature. */
+#define MDP_COMMIT_AVR_EN			0x08
+
+/*
+ * Flag to select one shot mode when AVR feature is enabled.
+ * Default mode is continuous mode.
+ */
+#define MDP_COMMIT_AVR_ONE_SHOT_MODE		0x10
+
+/* Flag to update brightness when commit */
+#define MDP_COMMIT_UPDATE_BRIGHTNESS		0x40
+
+/* Flag to enable concurrent writeback for the frame */
+#define MDP_COMMIT_CWB_EN 0x800
+
+/*
+ * Flag to select DSPP as the data point for CWB. If CWB
+ * is enabled without this flag, LM will be selected as data point.
+ */
+#define MDP_COMMIT_CWB_DSPP 0x1000
+
 #define MDP_COMMIT_VERSION_1_0		0x00010000
 
-#define OUT_LAYER_COLOR_SPACE
-
-/**********************************************************************
-Configuration structures
-All parameters are input to driver unless mentioned output parameter
-explicitly.
-**********************************************************************/
+/*
+ * Configuration structures
+ * All parameters are input to driver unless mentioned output parameter
+ * explicitly.
+ */
 struct mdp_layer_plane {
 	/* DMA buffer file descriptor information. */
 	int fd;
@@ -335,7 +354,7 @@ struct mdp_output_layer {
 	struct mdp_layer_buffer		buffer;
 
 	/* color space of the destination */
-	enum mdp_color_space		color_space;
+	enum mdp_color_space            color_space;
 
 	/* 32bits reserved value for future usage. */
 	uint32_t			reserved[5];
@@ -469,6 +488,9 @@ struct mdp_layer_commit_v1 {
 	/* FRC info per device which contains frame count and timestamp */
 	struct mdp_frc_info __user *frc_info;
 
+	/* Backlight level that would update when display commit */
+	uint32_t		bl_level;
+
 	/* 32-bits reserved value for future usage. */
 	uint32_t		reserved[MDP_LAYER_COMMIT_V1_PAD];
 };
@@ -596,15 +618,19 @@ struct mdp_scale_data_v2 {
 	int32_t init_phase_y[MAX_PLANES];
 	int32_t phase_step_y[MAX_PLANES];
 
-	/* This should be set to toal horizontal pixels
-	 * left + right +  width */
+	/*
+	 * This should be set to toal horizontal pixels
+	 * left + right +  width
+	 */
 	uint32_t num_ext_pxls_left[MAX_PLANES];
 
 	/* Unused param for backward compatibility */
 	uint32_t num_ext_pxls_right[MAX_PLANES];
 
-	/*  This should be set to vertical pixels
-	 *  top + bottom + height */
+	/*
+	 * This should be set to vertical pixels
+	 * top + bottom + height
+	 */
 	uint32_t num_ext_pxls_top[MAX_PLANES];
 
 	/* Unused param for backward compatibility */
@@ -624,8 +650,10 @@ struct mdp_scale_data_v2 {
 
 	uint32_t roi_w[MAX_PLANES];
 
-	/* alpha plane can only be scaled using bilinear or pixel
-	 * repeat/drop, specify these for Y and UV planes only */
+	/*
+	 * alpha plane can only be scaled using bilinear or pixel
+	 * repeat/drop, specify these for Y and UV planes only
+	 */
 	uint32_t preload_x[MAX_PLANES];
 	uint32_t preload_y[MAX_PLANES];
 	uint32_t src_width[MAX_PLANES];

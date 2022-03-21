@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -55,7 +55,7 @@
 #define IPA_QMAP_HEADER_LENGTH (4)
 #define IPA_DL_CHECKSUM_LENGTH (8)
 #define IPA_NUM_DESC_PER_SW_TX (2)
-#define IPA_GENERIC_RX_POOL_SZ 1000
+#define IPA_GENERIC_RX_POOL_SZ 192
 #define IPA_UC_FINISH_MAX 6
 #define IPA_UC_WAIT_MIN_SLEEP 1000
 #define IPA_UC_WAII_MAX_SLEEP 1200
@@ -63,9 +63,19 @@
 
 #define IPA_MAX_STATUS_STAT_NUM 30
 
-#define IPA_IPC_LOG_PAGES 50
 
 #define IPA_MAX_NUM_REQ_CACHE 10
+#define IPA_IPC_LOG_PAGES 50
+
+#define IPA_WDI_RX_RING_RES 0
+#define IPA_WDI_RX_RING_RP_RES 1
+#define IPA_WDI_RX_COMP_RING_RES 2
+#define IPA_WDI_RX_COMP_RING_WP_RES 3
+#define IPA_WDI_TX_RING_RES 4
+#define IPA_WDI_CE_RING_RES 5
+#define IPA_WDI_CE_DB_RES 6
+#define IPA_WDI_TX_DB_RES 7
+#define IPA_WDI_MAX_RES 8
 
 #define IPADBG(fmt, args...) \
 	do { \
@@ -201,6 +211,7 @@
 #define IPA2_ACTIVE_CLIENTS_LOG_LINE_LEN 96
 #define IPA2_ACTIVE_CLIENTS_LOG_HASHTABLE_SIZE 50
 #define IPA2_ACTIVE_CLIENTS_LOG_NAME_LEN 40
+#define IPA_RULE_CNT_MAX 512
 
 struct ipa2_active_client_htable_entry {
 	struct hlist_node list;
@@ -385,7 +396,7 @@ struct ipa_hdr_proc_ctx_add_hdr_cmd_seq {
 };
 
 /**
- struct ipa_hdr_proc_ctx_entry - IPA processing context header table entry
+ *struct ipa_hdr_proc_ctx_entry - IPA processing context header table entry
  * @link: entry's link in global header table entries list
  * @type:
  * @offset_entry: entry's offset
@@ -586,6 +597,7 @@ enum ipa_wakelock_ref_client {
  * @disconnect_in_progress: Indicates client disconnect in progress.
  * @qmi_request_sent: Indicates whether QMI request to enable clear data path
  *					request is sent or not.
+ * @napi_enabled: when true, IPA call client callback to start polling
  */
 struct ipa_ep_context {
 	int valid;
@@ -617,6 +629,10 @@ struct ipa_ep_context {
 	bool disconnect_in_progress;
 	u32 qmi_request_sent;
 	enum ipa_wakelock_ref_client wakelock_client;
+	bool napi_enabled;
+	bool switch_to_intr;
+	int inactive_cycles;
+	u32 eot_in_poll_err;
 	bool ep_disabled;
 
 	/* sys MUST be the last element of this struct */
@@ -655,7 +671,6 @@ struct ipa_sys_context {
 	int (*pyld_hdlr)(struct sk_buff *skb, struct ipa_sys_context *sys);
 	struct sk_buff * (*get_skb)(unsigned int len, gfp_t flags);
 	void (*free_skb)(struct sk_buff *skb);
-	void (*free_rx_wrapper)(struct ipa_rx_pkt_wrapper *rk_pkt);
 	u32 rx_buff_sz;
 	u32 rx_pool_sz;
 	struct sk_buff *prev_skb;
@@ -872,7 +887,6 @@ struct ipa_active_clients {
 struct ipa_wakelock_ref_cnt {
 	spinlock_t spinlock;
 	u32 cnt;
-	bool wakelock_acquired;
 };
 
 struct ipa_tag_completion {
@@ -977,6 +991,10 @@ struct ipa_uc_wdi_ctx {
 	struct IpaHwStatsWDIInfoData_t *wdi_uc_stats_mmio;
 	void *priv;
 	ipa_uc_ready_cb uc_ready_cb;
+	/* for AP+STA stats update */
+#ifdef IPA_WAN_MSG_IPv6_ADDR_GW_LEN
+	ipa_wdi_meter_notifier_cb stats_notify;
+#endif
 };
 
 /**
@@ -1212,6 +1230,7 @@ struct ipa_context {
 	struct ipa_cne_evt ipa_cne_evt_req_cache[IPA_MAX_NUM_REQ_CACHE];
 	int num_ipa_cne_evt_req;
 	struct mutex ipa_cne_evt_lock;
+	bool ipa_uc_monitor_holb;
 };
 
 /**
@@ -1267,6 +1286,7 @@ struct ipa_plat_drv_res {
 	bool tethered_flow_control;
 	u32 ipa_rx_polling_sleep_msec;
 	u32 ipa_polling_iteration;
+	bool ipa_uc_monitor_holb;
 };
 
 struct ipa_mem_partition {
@@ -1585,15 +1605,18 @@ int ipa2_resume_wdi_pipe(u32 clnt_hdl);
 int ipa2_suspend_wdi_pipe(u32 clnt_hdl);
 int ipa2_get_wdi_stats(struct IpaHwStatsWDIInfoData_t *stats);
 u16 ipa2_get_smem_restr_bytes(void);
+int ipa2_broadcast_wdi_quota_reach_ind(uint32_t fid, uint64_t num_bytes);
 int ipa2_setup_uc_ntn_pipes(struct ipa_ntn_conn_in_params *inp,
 		ipa_notify_cb notify, void *priv, u8 hdr_len,
 		struct ipa_ntn_conn_out_params *outp);
-int ipa2_tear_down_uc_offload_pipes(int ipa_ep_idx_ul, int ipa_ep_idx_dl);
+int ipa2_tear_down_uc_offload_pipes(int ipa_ep_idx_ul, int ipa_ep_idx_dl,
+	struct ipa_ntn_conn_in_params *params);
 int ipa2_ntn_uc_reg_rdyCB(void (*ipauc_ready_cb)(void *), void *priv);
 void ipa2_ntn_uc_dereg_rdyCB(void);
 
-int ipa2_conn_wdi3_pipes(struct ipa_wdi3_conn_in_params *in,
-	struct ipa_wdi3_conn_out_params *out);
+int ipa2_conn_wdi3_pipes(struct ipa_wdi_conn_in_params *in,
+	struct ipa_wdi_conn_out_params *out,
+	ipa_wdi_meter_notifier_cb wdi_notify);
 int ipa2_disconn_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx);
 int ipa2_enable_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx);
 int ipa2_disable_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx);
@@ -1615,6 +1638,9 @@ int ipa2_uc_reg_rdyCB(struct ipa_wdi_uc_ready_params *param);
  */
 int ipa2_uc_dereg_rdyCB(void);
 
+int ipa2_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
+		phys_addr_t pa, struct sg_table *sgt, size_t len, bool device,
+		unsigned long *iova);
 /*
  * Tethering bridge (Rmnet / MBIM)
  */
@@ -1632,6 +1658,10 @@ void ipa2_set_client(int index, enum ipacm_client_enum client, bool uplink);
 enum ipacm_client_enum ipa2_get_client(int pipe_idx);
 
 bool ipa2_get_client_uplink(int pipe_idx);
+
+int ipa2_get_wlan_stats(struct ipa_get_wdi_sap_stats *wdi_sap_stats);
+
+int ipa2_set_wlan_quota(struct ipa_set_wifi_quota *wdi_quota);
 
 /*
  * IPADMA
@@ -1727,10 +1757,6 @@ int ipa_generate_hw_rule(enum ipa_ip_type ip,
 			 const struct ipa_rule_attrib *attrib,
 			 u8 **buf,
 			 u16 *en_rule);
-u8 *ipa_write_32(u32 w, u8 *dest);
-u8 *ipa_write_16(u16 hw, u8 *dest);
-u8 *ipa_write_8(u8 b, u8 *dest);
-u8 *ipa_pad_to_32(u8 *dest);
 int ipa_init_hw(void);
 struct ipa_rt_tbl *__ipa_find_rt_tbl(enum ipa_ip_type ip, const char *name);
 int ipa_set_single_ndp_per_mbim(bool);
@@ -1853,6 +1879,9 @@ void ipa_delete_dflt_flt_rules(u32 ipa_ep_idx);
 
 int ipa_enable_data_path(u32 clnt_hdl);
 int ipa_disable_data_path(u32 clnt_hdl);
+int ipa2_enable_force_clear(u32 request_id, bool throttle_source,
+	u32 source_pipe_bitmask);
+int ipa2_disable_force_clear(u32 request_id);
 int ipa_id_alloc(void *ptr);
 void *ipa_id_find(u32 id);
 void ipa_id_remove(u32 id);
@@ -1875,7 +1904,7 @@ void ipa_active_clients_lock(void);
 int ipa_active_clients_trylock(unsigned long *flags);
 void ipa_active_clients_unlock(void);
 void ipa_active_clients_trylock_unlock(unsigned long *flags);
-int ipa_wdi_init(void);
+int ipa2_wdi_init(void);
 int ipa_write_qmapid_wdi_pipe(u32 clnt_hdl, u8 qmap_id);
 int ipa_tag_process(struct ipa_desc *desc, int num_descs,
 		    unsigned long timeout);
@@ -1942,6 +1971,8 @@ void ipa_inc_acquire_wakelock(enum ipa_wakelock_ref_client ref_client);
 void ipa_dec_release_wakelock(enum ipa_wakelock_ref_client ref_client);
 int ipa_iommu_map(struct iommu_domain *domain, unsigned long iova,
 	phys_addr_t paddr, size_t size, int prot);
+int ipa2_rx_poll(u32 clnt_hdl, int budget);
+void ipa2_recycle_wan_skb(struct sk_buff *skb);
 int ipa_ntn_init(void);
 int ipa2_get_ntn_stats(struct IpaHwStatsNTNInfoData_t *stats);
 int ipa2_register_ipa_ready_cb(void (*ipa_ready_cb)(void *),

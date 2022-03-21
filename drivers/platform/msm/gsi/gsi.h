@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,7 +18,15 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/msm_gsi.h>
+#include <linux/errno.h>
 #include <linux/ipc_logging.h>
+
+/*
+ * The following for adding code (ie. for EMULATION) not found on x86.
+ */
+#if IPA_EMULATION_COMPILE == 1
+# include "gsi_emulation_stubs.h"
+#endif
 
 #define GSI_CHAN_MAX      31
 #define GSI_EVT_RING_MAX  23
@@ -182,6 +190,11 @@ struct gsi_generic_ee_cmd_debug_stats {
 	unsigned long halt_channel;
 };
 
+struct gsi_shared_chan_info {
+	uint8_t ch_id;
+	uint8_t evchid;
+};
+
 struct gsi_ctx {
 	void __iomem *base;
 	struct device *dev;
@@ -205,6 +218,15 @@ struct gsi_ctx {
 	struct completion gen_ee_cmd_compl;
 	void *ipc_logbuf;
 	void *ipc_logbuf_low;
+	struct gsi_shared_chan_info shared_ch_info;
+
+	/*
+	 * The following used only on emulation systems.
+	 */
+	void __iomem *intcntrlr_base;
+	u32 intcntrlr_mem_size;
+	irq_handler_t intcntrlr_gsi_isr;
+	irq_handler_t intcntrlr_client_isr;
 };
 
 enum gsi_re_type {
@@ -289,6 +311,7 @@ enum gsi_generic_ee_cmd_return_code {
 	GSI_GEN_EE_CMD_RETURN_CODE_INCORRECT_DIRECTION = 0x3,
 	GSI_GEN_EE_CMD_RETURN_CODE_INCORRECT_CHANNEL_TYPE = 0x4,
 	GSI_GEN_EE_CMD_RETURN_CODE_INCORRECT_CHANNEL_INDEX = 0x5,
+	GSI_GEN_EE_CMD_RETURN_CODE_RETRY = 0x6,
 };
 
 extern struct gsi_ctx *gsi_ctx;

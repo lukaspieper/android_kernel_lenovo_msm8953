@@ -53,7 +53,6 @@ core-$(CONFIG_IA64_HP_ZX1)	+= arch/ia64/dig/
 core-$(CONFIG_IA64_HP_ZX1_SWIOTLB) += arch/ia64/dig/
 core-$(CONFIG_IA64_SGI_SN2)	+= arch/ia64/sn/
 core-$(CONFIG_IA64_SGI_UV)	+= arch/ia64/uv/
-core-$(CONFIG_KVM) 		+= arch/ia64/kvm/
 
 drivers-$(CONFIG_PCI)		+= arch/ia64/pci/
 drivers-$(CONFIG_IA64_HP_SIM)	+= arch/ia64/hp/sim/
@@ -97,7 +96,7 @@ define archhelp
 endef
 
 archprepare: make_nr_irqs_h
-PHONY += make_nr_irqs_h FORCE
+PHONY += make_nr_irqs_h
 
 make_nr_irqs_h:
 	$(Q)$(MAKE) $(build)=arch/ia64/kernel include/generated/nr-irqs.h

@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,7 +11,7 @@
  */
 #ifndef BTFM_SLIM_WCN3990_H
 #define BTFM_SLIM_WCN3990_H
-#ifdef CONFIG_BTFM_SLIM_WCN3990
+//#ifdef CONFIG_BTFM_SLIM_WCN3990
 #include <btfm_slim.h>
 
 /* Registers Address */
@@ -68,6 +68,7 @@
 #define CHRK_SB_PGD_PORT_WM_L1			(0x1 << 1)
 #define CHRK_SB_PGD_PORT_WM_L2			(0x2 << 1)
 #define CHRK_SB_PGD_PORT_WM_L3			(0x3 << 1)
+#define CHRK_SB_PGD_PORT_WM_L8			(0x8 << 1)
 #define CHRK_SB_PGD_PORT_WM_LB			(0xB << 1)
 
 #define CHRK_SB_PGD_PORT_RX_NUM			16
@@ -77,9 +78,36 @@
 #define CHRK_SB_PGD_PORT_TX_SCO			0
 #define CHRK_SB_PGD_PORT_TX1_FM			1
 #define CHRK_SB_PGD_PORT_TX2_FM			2
+#define CHRKVER3_SB_PGD_PORT_TX1_FM		4
+#define CHRKVER3_SB_PGD_PORT_TX2_FM		5
 #define CHRK_SB_PGD_PORT_RX_SCO			16
 #define CHRK_SB_PGD_PORT_RX_A2P			17
 
+enum {
+	QCA_CHEROKEE_SOC_ID_0100  = 0x40010100,
+	QCA_CHEROKEE_SOC_ID_0200  = 0x40010200,
+	QCA_CHEROKEE_SOC_ID_0201  = 0x40010201,
+	QCA_CHEROKEE_SOC_ID_0210  = 0x40010214,
+	QCA_CHEROKEE_SOC_ID_0211  = 0x40010224,
+	QCA_CHEROKEE_SOC_ID_0300  = 0x40010300,
+};
+
+enum{
+	QCA_APACHE_SOC_ID_0005  = 0x40020100,
+	QCA_APACHE_SOC_ID_0006  = 0x40020110,
+	QCA_APACHE_SOC_ID_0100  = 0x40020120,
+	QCA_APACHE_SOC_ID_0101  = 0x40020121,
+	QCA_APACHE_SOC_ID_0102  = 0x40020122,
+	QCA_APACHE_SOC_ID_0103  = 0x40020123,
+	QCA_APACHE_SOC_ID_0110  = 0x40020130,
+	QCA_APACHE_SOC_ID_0111  = 0x40020140,
+};
+
+enum {
+	QCA_COMANCHE_SOC_ID_0100  = 0x40070100,
+	QCA_COMANCHE_SOC_ID_0101  = 0x40070101,
+	QCA_COMANCHE_SOC_ID_0110  = 0x40070110,
+};
 
 /* Function Prototype */
 
@@ -136,5 +164,5 @@ extern struct btfmslim_ch wcn3990_rxport[];
 #undef SLIM_SLAVE_PORT_EN
 #define SLIM_SLAVE_PORT_EN btfm_slim_chrk_enable_port
 #endif
-#endif /* CONFIG_BTFM_WCN3990 */
+//#endif /* CONFIG_BTFM_WCN3990 */
 #endif /* BTFM_SLIM_WCN3990_H */

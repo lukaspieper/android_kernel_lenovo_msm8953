@@ -1,8 +1,9 @@
 /*
  *  stmvl53l0x_module-cci.c - Linux kernel modules for
- *	STM VL53L0 FlightSense TOF sensor
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
+ *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -14,7 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
 
 #include <linux/uaccess.h>
 #include <linux/module.h>
@@ -156,22 +156,7 @@ static int32_t stmvl53l0x_vreg_control(struct cci_data *data, int config)
 
 static int msm_tof_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
-	int rc = 0;
-/*
-	struct msm_tof_ctrl_t *tof_ctrl =  v4l2_get_subdevdata(sd);
-	if (!tof_ctrl) {
-		dbg("failed\n");
-		return -EINVAL;
-	}
-	if (tof_ctrl->tof_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
-		rc = tof_ctrl->i2c_client.i2c_func_tbl->i2c_util(
-			&tof_ctrl->i2c_client, MSM_CCI_RELEASE);
-		if (rc < 0)
-			dbg("cci_init failed\n");
-	}
-    tof_ctrl->i2c_state = TOF_I2C_RELEASE;
-*/
-	return rc;
+	return 0;
 }
 
 
@@ -206,7 +191,7 @@ static int stmvl53l0x_cci_init(struct cci_data *data)
 	int rc = 0;
 	struct msm_camera_cci_client *cci_client = data->client->cci_client;
 
-	if (FALSE == data->subdev_initialized) {
+	if (data->subdev_initialized == FALSE) {
 		data->client->i2c_func_tbl = &msm_sensor_cci_func_tbl;
 		data->client->cci_client =
 			kzalloc(sizeof(struct msm_camera_cci_client),

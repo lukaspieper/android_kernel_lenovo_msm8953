@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, 2019 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, 2018-2019 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,21 +12,25 @@
 #ifndef DIAG_DCI_H
 #define DIAG_DCI_H
 
-#define MAX_DCI_CLIENTS		10
 #define DCI_PKT_RSP_CODE	0x93
 #define DCI_DELAYED_RSP_CODE	0x94
 #define DCI_CONTROL_PKT_CODE	0x9A
+#define EXT_HDR_CMD_CODE	0x98
 #define LOG_CMD_CODE		0x10
 #define EVENT_CMD_CODE		0x60
 #define DCI_PKT_RSP_TYPE	0
 #define DCI_LOG_TYPE		-1
 #define DCI_EVENT_TYPE		-2
+#define DCI_EXT_HDR_TYPE	-3
 #define SET_LOG_MASK		1
 #define DISABLE_LOG_MASK	0
 #define MAX_EVENT_SIZE		512
 #define DCI_CLIENT_INDEX_INVALID -1
 #define DCI_LOG_CON_MIN_LEN		16
 #define DCI_EVENT_CON_MIN_LEN		16
+
+#define EXT_HDR_LEN		8
+#define EXT_HDR_VERSION		1
 
 #define DCI_BUF_PRIMARY		1
 #define DCI_BUF_SECONDARY	2
@@ -171,8 +175,7 @@ struct diag_dci_peripherals_t {
 	uint16_t list;
 } __packed;
 
-/* This is used for querying DCI Log
-   or Event Mask */
+/* This is used for querying DCI Log or Event Mask */
 struct diag_log_event_stats {
 	int client_id;
 	uint16_t code;
@@ -248,7 +251,7 @@ enum {
 #define DCI_REQ_BUF_SIZE (uint32_t)(DIAG_MAX_REQ_SIZE + DCI_REQ_HDR_SIZE)
 
 #ifdef CONFIG_DEBUG_FS
-/* To collect debug information during each smd read */
+/* To collect debug information during each socket read */
 struct diag_dci_data_info {
 	unsigned long iteration;
 	int data_size;
@@ -267,7 +270,7 @@ void diag_dci_channel_init(void);
 void diag_dci_exit(void);
 int diag_dci_register_client(struct diag_dci_reg_tbl_t *reg_entry);
 int diag_dci_deinit_client(struct diag_dci_client_tbl *entry);
-void diag_dci_channel_open_work(struct work_struct *);
+void diag_dci_channel_open_work(struct work_struct *work);
 void diag_dci_notify_client(int peripheral_mask, int data, int proc);
 void diag_dci_wakeup_clients(void);
 void diag_process_apps_dci_read_data(int data_type, void *buf, int recd_bytes);
@@ -286,7 +289,8 @@ void update_dci_cumulative_log_mask(int offset, unsigned int byte_index,
 						uint8_t byte_mask, int token);
 void diag_dci_invalidate_cumulative_log_mask(int token);
 int diag_send_dci_log_mask(int token);
-void extract_dci_log(unsigned char *buf, int len, int data_source, int token);
+void extract_dci_log(unsigned char *buf, int len, int data_source, int token,
+	void *ext_hdr);
 int diag_dci_clear_log_mask(int client_id);
 int diag_dci_query_log_mask(struct diag_dci_client_tbl *entry,
 			    uint16_t log_code);
@@ -295,7 +299,10 @@ void update_dci_cumulative_event_mask(int offset, uint8_t byte_mask, int token);
 void diag_dci_invalidate_cumulative_event_mask(int token);
 int diag_send_dci_event_mask(int token);
 void extract_dci_events(unsigned char *buf, int len, int data_source,
-			int token);
+			int token, void *ext_hdr);
+/* DCI extended header handling functions */
+void extract_dci_ext_pkt(unsigned char *buf, int len, int data_source,
+		int token);
 int diag_dci_clear_event_mask(int client_id);
 int diag_dci_query_event_mask(struct diag_dci_client_tbl *entry,
 			      uint16_t event_id);
@@ -315,6 +322,7 @@ unsigned char *dci_get_buffer_from_bridge(int token);
 int diag_dci_write_bridge(int token, unsigned char *buf, int len);
 int diag_dci_write_done_bridge(int index, unsigned char *buf, int len);
 int diag_dci_send_handshake_pkt(int index);
+int diag_dci_init_remote(void);
 #endif
 
 #endif

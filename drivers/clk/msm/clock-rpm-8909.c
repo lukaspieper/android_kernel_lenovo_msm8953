@@ -1,4 +1,5 @@
-/* Copyright (c) 2014, 2017-2018, The Linux Foundation. All rights reserved.
+/*
+ * Copyright (c) 2014, 2017-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -52,7 +53,6 @@
 #define BB_CLK2_ID		2
 #define BB_CLK3_ID		3
 #define RF_CLK2_ID		5
-#define RF_CLK1_ID		4
 
 static void __iomem *virt_base;
 
@@ -72,13 +72,11 @@ DEFINE_CLK_RPM_SMD_XO_BUFFER(bb_clk1, bb_clk1_a, BB_CLK1_ID);
 DEFINE_CLK_RPM_SMD_XO_BUFFER(bb_clk2, bb_clk2_a, BB_CLK2_ID);
 DEFINE_CLK_RPM_SMD_XO_BUFFER(bb_clk3, bb_clk3_a, BB_CLK3_ID);
 DEFINE_CLK_RPM_SMD_XO_BUFFER(rf_clk2, rf_clk2_a, RF_CLK2_ID);
-DEFINE_CLK_RPM_SMD_XO_BUFFER(rf_clk1, rf_clk1_a, RF_CLK1_ID);
 
 DEFINE_CLK_RPM_SMD_XO_BUFFER_PINCTRL(bb_clk1_pin, bb_clk1_a_pin, BB_CLK1_ID);
 DEFINE_CLK_RPM_SMD_XO_BUFFER_PINCTRL(bb_clk2_pin, bb_clk2_a_pin, BB_CLK2_ID);
 DEFINE_CLK_RPM_SMD_XO_BUFFER_PINCTRL(bb_clk3_pin, bb_clk3_a_pin, BB_CLK3_ID);
 DEFINE_CLK_RPM_SMD_XO_BUFFER_PINCTRL(rf_clk2_pin, rf_clk2_a_pin, RF_CLK2_ID);
-DEFINE_CLK_RPM_SMD_XO_BUFFER_PINCTRL(rf_clk1_pin, rf_clk1_a_pin, RF_CLK1_ID);
 
 /* Voter clocks */
 static DEFINE_CLK_VOTER(pcnoc_msmbus_clk, &pcnoc_clk.c, LONG_MAX);
@@ -177,7 +175,7 @@ static struct clk_lookup msm_clocks_rpm[] = {
 	CLK_LIST(rpm_debug_mux),
 };
 
-/* Lookup Table for MSM8909w-PM660 MTP */
+/* Lookup Table for MSM8909w-PM660 */
 static struct clk_lookup msm_clocks_rpm_8909_pm660[] = {
 	CLK_LIST(xo_clk_src),
 	CLK_LIST(xo_a_clk_src),
@@ -217,14 +215,12 @@ static struct clk_lookup msm_clocks_rpm_8909_pm660[] = {
 	CLK_LIST(bb_clk1),
 	CLK_LIST(bb_clk2),
 	CLK_LIST(bb_clk3),
-	CLK_LIST(rf_clk1),
 	CLK_LIST(rf_clk2),
 
 	CLK_LIST(bb_clk1_pin),
 	CLK_LIST(bb_clk2_pin),
 	CLK_LIST(bb_clk3_pin),
 	CLK_LIST(rf_clk2_pin),
-	CLK_LIST(rf_clk1_pin),
 
 	/* RPM debug Mux*/
 	CLK_LIST(rpm_debug_mux),
@@ -280,7 +276,7 @@ static int msm_rpmcc_8909_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msm_clk_rpm_match_table[] = {
+static const struct of_device_id msm_clk_rpm_match_table[] = {
 	{ .compatible = "qcom,rpmcc-8909" },
 	{ .compatible = "qcom,rpmcc-8909-pm660" },
 	{}
@@ -295,7 +291,7 @@ static struct platform_driver msm_clock_rpm_driver = {
 	},
 };
 
-int __init msm_rpmcc_8909_init(void)
+static int __init msm_rpmcc_8909_init(void)
 {
 	return platform_driver_register(&msm_clock_rpm_driver);
 }

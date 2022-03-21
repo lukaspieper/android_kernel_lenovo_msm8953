@@ -79,7 +79,6 @@ static void diag_hsic_read_complete(void *ctxt, char *buf, int len,
 fail:
 	diagmem_free(driver, buf, ch->mempool);
 	queue_work(ch->hsic_wq, &ch->read_work);
-	return;
 }
 
 static void diag_hsic_write_complete(void *ctxt, char *buf, int len,
@@ -96,7 +95,6 @@ static void diag_hsic_write_complete(void *ctxt, char *buf, int len,
 
 	ch = &diag_hsic[index];
 	diag_remote_dev_write_done(ch->dev_id, buf, actual_size, ch->id);
-	return;
 }
 
 static int diag_hsic_suspend(void *ctxt)
@@ -258,7 +256,7 @@ static void hsic_read_work_fn(struct work_struct *work)
 		}
 	} while (buf);
 
-	/* Read from the HSIC channel continously if the channel is present */
+	/* Read from the HSIC channel continuously if the channel is present */
 	if (!err)
 		queue_work(ch->hsic_wq, &ch->read_work);
 }
@@ -396,7 +394,7 @@ static struct diag_remote_dev_ops diag_hsic_fwd_ops = {
 	.fwd_complete = hsic_fwd_complete,
 };
 
-int diag_hsic_init()
+int diag_hsic_init(void)
 {
 	int i;
 	int err = 0;
@@ -409,8 +407,8 @@ int diag_hsic_init()
 		INIT_WORK(&(ch->read_work), hsic_read_work_fn);
 		INIT_WORK(&(ch->open_work), hsic_open_work_fn);
 		INIT_WORK(&(ch->close_work), hsic_close_work_fn);
-		strlcpy(wq_name, "DIAG_HSIC_", DIAG_HSIC_STRING_SZ);
-		strlcat(wq_name, ch->name, sizeof(ch->name));
+		strlcpy(wq_name, "DIAG_HSIC_", sizeof(wq_name));
+		strlcat(wq_name, ch->name, sizeof(wq_name));
 		ch->hsic_wq = create_singlethread_workqueue(wq_name);
 		if (!ch->hsic_wq)
 			goto fail;
@@ -435,7 +433,7 @@ fail:
 	return -ENOMEM;
 }
 
-void diag_hsic_exit()
+void diag_hsic_exit(void)
 {
 	int i;
 	struct diag_hsic_info *ch = NULL;

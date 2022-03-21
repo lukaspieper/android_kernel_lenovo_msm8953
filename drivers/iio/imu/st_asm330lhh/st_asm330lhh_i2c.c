@@ -1,7 +1,7 @@
 /*
  * STMicroelectronics st_asm330lhh i2c driver
  *
- * Copyright 2018 STMicroelectronics Inc.
+ * Copyright 2020 STMicroelectronics Inc.
  *
  * Lorenzo Bianconi <lorenzo.bianconi@st.com>
  *
@@ -34,7 +34,8 @@ static int st_asm330lhh_i2c_read(struct device *dev, u8 addr, int len, u8 *data)
 	return i2c_transfer(client->adapter, msg, 2);
 }
 
-static int st_asm330lhh_i2c_write(struct device *dev, u8 addr, int len, u8 *data)
+static int st_asm330lhh_i2c_write(struct device *dev, u8 addr, int len,
+				const u8 *data)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct i2c_msg msg;
@@ -63,11 +64,6 @@ static int st_asm330lhh_i2c_probe(struct i2c_client *client,
 				&st_asm330lhh_transfer_fn);
 }
 
-static int st_asm330lhh_i2c_remove(struct i2c_client *client)
-{
-	return st_asm330lhh_remove(&client->dev);
-}
-
 static const struct of_device_id st_asm330lhh_i2c_of_match[] = {
 	{
 		.compatible = "st,asm330lhh",
@@ -86,10 +82,9 @@ static struct i2c_driver st_asm330lhh_driver = {
 	.driver = {
 		.name = "st_asm330lhh_i2c",
 		.pm = &st_asm330lhh_pm_ops,
-		.of_match_table = of_match_ptr(st_asm330lhh_i2c_of_match),
+		.of_match_table = st_asm330lhh_i2c_of_match,
 	},
 	.probe = st_asm330lhh_i2c_probe,
-	.remove = st_asm330lhh_i2c_remove,
 	.id_table = st_asm330lhh_i2c_id_table,
 };
 module_i2c_driver(st_asm330lhh_driver);

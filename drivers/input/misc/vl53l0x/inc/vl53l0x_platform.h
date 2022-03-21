@@ -1,6 +1,6 @@
 /*
- *  vl53l0x_platform.h - Linux kernel modules for STM VL53L0 FlightSense TOF
- *						 sensor
+ *  vl53l0x_platform.h - Linux kernel modules for
+ *  STM VL53L0 FlightSense TOF sensor
  *
  *  Copyright (C) 2016 STMicroelectronics Imaging Division.
  *  Copyright (c) 2018, The Linux Foundation. All rights reserved.
@@ -15,8 +15,6 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  */
-
-
 
 #ifndef _VL_PLATFORM_H_
 #define _VL_PLATFORM_H_
@@ -70,7 +68,8 @@
  */
 
 /**
- * Lock comms interface to serialize all commands to a shared I2C interface for a specific device
+ * Lock comms interface to serialize all commands to a shared I2C interface
+ * for a specific device
  * @param   Dev       Device Handle
  * @return  VL_ERROR_NONE        Success
  * @return  "Other error code"    See ::int8_t
@@ -78,7 +77,8 @@
 int8_t VL_LockSequenceAccess(struct vl_data *Dev);
 
 /**
- * Unlock comms interface to serialize all commands to a shared I2C interface for a specific device
+ * Unlock comms interface to serialize all commands to a shared I2C interface
+ * for a specific device
  * @param   Dev       Device Handle
  * @return  VL_ERROR_NONE        Success
  * @return  "Other error code"    See ::int8_t
@@ -90,7 +90,8 @@ int8_t VL_UnlockSequenceAccess(struct vl_data *Dev);
  * Writes the supplied byte buffer to the device
  * @param   Dev       Device Handle
  * @param   index     The register index
- * @param   pdata     Pointer to uint8_t buffer containing the data to be written
+ * @param   pdata     Pointer to uint8_t buffer containing the data
+ * to be written
  * @param   count     Number of bytes in the supplied byte buffer
  * @return  VL_ERROR_NONE        Success
  * @return  "Other error code"    See ::int8_t

@@ -26,7 +26,6 @@
 
 static inline u32 dwc3_readl(void __iomem *base, u32 offset)
 {
-	u32 offs = offset - DWC3_GLOBALS_REGS_START;
 	u32 value;
 
 	/*
@@ -34,7 +33,7 @@ static inline u32 dwc3_readl(void __iomem *base, u32 offset)
 	 * space, see dwc3_probe in core.c.
 	 * However, the offsets are given starting from xHCI address space.
 	 */
-	value = readl(base + offs);
+	value = readl(base + offset - DWC3_GLOBALS_REGS_START);
 
 	/*
 	 * When tracing we want to make it easy to find the correct address on
@@ -49,14 +48,12 @@ static inline u32 dwc3_readl(void __iomem *base, u32 offset)
 
 static inline void dwc3_writel(void __iomem *base, u32 offset, u32 value)
 {
-	u32 offs = offset - DWC3_GLOBALS_REGS_START;
-
 	/*
 	 * We requested the mem region starting from the Globals address
 	 * space, see dwc3_probe in core.c.
 	 * However, the offsets are given starting from xHCI address space.
 	 */
-	writel(value, base + offs);
+	writel(value, base + offset - DWC3_GLOBALS_REGS_START);
 
 	/*
 	 * When tracing we want to make it easy to find the correct address on
@@ -65,6 +62,30 @@ static inline void dwc3_writel(void __iomem *base, u32 offset, u32 value)
 	 */
 	dwc3_trace(trace_dwc3_writel, "addr %pK value %08x",
 			base - DWC3_GLOBALS_REGS_START + offset, value);
+}
+
+static inline void dwc3_masked_write_readback(void __iomem *base,
+	u32 offset, const u32 mask, u32 value)
+{
+	u32 write_val, tmp;
+
+	tmp = readl_relaxed(base + offset - DWC3_GLOBALS_REGS_START);
+	tmp &= ~mask;		/* retain other bits */
+	write_val = tmp | value;
+
+	writel_relaxed(write_val, base + offset - DWC3_GLOBALS_REGS_START);
+
+	/* Read back to see if value was written */
+	tmp = readl_relaxed(base + offset - DWC3_GLOBALS_REGS_START);
+
+	dwc3_trace(trace_dwc3_masked_write_readback,
+			"addr %p readback val %08x",
+			base - DWC3_GLOBALS_REGS_START + offset, tmp);
+
+	tmp &= mask;		/* clear other bits */
+	if (tmp != value)
+		pr_err("%s: write: %x to %x FAILED\n",
+			__func__, value, offset);
 }
 
 #endif /* __DRIVERS_USB_DWC3_IO_H */

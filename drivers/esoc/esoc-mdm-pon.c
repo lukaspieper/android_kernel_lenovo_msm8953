@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, 2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2015, 2017-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -61,26 +61,21 @@ static int mdm9x55_toggle_soft_reset(struct mdm_ctrl *mdm, bool atomic)
 }
 
 /* This function can be called from atomic context. */
-static int mdm9x45_toggle_soft_reset(struct mdm_ctrl *mdm, bool atomic)
+static int sdxpoorwills_toggle_soft_reset(struct mdm_ctrl *mdm, bool atomic)
 {
-	int soft_reset_direction_assert = 0,
-	    soft_reset_direction_de_assert = 1;
+	int soft_reset_direction_assert = mdm->soft_reset_inverted;
 
-	if (mdm->soft_reset_inverted) {
-		soft_reset_direction_assert = 1;
-		soft_reset_direction_de_assert = 0;
-	}
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
 			soft_reset_direction_assert);
 	/*
 	 * Allow PS hold assert to be detected
 	 */
 	if (!atomic)
-		usleep_range(1000000, 1005000);
+		usleep_range(80000, 180000);
 	else
-		mdelay(1000);
+		mdelay(100);
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
-			soft_reset_direction_de_assert);
+			!soft_reset_direction_assert);
 	return 0;
 }
 
@@ -96,7 +91,7 @@ static int mdm4x_do_first_power_on(struct mdm_ctrl *mdm)
 
 	mdm_toggle_soft_reset(mdm, false);
 	/* Add a delay to allow PON sequence to complete*/
-	msleep(50);
+	mdelay(50);
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_STATUS), 1);
 	if (gpio_is_valid(MDM_GPIO(mdm, MDM2AP_PBLRDY))) {
 		for (i = 0; i  < MDM_PBLRDY_CNT; i++) {
@@ -106,7 +101,7 @@ static int mdm4x_do_first_power_on(struct mdm_ctrl *mdm)
 			usleep_range(5000, 6000);
 		}
 		dev_dbg(dev, "pblrdy i:%d\n", i);
-		msleep(200);
+		mdelay(200);
 	}
 	/*
 	 * No PBLRDY gpio associated with this modem
@@ -122,6 +117,7 @@ static int mdm4x_power_down(struct mdm_ctrl *mdm)
 {
 	struct device *dev = mdm->dev;
 	int soft_reset_direction = mdm->soft_reset_inverted ? 1 : 0;
+
 	/* Assert the soft reset line whether mdm2ap_status went low or not */
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
 					soft_reset_direction);
@@ -129,12 +125,12 @@ static int mdm4x_power_down(struct mdm_ctrl *mdm)
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
 						soft_reset_direction);
 	/*
-	* Currently, there is a debounce timer on the charm PMIC. It is
-	* necessary to hold the PMIC RESET low for 400ms
-	* for the reset to fully take place. Sleep here to ensure the
-	* reset has occurred before the function exits.
-	*/
-	msleep(400);
+	 * Currently, there is a debounce timer on the charm PMIC. It is
+	 * necessary to hold the PMIC RESET low for 400ms
+	 * for the reset to fully take place. Sleep here to ensure the
+	 * reset has occurred before the function exits.
+	 */
+	mdelay(400);
 	return 0;
 }
 
@@ -149,32 +145,33 @@ static int mdm9x55_power_down(struct mdm_ctrl *mdm)
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
 						soft_reset_direction);
 	/*
-	* Currently, there is a debounce timer on the charm PMIC. It is
-	* necessary to hold the PMIC RESET low for 406ms
-	* for the reset to fully take place. Sleep here to ensure the
-	* reset has occurred before the function exits.
-	*/
-	msleep(406);
+	 * Currently, there is a debounce timer on the charm PMIC. It is
+	 * necessary to hold the PMIC RESET low for 406ms
+	 * for the reset to fully take place. Sleep here to ensure the
+	 * reset has occurred before the function exits.
+	 */
+	mdelay(406);
 	return 0;
 }
 
-static int mdm9x45_power_down(struct mdm_ctrl *mdm)
+static int sdxpoorwills_power_down(struct mdm_ctrl *mdm)
 {
-	int soft_reset_direction_assert = 0,
-	    soft_reset_direction_de_assert = 1;
+	struct device *dev = mdm->dev;
+	int soft_reset_direction = mdm->soft_reset_inverted ? 1 : 0;
 
-	if (mdm->soft_reset_inverted) {
-		soft_reset_direction_assert = 1;
-		soft_reset_direction_de_assert = 0;
-	}
+	/* Assert the soft reset line whether mdm2ap_status went low or not */
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
-			soft_reset_direction_assert);
+					soft_reset_direction);
+	dev_info(dev, "Doing a hard reset\n");
+	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
+						soft_reset_direction);
 	/*
-	 * Allow PS hold assert to be detected
+	 * Currently, there is a debounce timer on the charm PMIC. It is
+	 * necessary to hold the PMIC RESET low for 325ms
+	 * for the reset to fully take place. Sleep here to ensure the
+	 * reset has occurred before the function exits.
 	 */
-	msleep(3003);
-	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
-			soft_reset_direction_de_assert);
+	mdelay(325);
 	return 0;
 }
 
@@ -186,7 +183,7 @@ static void mdm4x_cold_reset(struct mdm_ctrl *mdm)
 	dev_dbg(mdm->dev, "Triggering mdm cold reset");
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
 			!!mdm->soft_reset_inverted);
-	msleep(300);
+	mdelay(300);
 	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
 			!mdm->soft_reset_inverted);
 }
@@ -201,9 +198,14 @@ static void mdm9x55_cold_reset(struct mdm_ctrl *mdm)
 			!mdm->soft_reset_inverted);
 }
 
-static int apq8096_pon_dt_init(struct mdm_ctrl *mdm)
+static void sdxpoorwills_cold_reset(struct mdm_ctrl *mdm)
 {
-	return 0;
+	dev_info(mdm->dev, "Triggering mdm cold reset");
+	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
+			!!mdm->soft_reset_inverted);
+	mdelay(600);
+	gpio_direction_output(MDM_GPIO(mdm, AP2MDM_SOFT_RESET),
+			!mdm->soft_reset_inverted);
 }
 
 static int mdm4x_pon_dt_init(struct mdm_ctrl *mdm)
@@ -237,21 +239,6 @@ static int mdm4x_pon_setup(struct mdm_ctrl *mdm)
 	return 0;
 }
 
-/* This function can be called from atomic context. */
-static int apq8096_toggle_soft_reset(struct mdm_ctrl *mdm, bool atomic)
-{
-	return 0;
-}
-
-static int apq8096_power_down(struct mdm_ctrl *mdm)
-{
-	return 0;
-}
-
-static void apq8096_cold_reset(struct mdm_ctrl *mdm)
-{
-}
-
 struct mdm_pon_ops mdm9x25_pon_ops = {
 	.pon = mdm4x_do_first_power_on,
 	.soft_reset = mdm4x_toggle_soft_reset,
@@ -270,15 +257,6 @@ struct mdm_pon_ops mdm9x35_pon_ops = {
 	.setup = mdm4x_pon_setup,
 };
 
-struct mdm_pon_ops mdm9x45_pon_ops = {
-	.pon = mdm4x_do_first_power_on,
-	.soft_reset = mdm9x45_toggle_soft_reset,
-	.poff_force = mdm9x45_power_down,
-	.cold_reset = mdm4x_cold_reset,
-	.dt_init = mdm4x_pon_dt_init,
-	.setup = mdm4x_pon_setup,
-};
-
 struct mdm_pon_ops mdm9x55_pon_ops = {
 	.pon = mdm4x_do_first_power_on,
 	.soft_reset = mdm9x55_toggle_soft_reset,
@@ -288,11 +266,11 @@ struct mdm_pon_ops mdm9x55_pon_ops = {
 	.setup = mdm4x_pon_setup,
 };
 
-struct mdm_pon_ops apq8096_pon_ops = {
+struct mdm_pon_ops sdxpoorwills_pon_ops = {
 	.pon = mdm4x_do_first_power_on,
-	.soft_reset = apq8096_toggle_soft_reset,
-	.poff_force = apq8096_power_down,
-	.cold_reset = apq8096_cold_reset,
-	.dt_init = apq8096_pon_dt_init,
+	.soft_reset = sdxpoorwills_toggle_soft_reset,
+	.poff_force = sdxpoorwills_power_down,
+	.cold_reset = sdxpoorwills_cold_reset,
+	.dt_init = mdm4x_pon_dt_init,
 	.setup = mdm4x_pon_setup,
 };

@@ -1,30 +1,10 @@
 #ifndef _LINUX_BITOPS_H
 #define _LINUX_BITOPS_H
 #include <asm/types.h>
+#include <linux/bits.h>
 
-#ifdef	__KERNEL__
-#define BIT(nr)			(1UL << (nr))
-#define BIT_ULL(nr)		(1ULL << (nr))
-#define BIT_MASK(nr)		(1UL << ((nr) % BITS_PER_LONG))
-#define BIT_WORD(nr)		((nr) / BITS_PER_LONG)
-#define BIT_ULL_MASK(nr)	(1ULL << ((nr) % BITS_PER_LONG_LONG))
-#define BIT_ULL_WORD(nr)	((nr) / BITS_PER_LONG_LONG)
-#define BITS_PER_BYTE		8
 #define BITS_PER_TYPE(type) (sizeof(type) * BITS_PER_BYTE)
 #define BITS_TO_LONGS(nr)	DIV_ROUND_UP(nr, BITS_PER_TYPE(long))
-#endif
-
-/*
- * Create a contiguous bitmask starting at bit position @l and ending at
- * position @h. For example
- * GENMASK_ULL(39, 21) gives us the 64bit vector 0x000000ffffe00000.
- */
-#define GENMASK(h, l) \
-	(((~0UL) - (1UL << (l)) + 1) & (~0UL >> (BITS_PER_LONG - 1 - (h))))
-
-#define GENMASK_ULL(h, l) \
-	(((~0ULL) - (1ULL << (l)) + 1) & \
-	 (~0ULL >> (BITS_PER_LONG_LONG - 1 - (h))))
 
 extern unsigned int __sw_hweight8(unsigned int w);
 extern unsigned int __sw_hweight16(unsigned int w);
@@ -59,7 +39,7 @@ extern unsigned long __sw_hweight64(__u64 w);
 	     (bit) < (size);					\
 	     (bit) = find_next_zero_bit((addr), (size), (bit) + 1))
 
-static __inline__ int get_bitmask_order(unsigned int count)
+static inline int get_bitmask_order(unsigned int count)
 {
 	int order;
 
@@ -67,19 +47,9 @@ static __inline__ int get_bitmask_order(unsigned int count)
 	return order;	/* We could be slightly more clever with -1 here... */
 }
 
-static __inline__ int get_count_order(unsigned int count)
+static __always_inline unsigned long hweight_long(unsigned long w)
 {
-	int order;
-
-	order = fls(count) - 1;
-	if (count & (count - 1))
-		order++;
-	return order;
-}
-
-static inline unsigned long hweight_long(unsigned long w)
-{
-	return sizeof(w) == 4 ? hweight32(w) : hweight64((__u64)w);
+	return sizeof(w) == 4 ? hweight32(w) : hweight64(w);
 }
 
 /**
@@ -166,6 +136,8 @@ static inline __u8 ror8(__u8 word, unsigned int shift)
  * sign_extend32 - sign extend a 32-bit value using specified bit as sign-bit
  * @value: value to sign extend
  * @index: 0 based bit index (0<=index<32) to sign bit
+ *
+ * This is safe to use for 16- and 8-bit types as well.
  */
 static inline __s32 sign_extend32(__u32 value, int index)
 {
@@ -189,6 +161,32 @@ static inline unsigned fls_long(unsigned long l)
 	if (sizeof(l) == 4)
 		return fls(l);
 	return fls64(l);
+}
+
+static inline int get_count_order(unsigned int count)
+{
+	int order;
+
+	order = fls(count) - 1;
+	if (count & (count - 1))
+		order++;
+	return order;
+}
+
+/**
+ * get_count_order_long - get order after rounding @l up to power of 2
+ * @l: parameter
+ *
+ * it is same as get_count_order() but with long type parameter
+ */
+static inline int get_count_order_long(unsigned long l)
+{
+	if (l == 0UL)
+		return -1;
+	else if (l & (l - 1UL))
+		return (int)fls_long(l);
+	else
+		return (int)fls_long(l) - 1;
 }
 
 /**
@@ -227,13 +225,29 @@ static inline unsigned long __ffs64(u64 word)
 })
 #endif
 
+#ifndef bit_clear_unless
+#define bit_clear_unless(ptr, _clear, _test)	\
+({								\
+	const typeof(*ptr) clear = (_clear), test = (_test);	\
+	typeof(*ptr) old, new;					\
+								\
+	do {							\
+		old = ACCESS_ONCE(*ptr);			\
+		new = old & ~clear;				\
+	} while (!(old & test) &&				\
+		 cmpxchg(ptr, old, new) != old);		\
+								\
+	!(old & test);						\
+})
+#endif
+
 #ifndef find_last_bit
 /**
  * find_last_bit - find the last set bit in a memory region
  * @addr: The address to start the search at
- * @size: The maximum size to search
+ * @size: The number of bits to search
  *
- * Returns the bit number of the first set bit, or size.
+ * Returns the bit number of the last set bit, or size.
  */
 extern unsigned long find_last_bit(const unsigned long *addr,
 				   unsigned long size);

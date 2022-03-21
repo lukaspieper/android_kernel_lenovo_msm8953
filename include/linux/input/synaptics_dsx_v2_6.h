@@ -5,7 +5,7 @@
  *
  * Copyright (C) 2012 Alexandra Chin <alexandra.chin@tw.synaptics.com>
  * Copyright (C) 2012 Scott Lin <scott.lin@tw.synaptics.com>
- * Copyright (C) 2016, 2018 The Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -83,7 +83,6 @@ struct synaptics_dsx_button_map {
  * @bus_reg_name: pointer to name of regulator for bus pullup control
  * @cap_button_map: pointer to 0D button map
  * @vir_button_map: pointer to virtual button map
- * @resume_in_workqueue: defer resume function to workqueue
  */
 struct synaptics_dsx_board_data {
 	bool x_flip;

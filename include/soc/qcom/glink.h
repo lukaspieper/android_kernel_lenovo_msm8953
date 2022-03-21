@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -75,7 +75,8 @@ struct glink_open_config {
 			const void *ptr, size_t size);
 	void (*notify_tx_done)(void *handle, const void *priv,
 			const void *pkt_priv, const void *ptr);
-	void (*notify_state)(void *handle, const void *priv, unsigned event);
+	void (*notify_state)(void *handle, const void *priv,
+			unsigned int event);
 	bool (*notify_rx_intent_req)(void *handle, const void *priv,
 			size_t req_size);
 	void (*notify_rxv)(void *handle, const void *priv, const void *pkt_priv,
@@ -339,6 +340,22 @@ int glink_qos_start(void *handle);
  */
 unsigned long glink_qos_get_ramp_time(void *handle, size_t pkt_size);
 
+/**
+ * glink_start_rx_rt() - Vote for RT thread priority on RX.
+ * @handle:	Channel handle for which transaction are occurring.
+ *
+ * Return: 0 on success, standard Linux error codes on failure
+ */
+int glink_start_rx_rt(void *handle);
+
+/**
+ * glink_end_rx_rt() - Vote for RT thread priority on RX.
+ * @handle:	Channel handle for which transaction are occurring.
+ *
+ * Return: 0 on success, standard Linux error codes on failure
+ */
+int glink_end_rx_rt(void *handle);
+
 #else /* CONFIG_MSM_GLINK */
 static inline void *glink_open(const struct glink_open_config *cfg_ptr)
 {
@@ -427,5 +444,16 @@ static inline unsigned long glink_qos_get_ramp_time(void *handle,
 {
 	return 0;
 }
+
+static inline int glink_start_rx_rt(void *handle)
+{
+	return -ENODEV;
+}
+
+static inline int glink_end_rx_rt(void *handle)
+{
+	return -ENODEV;
+}
+
 #endif /* CONFIG_MSM_GLINK */
 #endif /* _SOC_QCOM_GLINK_H_ */

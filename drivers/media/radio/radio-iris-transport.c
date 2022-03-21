@@ -29,7 +29,6 @@
 #include <linux/workqueue.h>
 #include <soc/qcom/smd.h>
 #include <media/radio-iris.h>
-#include <linux/wakelock.h>
 #include <linux/uaccess.h>
 
 struct radio_data {
@@ -41,7 +40,7 @@ struct radio_data hs;
 DEFINE_MUTEX(fm_smd_enable);
 static int fmsmd_set;
 static bool chan_opened;
-static int hcismd_fm_set_enable(const char *val, struct kernel_param *kp);
+static int hcismd_fm_set_enable(const char *val, const struct kernel_param *kp);
 module_param_call(fmsmd_set, hcismd_fm_set_enable, NULL, &fmsmd_set, 0644);
 static struct work_struct *reset_worker;
 static void radio_hci_smd_deregister(void);
@@ -60,21 +59,19 @@ static void radio_hci_smd_recv_event(unsigned long temp)
 	struct sk_buff *skb;
 	unsigned  char *buf;
 	struct radio_data *hsmd = &hs;
-	FMDBG("");
 
 	len = smd_read_avail(hsmd->fm_channel);
 
 	while (len) {
 		skb = alloc_skb(len, GFP_ATOMIC);
 		if (!skb) {
-			FMDERR("Memory not allocated for the socket");
+			FMDERR("Memory not allocated for the socket\n");
 			return;
 		}
 
 		buf = kmalloc(len, GFP_ATOMIC);
 		if (!buf) {
 			kfree_skb(skb);
-			FMDERR("Error in allocating buffer memory");
 			return;
 		}
 
@@ -95,11 +92,12 @@ static void radio_hci_smd_recv_event(unsigned long temp)
 static int radio_hci_smd_send_frame(struct sk_buff *skb)
 {
 	int len = 0;
-	FMDBG("skb %pK", skb);
+
+	FMDBG("skb %pK\n", skb);
 
 	len = smd_write(hs.fm_channel, skb->data, skb->len);
 	if (len < skb->len) {
-		FMDERR("Failed to write Data %d", len);
+		FMDERR("Failed to write Data %d\n", len);
 		kfree_skb(skb);
 		return -ENODEV;
 	}
@@ -116,12 +114,12 @@ static void send_disable_event(struct work_struct *worker)
 
 	skb = alloc_skb(len, GFP_ATOMIC);
 	if (!skb) {
-		FMDERR("Memory not allocated for the socket");
+		FMDERR("Memory not allocated for the socket\n");
 		kfree(worker);
 		return;
 	}
 
-	FMDERR("FM INSERT DISABLE Rx Event");
+	FMDBG("FM INSERT DISABLE Rx Event\n");
 
 	memcpy(skb_put(skb, len), buf, len);
 
@@ -135,10 +133,11 @@ static void send_disable_event(struct work_struct *worker)
 static void radio_hci_smd_notify_cmd(void *data, unsigned int event)
 {
 	struct radio_hci_dev *hdev = (struct radio_hci_dev *)data;
-	FMDBG("data %p event %u", data, event);
+
+	FMDBG("data %p event %u\n", data, event);
 
 	if (!hdev) {
-		FMDERR("Frame for unknown HCI device (hdev=NULL)");
+		FMDERR("Frame for unknown HCI device (hdev=NULL)\n");
 		return;
 	}
 
@@ -150,12 +149,10 @@ static void radio_hci_smd_notify_cmd(void *data, unsigned int event)
 		break;
 	case SMD_EVENT_CLOSE:
 		reset_worker = kzalloc(sizeof(*reset_worker), GFP_ATOMIC);
-		if (!reset_worker) {
-			FMDERR("Out of memory");
-			break;
+		if (reset_worker) {
+			INIT_WORK(reset_worker, send_disable_event);
+			schedule_work(reset_worker);
 		}
-		INIT_WORK(reset_worker, send_disable_event);
-		schedule_work(reset_worker);
 		break;
 	default:
 		break;
@@ -166,7 +163,8 @@ static int radio_hci_smd_register_dev(struct radio_data *hsmd)
 {
 	struct radio_hci_dev *hdev;
 	int rc;
-	FMDBG("hsmd: %pK", hsmd);
+
+	FMDBG("hsmd: %pK\n", hsmd);
 
 	if (hsmd == NULL)
 		return -ENODEV;
@@ -186,7 +184,7 @@ static int radio_hci_smd_register_dev(struct radio_data *hsmd)
 		&hsmd->fm_channel, hdev, radio_hci_smd_notify_cmd);
 
 	if (rc < 0) {
-		FMDERR("Cannot open the command channel");
+		FMDERR("Cannot open the command channel\n");
 		hsmd->hdev = NULL;
 		kfree(hdev);
 		return -ENODEV;
@@ -195,7 +193,7 @@ static int radio_hci_smd_register_dev(struct radio_data *hsmd)
 	smd_disable_read_intr(hsmd->fm_channel);
 
 	if (radio_hci_register_dev(hdev) < 0) {
-		FMDERR("Can't register HCI device");
+		FMDERR("Can't register HCI device\n");
 		smd_close(hsmd->fm_channel);
 		hsmd->hdev = NULL;
 		kfree(hdev);
@@ -208,8 +206,6 @@ static int radio_hci_smd_register_dev(struct radio_data *hsmd)
 
 static void radio_hci_smd_deregister(void)
 {
-	FMDBG("");
-
 	radio_hci_unregister_dev();
 	kfree(hs.hdev);
 	hs.hdev = NULL;
@@ -224,14 +220,14 @@ static int radio_hci_smd_init(void)
 	int ret;
 
 	if (chan_opened) {
-		FMDBG("Channel is already opened");
+		FMDBG("Channel is already opened\n");
 		return 0;
 	}
 
 	/* this should be called with fm_smd_enable lock held */
 	ret = radio_hci_smd_register_dev(&hs);
 	if (ret < 0) {
-		FMDERR("Failed to register smd device");
+		FMDERR("Failed to register smd device\n");
 		chan_opened = false;
 		return ret;
 	}
@@ -242,7 +238,7 @@ static int radio_hci_smd_init(void)
 static void radio_hci_smd_exit(void)
 {
 	if (!chan_opened) {
-		FMDBG("Channel already closed");
+		FMDBG("Channel already closed\n");
 		return;
 	}
 
@@ -251,7 +247,7 @@ static void radio_hci_smd_exit(void)
 	chan_opened = false;
 }
 
-static int hcismd_fm_set_enable(const char *val, struct kernel_param *kp)
+static int hcismd_fm_set_enable(const char *val, const struct kernel_param *kp)
 {
 	int ret = 0;
 

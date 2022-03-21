@@ -8,10 +8,10 @@
 
 #include <linux/fs.h>
 #include <linux/f2fs_fs.h>
-#include <trace/events/android_fs.h>
 
 #include "f2fs.h"
 #include "node.h"
+#include <trace/events/android_fs.h>
 
 bool f2fs_may_inline_data(struct inode *inode)
 {
@@ -90,9 +90,8 @@ int f2fs_read_inline_data(struct inode *inode, struct page *page)
 
 		path = android_fstrace_get_pathname(pathbuf,
 						    MAX_TRACE_PATHBUF_LEN,
-						    page->mapping->host);
-		trace_android_fs_dataread_start(page->mapping->host,
-						page_offset(page),
+						    inode);
+		trace_android_fs_dataread_start(inode, page_offset(page),
 						PAGE_SIZE, current->pid,
 						path, current->comm);
 	}
@@ -107,6 +106,8 @@ int f2fs_read_inline_data(struct inode *inode, struct page *page)
 
 	if (!f2fs_has_inline_data(inode)) {
 		f2fs_put_page(ipage, 1);
+		trace_android_fs_dataread_end(inode, page_offset(page),
+					      PAGE_SIZE);
 		return -EAGAIN;
 	}
 
@@ -117,10 +118,9 @@ int f2fs_read_inline_data(struct inode *inode, struct page *page)
 
 	if (!PageUptodate(page))
 		SetPageUptodate(page);
-
 	f2fs_put_page(ipage, 1);
-
-	trace_android_fs_dataread_end(inode, page_offset(page), PAGE_SIZE);
+	trace_android_fs_dataread_end(inode, page_offset(page),
+				      PAGE_SIZE);
 	unlock_page(page);
 	return 0;
 }

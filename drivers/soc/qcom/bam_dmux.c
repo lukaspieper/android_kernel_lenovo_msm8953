@@ -49,21 +49,16 @@
 #define MIN_POLLING_SLEEP (950)
 
 static int msm_bam_dmux_debug_enable;
-module_param_named(debug_enable, msm_bam_dmux_debug_enable,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+module_param_named(debug_enable, msm_bam_dmux_debug_enable, int, 0664);
 static int POLLING_MIN_SLEEP = 2950;
-module_param_named(min_sleep, POLLING_MIN_SLEEP,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+module_param_named(min_sleep, POLLING_MIN_SLEEP, int, 0664);
 static int POLLING_MAX_SLEEP = 3050;
-module_param_named(max_sleep, POLLING_MAX_SLEEP,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+module_param_named(max_sleep, POLLING_MAX_SLEEP, int, 0664);
 static int POLLING_INACTIVITY = 1;
-module_param_named(inactivity, POLLING_INACTIVITY,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+module_param_named(inactivity, POLLING_INACTIVITY, int, 0664);
 static int bam_adaptive_timer_enabled;
 module_param_named(adaptive_timer_enabled,
-			bam_adaptive_timer_enabled,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
+			bam_adaptive_timer_enabled, int, 0664);
 
 static struct bam_ops_if bam_default_ops = {
 	/* smsm */
@@ -358,7 +353,7 @@ static inline void set_tx_timestamp(struct tx_pkt_info *pkt)
 
 	t_now = sched_clock();
 	pkt->ts_nsec = do_div(t_now, 1000000000U);
-	pkt->ts_sec = (unsigned)t_now;
+	pkt->ts_sec = (unsigned int)t_now;
 }
 
 static inline void verify_tx_queue_is_empty(const char *func)
@@ -375,10 +370,10 @@ static inline void verify_tx_queue_is_empty(const char *func)
 				pr_err("%s: tx pool not empty\n", func);
 			reported = 1;
 		}
-		BAM_DMUX_LOG("%s: node=%p ts=%u.%09lu\n", __func__,
+		BAM_DMUX_LOG("%s: node=%pK ts=%u.%09lu\n", __func__,
 			&info->list_node, info->ts_sec, info->ts_nsec);
 		if (!in_global_reset)
-			pr_err("%s: node=%p ts=%u.%09lu\n", __func__,
+			pr_err("%s: node=%pK ts=%u.%09lu\n", __func__,
 			&info->list_node, info->ts_sec, info->ts_nsec);
 	}
 	spin_unlock_irqrestore(&bam_tx_pool_spinlock, flags);
@@ -401,33 +396,24 @@ static void __queue_rx(gfp_t alloc_flags)
 		if (in_global_reset)
 			goto fail;
 
-		info = kmalloc(sizeof(struct rx_pkt_info), alloc_flags);
-		if (!info) {
-			DMUX_LOG_KERR(
-			"%s: unable to alloc rx_pkt_info w/ flags %x, will retry later\n",
-								__func__,
-								alloc_flags);
+		info = kmalloc(sizeof(*info), alloc_flags);
+		if (!info)
 			goto fail;
-		}
 
 		info->len = current_buffer_size;
 
 		INIT_WORK(&info->work, handle_bam_mux_cmd);
 
 		info->skb = __dev_alloc_skb(info->len, alloc_flags);
-		if (info->skb == NULL) {
-			DMUX_LOG_KERR(
-				"%s: unable to alloc skb w/ flags %x, will retry later\n",
-								__func__,
-								alloc_flags);
+		if (info->skb == NULL)
 			goto fail_info;
-		}
+
 		ptr = skb_put(info->skb, info->len);
 
 		info->dma_address = dma_map_single(dma_dev, ptr, info->len,
 							bam_ops->dma_from);
 		if (info->dma_address == 0 || info->dma_address == ~0) {
-			DMUX_LOG_KERR("%s: dma_map_single failure %p for %p\n",
+			DMUX_LOG_KERR("%s:dma_map_single failure %pK for %pK\n",
 				__func__, (void *)info->dma_address, ptr);
 			goto fail_skb;
 		}
@@ -768,7 +754,6 @@ static int bam_mux_write_cmd(void *data, uint32_t len)
 
 	pkt = kmalloc(sizeof(struct tx_pkt_info), GFP_ATOMIC);
 	if (pkt == NULL) {
-		pr_err("%s: mem alloc for tx_pkt_info failed\n", __func__);
 		rc = -ENOMEM;
 		return rc;
 	}
@@ -829,20 +814,20 @@ static void bam_mux_write_done(struct work_struct *work)
 	if (unlikely(info != info_expected)) {
 		struct tx_pkt_info *errant_pkt;
 
-		DMUX_LOG_KERR(
-				"%s: bam_tx_pool mismatch .next=%p, list_node=%p, ts=%u.%09lu\n",
+		BAM_DMUX_LOG(
+				"%s: bam_tx_pool mismatch .next=%pK, list_node=%pK, ts=%u.%09lu\n",
 				__func__, bam_tx_pool.next, &info->list_node,
 				info->ts_sec, info->ts_nsec
 				);
 
 		list_for_each_entry(errant_pkt, &bam_tx_pool, list_node) {
-			DMUX_LOG_KERR("%s: node=%p ts=%u.%09lu\n", __func__,
+			BAM_DMUX_LOG("%s: node=%pK ts=%u.%09lu\n", __func__,
 			&errant_pkt->list_node, errant_pkt->ts_sec,
 			errant_pkt->ts_nsec);
 
 		}
 		spin_unlock_irqrestore(&bam_tx_pool_spinlock, flags);
-		BUG();
+		WARN_ON(1);
 	}
 	list_del(&info->list_node);
 	spin_unlock_irqrestore(&bam_tx_pool_spinlock, flags);
@@ -931,7 +916,8 @@ int msm_bam_dmux_write(uint32_t id, struct sk_buff *skb)
 	}
 
 	/* if skb do not have any tailroom for padding,
-	   copy the skb into a new expanded skb */
+	 * copy the skb into a new expanded skb
+	 */
 	if ((skb->len & 0x3) && (skb_tailroom(skb) < (4 - (skb->len & 0x3)))) {
 		/* revisit, probably dev_alloc_skb and memcpy is effecient */
 		new_skb = skb_copy_expand(skb, skb_headroom(skb),
@@ -948,7 +934,8 @@ int msm_bam_dmux_write(uint32_t id, struct sk_buff *skb)
 	hdr = (struct bam_mux_hdr *)skb_push(skb, sizeof(struct bam_mux_hdr));
 
 	/* caller should allocate for hdr and padding
-	   hdr is fine, padding is tricky */
+	 * hdr is fine, padding is tricky
+	 */
 	hdr->magic_num = BAM_MUX_HDR_MAGIC_NO;
 	hdr->cmd = BAM_MUX_HDR_CMD_DATA;
 	hdr->signal = 0;
@@ -959,15 +946,13 @@ int msm_bam_dmux_write(uint32_t id, struct sk_buff *skb)
 
 	hdr->pad_len = skb->len - (sizeof(struct bam_mux_hdr) + hdr->pkt_len);
 
-	DBG("%s: data %p, tail %p skb len %d pkt len %d pad len %d\n",
+	DBG("%s: data %pK, tail %pK skb len %d pkt len %d pad len %d\n",
 	    __func__, skb->data, skb_tail_pointer(skb), skb->len,
 	    hdr->pkt_len, hdr->pad_len);
 
 	pkt = kmalloc(sizeof(struct tx_pkt_info), GFP_ATOMIC);
-	if (pkt == NULL) {
-		pr_err("%s: mem alloc for tx_pkt_info failed\n", __func__);
+	if (pkt == NULL)
 		goto write_fail2;
-	}
 
 	dma_address = dma_map_single(dma_dev, skb->data, skb->len,
 					bam_ops->dma_to);
@@ -1098,10 +1083,9 @@ int msm_bam_dmux_open(uint32_t id, void *priv,
 	}
 
 	hdr = kmalloc(sizeof(struct bam_mux_hdr), GFP_KERNEL);
-	if (hdr == NULL) {
-		pr_err("%s: hdr kmalloc failed. ch: %d\n", __func__, id);
+	if (hdr == NULL)
 		return -ENOMEM;
-	}
+
 	spin_lock_irqsave(&bam_ch[id].lock, flags);
 	if (bam_ch_is_open(id)) {
 		DBG("%s: Already opened %d\n", __func__, id);
@@ -1111,6 +1095,12 @@ int msm_bam_dmux_open(uint32_t id, void *priv,
 	}
 	if (!bam_ch_is_remote_open(id)) {
 		DBG("%s: Remote not open; ch: %d\n", __func__, id);
+		spin_unlock_irqrestore(&bam_ch[id].lock, flags);
+		kfree(hdr);
+		return -ENODEV;
+	}
+	if (in_global_reset) {
+		BAM_DMUX_LOG("%s: In SSR... ch_id[%d]\n", __func__, id);
 		spin_unlock_irqrestore(&bam_ch[id].lock, flags);
 		kfree(hdr);
 		return -ENODEV;
@@ -1193,9 +1183,14 @@ int msm_bam_dmux_close(uint32_t id)
 		return 0;
 	}
 
+	if (in_global_reset) {
+		BAM_DMUX_LOG("%s: In SSR... ch_id[%d]\n", __func__, id);
+		read_unlock(&ul_wakeup_lock);
+		return 0;
+	}
+
 	hdr = kmalloc(sizeof(struct bam_mux_hdr), GFP_ATOMIC);
 	if (hdr == NULL) {
-		pr_err("%s: hdr kmalloc failed. ch: %d\n", __func__, id);
 		read_unlock(&ul_wakeup_lock);
 		return -ENOMEM;
 	}
@@ -1305,7 +1300,7 @@ static void rx_switch_to_interrupt_mode(void)
 
 		mutex_lock(&bam_rx_pool_mutexlock);
 		if (unlikely(list_empty(&bam_rx_pool))) {
-			DMUX_LOG_KERR("%s: have iovec %p but rx pool empty\n",
+			DMUX_LOG_KERR("%s: have iovec %pK but rx pool empty\n",
 				__func__, (void *)(uintptr_t)iov.addr);
 			mutex_unlock(&bam_rx_pool_mutexlock);
 			continue;
@@ -1313,18 +1308,18 @@ static void rx_switch_to_interrupt_mode(void)
 		info = list_first_entry(&bam_rx_pool, struct rx_pkt_info,
 							list_node);
 		if (info->dma_address != iov.addr) {
-			DMUX_LOG_KERR("%s: iovec %p != dma %p\n",
+			DMUX_LOG_KERR("%s: iovec %pK != dma %pK\n",
 				__func__,
 				(void *)(uintptr_t)iov.addr,
 				(void *)(uintptr_t)info->dma_address);
 			list_for_each_entry(info, &bam_rx_pool, list_node) {
-				DMUX_LOG_KERR("%s: dma %p\n", __func__,
+				DMUX_LOG_KERR("%s: dma %pK\n", __func__,
 					(void *)(uintptr_t)info->dma_address);
 				if (iov.addr == info->dma_address)
 					break;
 			}
 		}
-		BUG_ON(info->dma_address != iov.addr);
+		WARN_ON(info->dma_address != iov.addr);
 		list_del(&info->list_node);
 		--bam_rx_pool_len;
 		mutex_unlock(&bam_rx_pool_mutexlock);
@@ -1360,7 +1355,7 @@ static void log_rx_timestamp(void)
 	unsigned long nanosec_rem;
 
 	nanosec_rem = do_div(t, 1000000000U);
-	BAM_DMUX_LOG("Last rx pkt processed at [%6u.%09lu]\n", (unsigned)t,
+	BAM_DMUX_LOG("Last rx pkt processed at [%6u.%09lu]\n", (unsigned int)t,
 								nanosec_rem);
 }
 
@@ -1396,7 +1391,7 @@ static void rx_timer_work_func(struct work_struct *work)
 			mutex_lock(&bam_rx_pool_mutexlock);
 			if (unlikely(list_empty(&bam_rx_pool))) {
 				DMUX_LOG_KERR(
-					"%s: have iovec %p but rx pool empty\n",
+					"%s:have iovec %pK but rx pool empty\n",
 					__func__, (void *)(uintptr_t)iov.addr);
 				mutex_unlock(&bam_rx_pool_mutexlock);
 				continue;
@@ -1404,20 +1399,20 @@ static void rx_timer_work_func(struct work_struct *work)
 			info = list_first_entry(&bam_rx_pool,
 					struct rx_pkt_info,	list_node);
 			if (info->dma_address != iov.addr) {
-				DMUX_LOG_KERR("%s: iovec %p != dma %p\n",
+				DMUX_LOG_KERR("%s: iovec %pK != dma %pK\n",
 					__func__,
 					(void *)(uintptr_t)iov.addr,
 					(void *)(uintptr_t)info->dma_address);
 				list_for_each_entry(info, &bam_rx_pool,
 						list_node) {
-					DMUX_LOG_KERR("%s: dma %p\n", __func__,
+					DMUX_LOG_KERR("%s: dma %pK\n", __func__,
 						(void *)(uintptr_t)
 							info->dma_address);
 					if (iov.addr == info->dma_address)
 						break;
 				}
 			}
-			BUG_ON(info->dma_address != iov.addr);
+			WARN_ON(info->dma_address != iov.addr);
 			list_del(&info->list_node);
 			--bam_rx_pool_len;
 			mutex_unlock(&bam_rx_pool_mutexlock);
@@ -1791,7 +1786,7 @@ int msm_bam_dmux_ul_power_unvote(void)
 
 	read_lock(&ul_wakeup_lock);
 	vote = atomic_dec_return(&ul_ondemand_vote);
-	if (unlikely(vote) < 0)
+	if (unlikely(vote < 0))
 		DMUX_LOG_KERR("%s: invalid power vote %d\n", __func__, vote);
 	read_unlock(&ul_wakeup_lock);
 
@@ -1934,7 +1929,7 @@ static void ul_wakeup(void)
 		if (wait_for_dfab) {
 			ret = wait_for_completion_timeout(
 					&dfab_unvote_completion, HZ);
-			BUG_ON(ret == 0);
+			WARN_ON(ret == 0);
 		}
 		if (likely(do_vote_dfab))
 			vote_dfab();
@@ -2196,11 +2191,11 @@ static int restart_notifier_cb(struct notifier_block *this,
 
 	/*
 	 * Bam_dmux counts on the fact that the BEFORE_SHUTDOWN level of
-	 * notifications are guarenteed to execute before the AFTER_SHUTDOWN
+	 * notifications are guaranteed to execute before the AFTER_SHUTDOWN
 	 * level of notifications, and that BEFORE_SHUTDOWN always occurs in
 	 * all SSR events, no matter what triggered the SSR.  Also, bam_dmux
 	 * assumes that SMD does its SSR processing in the AFTER_SHUTDOWN level
-	 * thus bam_dmux is guarenteed to detect SSR before SMD, since the
+	 * thus bam_dmux is guaranteed to detect SSR before SMD, since the
 	 * callbacks for all the drivers within the AFTER_SHUTDOWN level could
 	 * occur in any order.  Bam_dmux uses this knowledge to skip accessing
 	 * the bam hardware when disconnect_to_bam() is triggered by SMD's SSR
@@ -2305,9 +2300,7 @@ static int bam_init(void)
 	a2_props.virt_addr = a2_virt_addr;
 	a2_props.virt_size = a2_phys_size;
 	a2_props.irq = a2_bam_irq;
-	a2_props.options = SPS_BAM_OPT_IRQ_WAKEUP
-				| SPS_BAM_HOLD_MEM
-				| SPS_BAM_OPT_IRQ_NO_SUSPEND;
+	a2_props.options = SPS_BAM_OPT_IRQ_WAKEUP | SPS_BAM_HOLD_MEM;
 	a2_props.num_pipes = A2_NUM_PIPES;
 	a2_props.summing_threshold = A2_SUMMING_THRESHOLD;
 	a2_props.constrained_logging = true;
@@ -2345,7 +2338,6 @@ static int bam_init(void)
 	tx_desc_mem_buf.base = dma_alloc_coherent(dma_dev, tx_desc_mem_buf.size,
 							&dma_addr, 0);
 	if (tx_desc_mem_buf.base == NULL) {
-		pr_err("%s: tx memory alloc failed\n", __func__);
 		ret = -ENOMEM;
 		goto tx_get_config_failed;
 	}
@@ -2383,7 +2375,6 @@ static int bam_init(void)
 	rx_desc_mem_buf.base = dma_alloc_coherent(dma_dev, rx_desc_mem_buf.size,
 							&dma_addr, 0);
 	if (rx_desc_mem_buf.base == NULL) {
-		pr_err("%s: rx memory alloc failed\n", __func__);
 		ret = -ENOMEM;
 		goto rx_mem_failed;
 	}
@@ -2696,12 +2687,11 @@ static int bam_dmux_probe(struct platform_device *pdev)
 
 		rc = of_property_read_bool(pdev->dev.of_node,
 						"qcom,fast-shutdown");
-		if (rc) {
+		if (rc)
 			ul_timeout_delay = UL_FAST_TIMEOUT_DELAY;
-		}
 
 		BAM_DMUX_LOG(
-			"%s: base:%p size:%x irq:%d satellite:%d num_buffs:%d dl_mtu:%x cpu-affinity:%d ul_timeout_delay:%d\n",
+			"%s: base:%pK size:%x irq:%d satellite:%d num_buffs:%d dl_mtu:%x cpu-affinity:%d ul_timeout_delay:%d\n",
 						__func__,
 						(void *)(uintptr_t)a2_phys_base,
 						a2_phys_size,
@@ -2722,10 +2712,9 @@ static int bam_dmux_probe(struct platform_device *pdev)
 	dma_dev = &pdev->dev;
 	/* The BAM only suports 32 bits of address */
 	dma_dev->dma_mask = kmalloc(sizeof(*dma_dev->dma_mask), GFP_KERNEL);
-	if (!dma_dev->dma_mask) {
-		DMUX_LOG_KERR("%s: cannot allocate dma_mask\n", __func__);
+	if (!dma_dev->dma_mask)
 		return -ENOMEM;
-	}
+
 	*dma_dev->dma_mask = DMA_BIT_MASK(32);
 	dma_dev->coherent_dma_mask = DMA_BIT_MASK(32);
 
@@ -2834,7 +2823,7 @@ static int bam_dmux_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msm_match_table[] = {
+static const struct of_device_id msm_match_table[] = {
 	{.compatible = "qcom,bam_dmux"},
 	{},
 };

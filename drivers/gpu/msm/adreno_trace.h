@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,8 +27,8 @@
 #include "adreno_a5xx.h"
 
 TRACE_EVENT(adreno_cmdbatch_queued,
-	TP_PROTO(struct kgsl_cmdbatch *cmdbatch, unsigned int queued),
-	TP_ARGS(cmdbatch, queued),
+	TP_PROTO(struct kgsl_drawobj *drawobj, unsigned int queued),
+	TP_ARGS(drawobj, queued),
 	TP_STRUCT__entry(
 		__field(unsigned int, id)
 		__field(unsigned int, timestamp)
@@ -37,26 +37,26 @@ TRACE_EVENT(adreno_cmdbatch_queued,
 		__field(unsigned int, prio)
 	),
 	TP_fast_assign(
-		__entry->id = cmdbatch->context->id;
-		__entry->timestamp = cmdbatch->timestamp;
+		__entry->id = drawobj->context->id;
+		__entry->timestamp = drawobj->timestamp;
 		__entry->queued = queued;
-		__entry->flags = cmdbatch->flags;
-		__entry->prio = cmdbatch->context->priority;
+		__entry->flags = drawobj->flags;
+		__entry->prio = drawobj->context->priority;
 	),
 	TP_printk(
 		"ctx=%u ctx_prio=%u ts=%u queued=%u flags=%s",
 			__entry->id, __entry->prio,
 			__entry->timestamp, __entry->queued,
 			__entry->flags ? __print_flags(__entry->flags, "|",
-						KGSL_CMDBATCH_FLAGS) : "none"
+						KGSL_DRAWOBJ_FLAGS) : "none"
 	)
 );
 
 TRACE_EVENT(adreno_cmdbatch_submitted,
-	TP_PROTO(struct kgsl_cmdbatch *cmdbatch, int inflight, uint64_t ticks,
+	TP_PROTO(struct kgsl_drawobj *drawobj, int inflight, uint64_t ticks,
 		unsigned long secs, unsigned long usecs,
 		struct adreno_ringbuffer *rb, unsigned int rptr),
-	TP_ARGS(cmdbatch, inflight, ticks, secs, usecs, rb, rptr),
+	TP_ARGS(drawobj, inflight, ticks, secs, usecs, rb, rptr),
 	TP_STRUCT__entry(
 		__field(unsigned int, id)
 		__field(unsigned int, timestamp)
@@ -72,14 +72,14 @@ TRACE_EVENT(adreno_cmdbatch_submitted,
 		__field(int, q_inflight)
 	),
 	TP_fast_assign(
-		__entry->id = cmdbatch->context->id;
-		__entry->timestamp = cmdbatch->timestamp;
+		__entry->id = drawobj->context->id;
+		__entry->timestamp = drawobj->timestamp;
 		__entry->inflight = inflight;
-		__entry->flags = cmdbatch->flags;
+		__entry->flags = drawobj->flags;
 		__entry->ticks = ticks;
 		__entry->secs = secs;
 		__entry->usecs = usecs;
-		__entry->prio = cmdbatch->context->priority;
+		__entry->prio = drawobj->context->priority;
 		__entry->rb_id = rb->id;
 		__entry->rptr = rptr;
 		__entry->wptr = rb->wptr;
@@ -90,7 +90,7 @@ TRACE_EVENT(adreno_cmdbatch_submitted,
 			__entry->id, __entry->prio, __entry->timestamp,
 			__entry->inflight,
 			__entry->flags ? __print_flags(__entry->flags, "|",
-				KGSL_CMDBATCH_FLAGS) : "none",
+				KGSL_DRAWOBJ_FLAGS) : "none",
 			__entry->ticks, __entry->secs, __entry->usecs,
 			__entry->rb_id, __entry->rptr, __entry->wptr,
 			__entry->q_inflight
@@ -98,10 +98,11 @@ TRACE_EVENT(adreno_cmdbatch_submitted,
 );
 
 TRACE_EVENT(adreno_cmdbatch_retired,
-	TP_PROTO(struct kgsl_cmdbatch *cmdbatch, int inflight,
+	TP_PROTO(struct kgsl_drawobj *drawobj, int inflight,
 		uint64_t start, uint64_t retire,
-		struct adreno_ringbuffer *rb, unsigned int rptr),
-	TP_ARGS(cmdbatch, inflight, start, retire, rb, rptr),
+		struct adreno_ringbuffer *rb, unsigned int rptr,
+		unsigned long fault_recovery),
+	TP_ARGS(drawobj, inflight, start, retire, rb, rptr, fault_recovery),
 	TP_STRUCT__entry(
 		__field(unsigned int, id)
 		__field(unsigned int, timestamp)
@@ -115,16 +116,17 @@ TRACE_EVENT(adreno_cmdbatch_retired,
 		__field(unsigned int, rptr)
 		__field(unsigned int, wptr)
 		__field(int, q_inflight)
+		__field(unsigned long, fault_recovery)
 	),
 	TP_fast_assign(
-		__entry->id = cmdbatch->context->id;
-		__entry->timestamp = cmdbatch->timestamp;
+		__entry->id = drawobj->context->id;
+		__entry->timestamp = drawobj->timestamp;
 		__entry->inflight = inflight;
-		__entry->recovery = cmdbatch->fault_recovery;
-		__entry->flags = cmdbatch->flags;
+		__entry->recovery = fault_recovery;
+		__entry->flags = drawobj->flags;
 		__entry->start = start;
 		__entry->retire = retire;
-		__entry->prio = cmdbatch->context->priority;
+		__entry->prio = drawobj->context->priority;
 		__entry->rb_id = rb->id;
 		__entry->rptr = rptr;
 		__entry->wptr = rb->wptr;
@@ -138,7 +140,7 @@ TRACE_EVENT(adreno_cmdbatch_retired,
 				__print_flags(__entry->recovery, "|",
 				ADRENO_FT_TYPES) : "none",
 			__entry->flags ? __print_flags(__entry->flags, "|",
-				KGSL_CMDBATCH_FLAGS) : "none",
+				KGSL_DRAWOBJ_FLAGS) : "none",
 			__entry->start,
 			__entry->retire,
 			__entry->rb_id, __entry->rptr, __entry->wptr,
@@ -170,16 +172,16 @@ TRACE_EVENT(adreno_cmdbatch_sync,
 );
 
 TRACE_EVENT(adreno_cmdbatch_fault,
-	TP_PROTO(struct kgsl_cmdbatch *cmdbatch, unsigned int fault),
-	TP_ARGS(cmdbatch, fault),
+	TP_PROTO(struct kgsl_drawobj_cmd *cmdobj, unsigned int fault),
+	TP_ARGS(cmdobj, fault),
 	TP_STRUCT__entry(
 		__field(unsigned int, id)
 		__field(unsigned int, timestamp)
 		__field(unsigned int, fault)
 	),
 	TP_fast_assign(
-		__entry->id = cmdbatch->context->id;
-		__entry->timestamp = cmdbatch->timestamp;
+		__entry->id = cmdobj->base.context->id;
+		__entry->timestamp = cmdobj->base.timestamp;
 		__entry->fault = fault;
 	),
 	TP_printk(
@@ -194,16 +196,16 @@ TRACE_EVENT(adreno_cmdbatch_fault,
 );
 
 TRACE_EVENT(adreno_cmdbatch_recovery,
-	TP_PROTO(struct kgsl_cmdbatch *cmdbatch, unsigned int action),
-	TP_ARGS(cmdbatch, action),
+	TP_PROTO(struct kgsl_drawobj_cmd *cmdobj, unsigned int action),
+	TP_ARGS(cmdobj, action),
 	TP_STRUCT__entry(
 		__field(unsigned int, id)
 		__field(unsigned int, timestamp)
 		__field(unsigned int, action)
 	),
 	TP_fast_assign(
-		__entry->id = cmdbatch->context->id;
-		__entry->timestamp = cmdbatch->timestamp;
+		__entry->id = cmdobj->base.context->id;
+		__entry->timestamp = cmdobj->base.timestamp;
 		__entry->action = action;
 	),
 	TP_printk(
@@ -341,7 +343,8 @@ TRACE_EVENT(adreno_gpu_fault,
 		__entry->ib2size = ib2size;
 		__entry->rb_id = rb_id;
 	),
-	TP_printk("ctx=%d ts=%d rb_id=%d status=%X RB=%X/%X IB1=%X/%X IB2=%X/%X",
+	TP_printk(
+		"ctx=%d ts=%d rb_id=%d status=%X RB=%X/%X IB1=%X/%X IB2=%X/%X",
 		__entry->ctx, __entry->ts, __entry->rb_id, __entry->status,
 		__entry->wptr, __entry->rptr, __entry->ib1base,
 		__entry->ib1size, __entry->ib2base, __entry->ib2size)
@@ -570,36 +573,55 @@ TRACE_EVENT(adreno_hw_preempt_token_submit,
 );
 
 TRACE_EVENT(adreno_preempt_trigger,
-	TP_PROTO(struct adreno_ringbuffer *cur, struct adreno_ringbuffer *next),
-	TP_ARGS(cur, next),
+	TP_PROTO(struct adreno_ringbuffer *cur, struct adreno_ringbuffer *next,
+		unsigned int cntl),
+	TP_ARGS(cur, next, cntl),
 	TP_STRUCT__entry(
 		__field(struct adreno_ringbuffer *, cur)
 		__field(struct adreno_ringbuffer *, next)
+		__field(unsigned int, cntl)
 	),
 	TP_fast_assign(
 		__entry->cur = cur;
 		__entry->next = next;
+		__entry->cntl = cntl;
 	),
-	TP_printk("trigger from id=%d to id=%d",
-		__entry->cur->id, __entry->next->id
+	TP_printk("trigger from id=%d to id=%d cntl=%x",
+		__entry->cur->id, __entry->next->id, __entry->cntl
 	)
 );
 
 TRACE_EVENT(adreno_preempt_done,
-	TP_PROTO(struct adreno_ringbuffer *cur, struct adreno_ringbuffer *next),
-	TP_ARGS(cur, next),
+	TP_PROTO(struct adreno_ringbuffer *cur, struct adreno_ringbuffer *next,
+		unsigned int level),
+	TP_ARGS(cur, next, level),
 	TP_STRUCT__entry(
 		__field(struct adreno_ringbuffer *, cur)
 		__field(struct adreno_ringbuffer *, next)
+		__field(unsigned int, level)
 	),
 	TP_fast_assign(
 		__entry->cur = cur;
 		__entry->next = next;
+		__entry->level = level;
 	),
-	TP_printk("done switch to id=%d from id=%d",
-		__entry->next->id, __entry->cur->id
+	TP_printk("done switch to id=%d from id=%d level=%x",
+		__entry->next->id, __entry->cur->id, __entry->level
 	)
 );
+
+TRACE_EVENT(adreno_ifpc_count,
+	TP_PROTO(unsigned int ifpc_count),
+	TP_ARGS(ifpc_count),
+	TP_STRUCT__entry(
+		__field(unsigned int, ifpc_count)
+	),
+	TP_fast_assign(
+		__entry->ifpc_count = ifpc_count;
+	),
+	TP_printk("total times GMU entered IFPC = %d", __entry->ifpc_count)
+);
+
 #endif /* _ADRENO_TRACE_H */
 
 /* This part must be outside protection */

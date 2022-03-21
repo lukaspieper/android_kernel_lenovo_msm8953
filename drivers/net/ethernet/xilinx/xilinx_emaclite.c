@@ -122,7 +122,6 @@
  * @phy_dev:		pointer to the PHY device
  * @phy_node:		pointer to the PHY device node
  * @mii_bus:		pointer to the MII bus
- * @mdio_irqs:		IRQs table for MDIO bus
  * @last_link:		last link status
  * @has_mdio:		indicates whether MDIO is included in the HW
  */
@@ -143,7 +142,6 @@ struct net_local {
 	struct device_node *phy_node;
 
 	struct mii_bus *mii_bus;
-	int mdio_irqs[PHY_MAX_ADDR];
 
 	int last_link;
 	bool has_mdio;
@@ -545,7 +543,7 @@ static void xemaclite_tx_timeout(struct net_device *dev)
 	}
 
 	/* To exclude tx timeout */
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	netif_trans_update(dev); /* prevent tx timeout */
 
 	/* We're all ready to go. Start the queue */
 	netif_wake_queue(dev);
@@ -577,7 +575,7 @@ static void xemaclite_tx_handler(struct net_device *dev)
 			dev->stats.tx_bytes += lp->deferred_skb->len;
 			dev_kfree_skb_irq(lp->deferred_skb);
 			lp->deferred_skb = NULL;
-			dev->trans_start = jiffies; /* prevent tx timeout */
+			netif_trans_update(dev); /* prevent tx timeout */
 			netif_wake_queue(dev);
 		}
 	}
@@ -840,6 +838,8 @@ static int xemaclite_mdio_setup(struct net_local *lp, struct device *dev)
 		if (!phydev)
 			dev_info(dev,
 				 "MDIO of the phy is not registered yet\n");
+		else
+			put_device(&phydev->mdio.dev);
 		return 0;
 	}
 
@@ -862,7 +862,6 @@ static int xemaclite_mdio_setup(struct net_local *lp, struct device *dev)
 	bus->read = xemaclite_mdio_read;
 	bus->write = xemaclite_mdio_write;
 	bus->parent = dev;
-	bus->irq = lp->mdio_irqs; /* preallocated IRQ table */
 
 	lp->mii_bus = bus;
 
@@ -1006,9 +1005,10 @@ static int xemaclite_close(struct net_device *dev)
  * deferred and the Tx queue is stopped so that the deferred socket buffer can
  * be transmitted when the Emaclite device is free to transmit data.
  *
- * Return:	0, always.
+ * Return:	NETDEV_TX_OK, always.
  */
-static int xemaclite_send(struct sk_buff *orig_skb, struct net_device *dev)
+static netdev_tx_t
+xemaclite_send(struct sk_buff *orig_skb, struct net_device *dev)
 {
 	struct net_local *lp = netdev_priv(dev);
 	struct sk_buff *new_skb;
@@ -1029,7 +1029,7 @@ static int xemaclite_send(struct sk_buff *orig_skb, struct net_device *dev)
 		/* Take the time stamp now, since we can't do this in an ISR. */
 		skb_tx_timestamp(new_skb);
 		spin_unlock_irqrestore(&lp->reset_lock, flags);
-		return 0;
+		return NETDEV_TX_OK;
 	}
 	spin_unlock_irqrestore(&lp->reset_lock, flags);
 
@@ -1038,7 +1038,7 @@ static int xemaclite_send(struct sk_buff *orig_skb, struct net_device *dev)
 	dev->stats.tx_bytes += len;
 	dev_consume_skb_any(new_skb);
 
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /**
@@ -1074,7 +1074,7 @@ static bool get_bool(struct platform_device *ofdev, const char *s)
 	} else {
 		dev_warn(&ofdev->dev, "Parameter %s not found,"
 			"defaulting to false\n", s);
-		return 0;
+		return false;
 	}
 }
 
@@ -1121,6 +1121,7 @@ static int xemaclite_of_probe(struct platform_device *ofdev)
 	res = platform_get_resource(ofdev, IORESOURCE_IRQ, 0);
 	if (!res) {
 		dev_err(dev, "no IRQ found\n");
+		rc = -ENXIO;
 		goto error;
 	}
 
@@ -1143,11 +1144,13 @@ static int xemaclite_of_probe(struct platform_device *ofdev)
 	lp->rx_ping_pong = get_bool(ofdev, "xlnx,rx-ping-pong");
 	mac_address = of_get_mac_address(ofdev->dev.of_node);
 
-	if (mac_address)
+	if (mac_address) {
 		/* Set the MAC address. */
 		memcpy(ndev->dev_addr, mac_address, ETH_ALEN);
-	else
-		dev_warn(dev, "No MAC address found\n");
+	} else {
+		dev_warn(dev, "No MAC address found, using random\n");
+		eth_hw_addr_random(ndev);
+	}
 
 	/* Clear the Tx CSR's in case this is a restart */
 	xemaclite_writel(0, lp->base_addr + XEL_TSR_OFFSET);
@@ -1205,15 +1208,13 @@ static int xemaclite_of_remove(struct platform_device *of_dev)
 	/* Un-register the mii_bus, if configured */
 	if (lp->has_mdio) {
 		mdiobus_unregister(lp->mii_bus);
-		kfree(lp->mii_bus->irq);
 		mdiobus_free(lp->mii_bus);
 		lp->mii_bus = NULL;
 	}
 
 	unregister_netdev(ndev);
 
-	if (lp->phy_node)
-		of_node_put(lp->phy_node);
+	of_node_put(lp->phy_node);
 	lp->phy_node = NULL;
 
 	xemaclite_remove_ndev(ndev);
@@ -1243,7 +1244,7 @@ static struct net_device_ops xemaclite_netdev_ops = {
 };
 
 /* Match table for OF platform binding */
-static struct of_device_id xemaclite_of_match[] = {
+static const struct of_device_id xemaclite_of_match[] = {
 	{ .compatible = "xlnx,opb-ethernetlite-1.01.a", },
 	{ .compatible = "xlnx,opb-ethernetlite-1.01.b", },
 	{ .compatible = "xlnx,xps-ethernetlite-1.00.a", },

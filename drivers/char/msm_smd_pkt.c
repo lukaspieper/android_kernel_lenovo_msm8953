@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -66,7 +66,7 @@ struct smd_pkt_dev {
 	int blocking_write;
 	int is_open;
 	int poll_mode;
-	unsigned ch_size;
+	unsigned int ch_size;
 	uint open_modem_wait;
 
 	int has_reset;
@@ -76,6 +76,8 @@ struct smd_pkt_dev {
 	struct work_struct packet_arrival_work;
 	spinlock_t pa_spinlock;
 	int ws_locked;
+
+	int sigs_updated;
 };
 
 
@@ -104,8 +106,7 @@ static int num_smd_pkt_ports;
 static void *smd_pkt_ilctxt;
 
 static int msm_smd_pkt_debug_mask;
-module_param_named(debug_mask, msm_smd_pkt_debug_mask,
-		int, S_IRUGO | S_IWUSR | S_IWGRP);
+module_param_named(debug_mask, msm_smd_pkt_debug_mask, int, 0664);
 
 enum {
 	SMD_PKT_STATUS = 1U << 0,
@@ -181,12 +182,11 @@ static ssize_t open_timeout_store(struct device *d,
 				smd_pkt_devp->open_modem_wait = tmp;
 				mutex_unlock(&smd_pkt_dev_lock_lha1);
 				return n;
-			} else {
-				mutex_unlock(&smd_pkt_dev_lock_lha1);
-				pr_err("%s: unable to convert: %s to an int\n",
-						__func__, buf);
-				return -EINVAL;
 			}
+			mutex_unlock(&smd_pkt_dev_lock_lha1);
+			pr_err("%s: unable to convert: %s to an int\n",
+						__func__, buf);
+			return -EINVAL;
 		}
 	}
 	mutex_unlock(&smd_pkt_dev_lock_lha1);
@@ -242,12 +242,11 @@ static ssize_t loopback_edge_store(struct device *d,
 				smd_pkt_devp->edge = tmp;
 				mutex_unlock(&smd_pkt_dev_lock_lha1);
 				return n;
-			} else {
-				mutex_unlock(&smd_pkt_dev_lock_lha1);
-				pr_err("%s: unable to convert: %s to an int\n",
-						__func__, buf);
-				return -EINVAL;
 			}
+			mutex_unlock(&smd_pkt_dev_lock_lha1);
+			pr_err("%s: unable to convert: %s to an int\n",
+						__func__, buf);
+			return -EINVAL;
 		}
 	}
 	mutex_unlock(&smd_pkt_dev_lock_lha1);
@@ -311,9 +310,10 @@ static void loopback_probe_worker(struct work_struct *work)
 {
 
 	/* Wait for the modem SMSM to be inited for the SMD
-	** Loopback channel to be allocated at the modem. Since
-	** the wait need to be done atmost once, using msleep
-	** doesn't degrade the performance. */
+	 ** Loopback channel to be allocated at the modem. Since
+	 ** the wait need to be done atmost once, using msleep
+	 ** doesn't degrade the performance.
+	 */
 	if (!is_modem_smsm_inited())
 		schedule_delayed_work(&loopback_work, msecs_to_jiffies(1000));
 	else
@@ -358,9 +358,12 @@ static long smd_pkt_ioctl(struct file *file, unsigned int cmd,
 	mutex_lock(&smd_pkt_devp->ch_lock);
 	switch (cmd) {
 	case TIOCMGET:
-		D_STATUS("%s TIOCMGET command on smd_pkt_dev id:%d\n",
-			 __func__, smd_pkt_devp->i);
+		smd_pkt_devp->sigs_updated = false;
 		ret = smd_tiocmget(smd_pkt_devp->ch);
+		D_STATUS("%s TIOCMGET command on smd_pkt_dev id:%d [%d]\n",
+			 __func__, smd_pkt_devp->i, ret);
+		if (ret > 0)
+			ret = put_user((uint32_t)ret, (uint32_t __user *)arg);
 		break;
 	case TIOCMSET:
 		ret = get_user(val, (uint32_t *)arg);
@@ -620,23 +623,22 @@ ssize_t smd_pkt_write(struct file *file,
 			E_SMD_PKT_SSR(smd_pkt_devp);
 			kfree(buf);
 			return notify_reset(smd_pkt_devp);
-		} else {
-			r = smd_write_segment(smd_pkt_devp->ch,
-					      (void *)(buf + bytes_written),
-					      (count - bytes_written));
-			if (r < 0) {
-				mutex_unlock(&smd_pkt_devp->tx_lock);
-				if (smd_pkt_devp->has_reset) {
-					E_SMD_PKT_SSR(smd_pkt_devp);
-					return notify_reset(smd_pkt_devp);
-				}
-				pr_err_ratelimited("%s on smd_pkt_dev id:%d failed r:%d\n",
-					__func__, smd_pkt_devp->i, r);
-				kfree(buf);
-				return r;
-			}
-			bytes_written += r;
 		}
+		r = smd_write_segment(smd_pkt_devp->ch,
+				      (void *)(buf + bytes_written),
+				      (count - bytes_written));
+		if (r < 0) {
+			mutex_unlock(&smd_pkt_devp->tx_lock);
+			if (smd_pkt_devp->has_reset) {
+				E_SMD_PKT_SSR(smd_pkt_devp);
+				return notify_reset(smd_pkt_devp);
+			}
+			pr_err_ratelimited("%s on smd_pkt_dev id:%d failed r:%d\n",
+				__func__, smd_pkt_devp->i, r);
+			kfree(buf);
+			return r;
+		}
+		bytes_written += r;
 	} while (bytes_written != count);
 	smd_write_end(smd_pkt_devp->ch);
 	mutex_unlock(&smd_pkt_devp->tx_lock);
@@ -669,6 +671,12 @@ static unsigned int smd_pkt_poll(struct file *file, poll_table *wait)
 	if (smd_read_avail(smd_pkt_devp->ch)) {
 		mask |= POLLIN | POLLRDNORM;
 		D_POLL("%s sets POLLIN for smd_pkt_dev id: %d\n",
+			__func__, smd_pkt_devp->i);
+	}
+
+	if (smd_pkt_devp->sigs_updated) {
+		mask |= POLLPRI;
+		D_POLL("%s sets POLLPRI for smd_pkt_dev id: %d\n",
 			__func__, smd_pkt_devp->i);
 	}
 	mutex_unlock(&smd_pkt_devp->ch_lock);
@@ -739,7 +747,7 @@ static void check_and_wakeup_writer(struct smd_pkt_dev *smd_pkt_devp)
 	}
 }
 
-static void ch_notify(void *priv, unsigned event)
+static void ch_notify(void *priv, unsigned int event)
 {
 	struct smd_pkt_dev *smd_pkt_devp = priv;
 
@@ -775,6 +783,9 @@ static void ch_notify(void *priv, unsigned event)
 		if (!strcmp(smd_pkt_devp->ch_name, "LOOPBACK"))
 			schedule_delayed_work(&loopback_work,
 					msecs_to_jiffies(1000));
+		break;
+	case SMD_EVENT_STATUS:
+		smd_pkt_devp->sigs_updated = true;
 		break;
 	}
 }
@@ -937,8 +948,9 @@ int smd_pkt_open(struct inode *inode, struct file *file)
 
 	mutex_lock(&smd_pkt_devp->ch_lock);
 	if (smd_pkt_devp->ch == 0) {
-		unsigned open_wait_rem = smd_pkt_devp->open_modem_wait * 1000;
+		unsigned int open_wait_rem;
 
+		open_wait_rem = smd_pkt_devp->open_modem_wait * 1000;
 		reinit_completion(&smd_pkt_devp->ch_allocated);
 
 		r = smd_pkt_add_driver(smd_pkt_devp);
@@ -966,9 +978,10 @@ int smd_pkt_open(struct inode *inode, struct file *file)
 		}
 
 		/* Wait for the modem SMSM to be inited for the SMD
-		** Loopback channel to be allocated at the modem. Since
-		** the wait need to be done atmost once, using msleep
-		** doesn't degrade the performance. */
+		 ** Loopback channel to be allocated at the modem. Since
+		 ** the wait need to be done atmost once, using msleep
+		 ** doesn't degrade the performance.
+		 */
 		if (!strcmp(smd_pkt_devp->ch_name, "LOOPBACK")) {
 			if (!is_modem_smsm_inited())
 				msleep(5000);
@@ -1012,7 +1025,7 @@ int smd_pkt_open(struct inode *inode, struct file *file)
 			goto release_pil;
 		}
 
-		open_wait_rem = max_t(unsigned, 2000, open_wait_rem);
+		open_wait_rem = max_t(unsigned int, 2000, open_wait_rem);
 		r = wait_event_interruptible_timeout(
 				smd_pkt_devp->ch_opened_wait_queue,
 				smd_pkt_devp->is_open,
@@ -1100,6 +1113,7 @@ int smd_pkt_release(struct inode *inode, struct file *file)
 			smd_pkt_devp->ws_locked = 0;
 		}
 		spin_unlock_irqrestore(&smd_pkt_devp->pa_spinlock, flags);
+		smd_pkt_devp->sigs_updated = false;
 	}
 	mutex_unlock(&smd_pkt_devp->tx_lock);
 	mutex_unlock(&smd_pkt_devp->rx_lock);
@@ -1151,7 +1165,7 @@ static int smd_pkt_init_add_device(struct smd_pkt_dev *smd_pkt_devp, int i)
 	smd_pkt_devp->cdev.owner = THIS_MODULE;
 
 	r = cdev_add(&smd_pkt_devp->cdev, (smd_pkt_number + i), 1);
-	if (IS_ERR_VALUE(r)) {
+	if (r) {
 		pr_err("%s: cdev_add() failed for smd_pkt_dev id:%d ret:%i\n",
 			__func__, i, r);
 		return r;
@@ -1219,7 +1233,7 @@ static int smd_pkt_alloc_chrdev_region(void)
 			       num_smd_pkt_ports,
 			       DEVICE_NAME);
 
-	if (IS_ERR_VALUE(r)) {
+	if (r) {
 		pr_err("%s: alloc_chrdev_region() failed ret:%i\n",
 			__func__, r);
 		return r;
@@ -1354,7 +1368,7 @@ static int msm_smd_pkt_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msm_smd_pkt_match_table[] = {
+static const struct of_device_id msm_smd_pkt_match_table[] = {
 	{ .compatible = "qcom,smdpkt" },
 	{},
 };

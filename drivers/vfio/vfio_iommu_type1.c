@@ -72,6 +72,7 @@ struct vfio_domain {
 	struct list_head	next;
 	struct list_head	group_list;
 	int			prot;		/* IOMMU_CACHE */
+	bool			fgsp;		/* Fine-grained super pages */
 };
 
 struct vfio_dma {
@@ -137,7 +138,7 @@ static void vfio_unlink_dma(struct vfio_iommu *iommu, struct vfio_dma *old)
 
 static int vfio_lock_acct(long npage, bool *lock_cap)
 {
-	int ret = 0;
+	int ret;
 
 	if (!npage)
 		return 0;
@@ -145,22 +146,24 @@ static int vfio_lock_acct(long npage, bool *lock_cap)
 	if (!current->mm)
 		return -ESRCH; /* process exited */
 
-	down_write(&current->mm->mmap_sem);
-	if (npage > 0) {
-		if (lock_cap ? !*lock_cap : !capable(CAP_IPC_LOCK)) {
-			unsigned long limit;
+	ret = down_write_killable(&current->mm->mmap_sem);
+	if (!ret) {
+		if (npage > 0) {
+			if (lock_cap ? !*lock_cap : !capable(CAP_IPC_LOCK)) {
+				unsigned long limit;
 
-			limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+				limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
 
-			if (current->mm->locked_vm + npage > limit)
-				ret = -ENOMEM;
+				if (current->mm->locked_vm + npage > limit)
+					ret = -ENOMEM;
+			}
 		}
+
+		if (!ret)
+			current->mm->locked_vm += npage;
+
+		up_write(&current->mm->mmap_sem);
 	}
-
-	if (!ret)
-		current->mm->locked_vm += npage;
-
-	up_write(&current->mm->mmap_sem);
 
 	return ret;
 }
@@ -247,6 +250,7 @@ static long vfio_pin_pages(unsigned long vaddr, long npage,
 	unsigned long pfn = 0, limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
 	bool lock_cap = capable(CAP_IPC_LOCK);
 	long ret, i = 1;
+	bool rsvd;
 
 	if (!current->mm)
 		return -ENODEV;
@@ -255,10 +259,9 @@ static long vfio_pin_pages(unsigned long vaddr, long npage,
 	if (ret)
 		return ret;
 
-	if (is_invalid_reserved_pfn(*pfn_base))
-		return 1;
+	rsvd = is_invalid_reserved_pfn(*pfn_base);
 
-	if (!lock_cap && current->mm->locked_vm + 1 > limit) {
+	if (!rsvd && !lock_cap && current->mm->locked_vm + 1 > limit) {
 		put_pfn(*pfn_base, prot);
 		pr_warn("%s: RLIMIT_MEMLOCK (%ld) exceeded\n", __func__,
 			limit << PAGE_SHIFT);
@@ -274,12 +277,14 @@ static long vfio_pin_pages(unsigned long vaddr, long npage,
 		if (ret)
 			break;
 
-		if (pfn != *pfn_base + i || is_invalid_reserved_pfn(pfn)) {
+		if (pfn != *pfn_base + i ||
+		    rsvd != is_invalid_reserved_pfn(pfn)) {
 			put_pfn(pfn, prot);
 			break;
 		}
 
-		if (!lock_cap && current->mm->locked_vm + i + 1 > limit) {
+		if (!rsvd && !lock_cap &&
+		    current->mm->locked_vm + i + 1 > limit) {
 			put_pfn(pfn, prot);
 			pr_warn("%s: RLIMIT_MEMLOCK (%ld) exceeded\n",
 				__func__, limit << PAGE_SHIFT);
@@ -289,12 +294,15 @@ static long vfio_pin_pages(unsigned long vaddr, long npage,
 	}
 
 out:
-	ret = vfio_lock_acct(i, &lock_cap);
+	if (!rsvd)
+		ret = vfio_lock_acct(i, &lock_cap);
 
 unpin_out:
 	if (ret) {
-		for (pfn = *pfn_base ; i ; pfn++, i--)
-			put_pfn(pfn, prot);
+		if (!rsvd) {
+			for (pfn = *pfn_base ; i ; pfn++, i--)
+				put_pfn(pfn, prot);
+		}
 
 		return ret;
 	}
@@ -335,12 +343,14 @@ static void vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma)
 	domain = d = list_first_entry(&iommu->domain_list,
 				      struct vfio_domain, next);
 
-	list_for_each_entry_continue(d, &iommu->domain_list, next)
+	list_for_each_entry_continue(d, &iommu->domain_list, next) {
 		iommu_unmap(d->domain, dma->iova, dma->size);
+		cond_resched();
+	}
 
 	while (iova < end) {
-		size_t unmapped;
-		phys_addr_t phys;
+		size_t unmapped, len;
+		phys_addr_t phys, next;
 
 		phys = iommu_iova_to_phys(domain->domain, iova);
 		if (WARN_ON(!phys)) {
@@ -348,7 +358,19 @@ static void vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma)
 			continue;
 		}
 
-		unmapped = iommu_unmap(domain->domain, iova, PAGE_SIZE);
+		/*
+		 * To optimize for fewer iommu_unmap() calls, each of which
+		 * may require hardware cache flushing, try to find the
+		 * largest contiguous physical memory chunk to unmap.
+		 */
+		for (len = PAGE_SIZE;
+		     !domain->fgsp && iova + len < end; len += PAGE_SIZE) {
+			next = iommu_iova_to_phys(domain->domain, iova + len);
+			if (next != phys + len)
+				break;
+		}
+
+		unmapped = iommu_unmap(domain->domain, iova, len);
 		if (WARN_ON(!unmapped))
 			break;
 
@@ -356,6 +378,8 @@ static void vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma)
 					     unmapped >> PAGE_SHIFT,
 					     dma->prot, false);
 		iova += unmapped;
+
+		cond_resched();
 	}
 
 	vfio_lock_acct(-unlocked, NULL);
@@ -372,12 +396,25 @@ static void vfio_remove_dma(struct vfio_iommu *iommu, struct vfio_dma *dma)
 static unsigned long vfio_pgsize_bitmap(struct vfio_iommu *iommu)
 {
 	struct vfio_domain *domain;
-	unsigned long bitmap = PAGE_MASK;
+	unsigned long bitmap = ULONG_MAX;
 
 	mutex_lock(&iommu->lock);
 	list_for_each_entry(domain, &iommu->domain_list, next)
-		bitmap &= domain->domain->ops->pgsize_bitmap;
+		bitmap &= domain->domain->pgsize_bitmap;
 	mutex_unlock(&iommu->lock);
+
+	/*
+	 * In case the IOMMU supports page sizes smaller than PAGE_SIZE
+	 * we pretend PAGE_SIZE is supported and hide sub-PAGE_SIZE sizes.
+	 * That way the user will be able to map/unmap buffers whose size/
+	 * start address is aligned with PAGE_SIZE. Pinning code uses that
+	 * granularity while iommu driver can use the sub-PAGE_SIZE size
+	 * to map the buffer.
+	 */
+	if (bitmap & ~PAGE_MASK) {
+		bitmap &= PAGE_MASK;
+		bitmap |= PAGE_SIZE;
+	}
 
 	return bitmap;
 }
@@ -471,7 +508,7 @@ static int map_try_harder(struct vfio_domain *domain, dma_addr_t iova,
 			  unsigned long pfn, long npage, int prot)
 {
 	long i;
-	int ret;
+	int ret = 0;
 
 	for (i = 0; i < npage; i++, pfn++, iova += PAGE_SIZE) {
 		ret = iommu_map(domain->domain, iova,
@@ -501,6 +538,8 @@ static int vfio_iommu_map(struct vfio_iommu *iommu, dma_addr_t iova,
 			    map_try_harder(d, iova, pfn, npage, prot))
 				goto unwind;
 		}
+
+		cond_resched();
 	}
 
 	return 0;
@@ -661,6 +700,39 @@ static int vfio_iommu_replay(struct vfio_iommu *iommu,
 	return 0;
 }
 
+/*
+ * We change our unmap behavior slightly depending on whether the IOMMU
+ * supports fine-grained superpages.  IOMMUs like AMD-Vi will use a superpage
+ * for practically any contiguous power-of-two mapping we give it.  This means
+ * we don't need to look for contiguous chunks ourselves to make unmapping
+ * more efficient.  On IOMMUs with coarse-grained super pages, like Intel VT-d
+ * with discrete 2M/1G/512G/1T superpages, identifying contiguous chunks
+ * significantly boosts non-hugetlbfs mappings and doesn't seem to hurt when
+ * hugetlbfs is in use.
+ */
+static void vfio_test_domain_fgsp(struct vfio_domain *domain)
+{
+	struct page *pages;
+	int ret, order = get_order(PAGE_SIZE * 2);
+
+	pages = alloc_pages(GFP_KERNEL | __GFP_ZERO, order);
+	if (!pages)
+		return;
+
+	ret = iommu_map(domain->domain, 0, page_to_phys(pages), PAGE_SIZE * 2,
+			IOMMU_READ | IOMMU_WRITE | domain->prot);
+	if (!ret) {
+		size_t unmapped = iommu_unmap(domain->domain, 0, PAGE_SIZE);
+
+		if (unmapped == PAGE_SIZE)
+			iommu_unmap(domain->domain, PAGE_SIZE, PAGE_SIZE);
+		else
+			domain->fgsp = true;
+	}
+
+	__free_pages(pages, order);
+}
+
 static int vfio_iommu_type1_attach_group(void *iommu_data,
 					 struct iommu_group *iommu_group)
 {
@@ -753,6 +825,8 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 				goto out_domain;
 		}
 	}
+
+	vfio_test_domain_fgsp(domain);
 
 	/* replay mappings on new domains */
 	ret = vfio_iommu_replay(iommu, domain);
@@ -921,7 +995,7 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		if (info.argsz < minsz)
 			return -EINVAL;
 
-		info.flags = 0;
+		info.flags = VFIO_IOMMU_INFO_PGSIZES;
 
 		info.iova_pgsizes = vfio_pgsize_bitmap(iommu);
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, 2014-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -43,6 +43,54 @@ TRACE_EVENT(cpu_power_select,
 		__entry->next_event_us)
 );
 
+TRACE_EVENT(cpu_pred_select,
+
+	TP_PROTO(u32 predtype, u64 predicted, u32 tmr_time),
+
+	TP_ARGS(predtype, predicted, tmr_time),
+
+	TP_STRUCT__entry(
+		__field(u32, predtype)
+		__field(u64, predicted)
+		__field(u32, tmr_time)
+	),
+
+	TP_fast_assign(
+		__entry->predtype = predtype;
+		__entry->predicted = predicted;
+		__entry->tmr_time = tmr_time;
+	),
+
+	TP_printk("pred:%u time:%lu tmr_time:%u",
+		__entry->predtype, (unsigned long)__entry->predicted,
+		__entry->tmr_time)
+);
+
+TRACE_EVENT(cpu_pred_hist,
+
+	TP_PROTO(int idx, u32 resi, u32 sample, u32 tmr),
+
+	TP_ARGS(idx, resi, sample, tmr),
+
+	TP_STRUCT__entry(
+		__field(int, idx)
+		__field(u32, resi)
+		__field(u32, sample)
+		__field(u32, tmr)
+	),
+
+	TP_fast_assign(
+		__entry->idx = idx;
+		__entry->resi = resi;
+		__entry->sample = sample;
+		__entry->tmr = tmr;
+	),
+
+	TP_printk("idx:%d resi:%u sample:%u tmr:%u",
+		__entry->idx, __entry->resi,
+		__entry->sample, __entry->tmr)
+);
+
 TRACE_EVENT(cpu_idle_enter,
 
 	TP_PROTO(int index),
@@ -82,39 +130,7 @@ TRACE_EVENT(cpu_idle_exit,
 		__entry->success)
 );
 
-DECLARE_EVENT_CLASS(cpu_freq,
-
-	TP_PROTO(int cpu, unsigned long cpu_clk, unsigned long l2_clk),
-
-	TP_ARGS(cpu, cpu_clk, l2_clk),
-
-	TP_STRUCT__entry(
-		__field(int, cpu)
-		__field(unsigned long, cpu_clk)
-		__field(unsigned long, l2_clk)
-	),
-
-	TP_fast_assign(
-		__entry->cpu = cpu;
-		__entry->cpu_clk = cpu_clk;
-		__entry->l2_clk = l2_clk;
-	),
-
-	TP_printk("cpu:%d cpu_clk:%luHZ l2_clk:%luHZ",
-		__entry->cpu, __entry->cpu_clk, __entry->l2_clk)
-);
-
-DEFINE_EVENT(cpu_freq, cpu_idle_enter_cpu_freq,
-	TP_PROTO(int cpu, unsigned long cpu_clk, unsigned long l2_clk),
-	TP_ARGS(cpu, cpu_clk, l2_clk)
-);
-
-DEFINE_EVENT(cpu_freq, cpu_idle_exit_cpu_freq,
-	TP_PROTO(int cpu, unsigned long cpu_clk, unsigned long l2_clk),
-	TP_ARGS(cpu, cpu_clk, l2_clk)
-);
-
-DECLARE_EVENT_CLASS(cluster,
+TRACE_EVENT(cluster_enter,
 
 	TP_PROTO(const char *name, int index, unsigned long sync_cpus,
 		unsigned long child_cpus, bool from_idle),
@@ -144,16 +160,94 @@ DECLARE_EVENT_CLASS(cluster,
 		__entry->child_cpus,
 		__entry->from_idle)
 );
-DEFINE_EVENT(cluster, cluster_enter,
+
+TRACE_EVENT(cluster_exit,
+
 	TP_PROTO(const char *name, int index, unsigned long sync_cpus,
 		unsigned long child_cpus, bool from_idle),
-	TP_ARGS(name, index, sync_cpus, child_cpus, from_idle)
+
+	TP_ARGS(name, index, sync_cpus, child_cpus, from_idle),
+
+	TP_STRUCT__entry(
+		__field(const char *, name)
+		__field(int, index)
+		__field(unsigned long, sync_cpus)
+		__field(unsigned long, child_cpus)
+		__field(bool, from_idle)
+	),
+
+	TP_fast_assign(
+		__entry->name = name;
+		__entry->index = index;
+		__entry->sync_cpus = sync_cpus;
+		__entry->child_cpus = child_cpus;
+		__entry->from_idle = from_idle;
+	),
+
+	TP_printk("cluster_name:%s idx:%d sync:0x%lx child:0x%lx idle:%d",
+		__entry->name,
+		__entry->index,
+		__entry->sync_cpus,
+		__entry->child_cpus,
+		__entry->from_idle)
 );
 
-DEFINE_EVENT(cluster, cluster_exit,
-	TP_PROTO(const char *name, int index, unsigned long sync_cpus,
-		unsigned long child_cpus, bool from_idle),
-	TP_ARGS(name, index, sync_cpus, child_cpus, from_idle)
+TRACE_EVENT(cluster_pred_select,
+
+	TP_PROTO(const char *name, int index, u32 sleep_us,
+				u32 latency, int pred, u32 pred_us),
+
+	TP_ARGS(name, index, sleep_us, latency, pred, pred_us),
+
+	TP_STRUCT__entry(
+		__field(const char *, name)
+		__field(int, index)
+		__field(u32, sleep_us)
+		__field(u32, latency)
+		__field(int, pred)
+		__field(u32, pred_us)
+	),
+
+	TP_fast_assign(
+		__entry->name = name;
+		__entry->index = index;
+		__entry->sleep_us = sleep_us;
+		__entry->latency = latency;
+		__entry->pred = pred;
+		__entry->pred_us = pred_us;
+	),
+
+	TP_printk("name:%s idx:%d sleep_time:%u latency:%u pred:%d pred_us:%u",
+		__entry->name, __entry->index, __entry->sleep_us,
+		__entry->latency, __entry->pred, __entry->pred_us)
+);
+
+TRACE_EVENT(cluster_pred_hist,
+
+	TP_PROTO(const char *name, int idx, u32 resi,
+					u32 sample, u32 tmr),
+
+	TP_ARGS(name, idx, resi, sample, tmr),
+
+	TP_STRUCT__entry(
+		__field(const char *, name)
+		__field(int, idx)
+		__field(u32, resi)
+		__field(u32, sample)
+		__field(u32, tmr)
+	),
+
+	TP_fast_assign(
+		__entry->name = name;
+		__entry->idx = idx;
+		__entry->resi = resi;
+		__entry->sample = sample;
+		__entry->tmr = tmr;
+	),
+
+	TP_printk("name:%s idx:%d resi:%u sample:%u tmr:%u",
+		__entry->name, __entry->idx, __entry->resi,
+		__entry->sample, __entry->tmr)
 );
 
 TRACE_EVENT(pre_pc_cb,
@@ -174,6 +268,7 @@ TRACE_EVENT(pre_pc_cb,
 		__entry->tzflag
 	)
 );
+
 #endif
 #define TRACE_INCLUDE_FILE trace_msm_low_power
 #include <trace/define_trace.h>

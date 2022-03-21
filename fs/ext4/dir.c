@@ -22,10 +22,8 @@
  */
 
 #include <linux/fs.h>
-#include <linux/jbd2.h>
 #include <linux/buffer_head.h>
 #include <linux/slab.h>
-#include <linux/rbtree.h>
 #include "ext4.h"
 #include "xattr.h"
 
@@ -42,8 +40,7 @@ static int is_dx_dir(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 
-	if (EXT4_HAS_COMPAT_FEATURE(inode->i_sb,
-		     EXT4_FEATURE_COMPAT_DIR_INDEX) &&
+	if (ext4_has_feature_dir_index(inode->i_sb) &&
 	    ((ext4_test_inode_flag(inode, EXT4_INODE_INDEX)) ||
 	     ((inode->i_size >> sb->s_blocksize_bits) == 1) ||
 	     ext4_has_inline_data(inode)))
@@ -114,11 +111,10 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 	struct inode *inode = file_inode(file);
 	struct super_block *sb = inode->i_sb;
 	struct buffer_head *bh = NULL;
-	int dir_has_error = 0;
-	struct ext4_str fname_crypto_str = {.name = NULL, .len = 0};
+	struct fscrypt_str fstr = FSTR_INIT(NULL, 0);
 
-	if (ext4_encrypted_inode(inode)) {
-		err = ext4_get_encryption_info(inode);
+	if (IS_ENCRYPTED(inode)) {
+		err = fscrypt_get_encryption_info(inode);
 		if (err && err != -ENOKEY)
 			return err;
 	}
@@ -128,12 +124,14 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 		if (err != ERR_BAD_DX_DIR) {
 			return err;
 		}
-		/*
-		 * We don't set the inode dirty flag since it's not
-		 * critical that it get flushed back to the disk.
-		 */
-		ext4_clear_inode_flag(file_inode(file),
-				      EXT4_INODE_INDEX);
+		/* Can we just clear INDEX flag to ignore htree information? */
+		if (!ext4_has_metadata_csum(sb)) {
+			/*
+			 * We don't set the inode dirty flag since it's not
+			 * critical that it gets flushed back to the disk.
+			 */
+			ext4_clear_inode_flag(inode, EXT4_INODE_INDEX);
+		}
 	}
 
 	if (ext4_has_inline_data(inode)) {
@@ -144,43 +142,50 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 			return err;
 	}
 
-	if (ext4_encrypted_inode(inode)) {
-		err = ext4_fname_crypto_alloc_buffer(inode, EXT4_NAME_LEN,
-						     &fname_crypto_str);
+	if (IS_ENCRYPTED(inode)) {
+		err = fscrypt_fname_alloc_buffer(inode, EXT4_NAME_LEN, &fstr);
 		if (err < 0)
 			return err;
 	}
 
-	offset = ctx->pos & (sb->s_blocksize - 1);
-
 	while (ctx->pos < inode->i_size) {
 		struct ext4_map_blocks map;
 
+		if (fatal_signal_pending(current)) {
+			err = -ERESTARTSYS;
+			goto errout;
+		}
+		cond_resched();
+		offset = ctx->pos & (sb->s_blocksize - 1);
 		map.m_lblk = ctx->pos >> EXT4_BLOCK_SIZE_BITS(sb);
 		map.m_len = 1;
 		err = ext4_map_blocks(NULL, inode, &map, 0);
+		if (err == 0) {
+			/* m_len should never be zero but let's avoid
+			 * an infinite loop if it somehow is */
+			if (map.m_len == 0)
+				map.m_len = 1;
+			ctx->pos += map.m_len * sb->s_blocksize;
+			continue;
+		}
 		if (err > 0) {
 			pgoff_t index = map.m_pblk >>
-					(PAGE_CACHE_SHIFT - inode->i_blkbits);
+					(PAGE_SHIFT - inode->i_blkbits);
 			if (!ra_has_index(&file->f_ra, index))
 				page_cache_sync_readahead(
 					sb->s_bdev->bd_inode->i_mapping,
 					&file->f_ra, file,
 					index, 1);
-			file->f_ra.prev_pos = (loff_t)index << PAGE_CACHE_SHIFT;
+			file->f_ra.prev_pos = (loff_t)index << PAGE_SHIFT;
 			bh = ext4_bread(NULL, inode, map.m_lblk, 0);
-			if (IS_ERR(bh))
-				return PTR_ERR(bh);
+			if (IS_ERR(bh)) {
+				err = PTR_ERR(bh);
+				bh = NULL;
+				goto errout;
+			}
 		}
 
 		if (!bh) {
-			if (!dir_has_error) {
-				EXT4_ERROR_FILE(file, 0,
-						"directory contains a "
-						"hole at offset %llu",
-					   (unsigned long long) ctx->pos);
-				dir_has_error = 1;
-			}
 			/* corrupt size?  Maybe no more blocks to read */
 			if (ctx->pos > inode->i_blocks << 9)
 				break;
@@ -244,23 +249,27 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 			offset += ext4_rec_len_from_disk(de->rec_len,
 					sb->s_blocksize);
 			if (le32_to_cpu(de->inode)) {
-				if (!ext4_encrypted_inode(inode)) {
+				if (!IS_ENCRYPTED(inode)) {
 					if (!dir_emit(ctx, de->name,
 					    de->name_len,
 					    le32_to_cpu(de->inode),
 					    get_dtype(sb, de->file_type)))
 						goto done;
 				} else {
-					int save_len = fname_crypto_str.len;
+					int save_len = fstr.len;
+					struct fscrypt_str de_name =
+							FSTR_INIT(de->name,
+								de->name_len);
 
 					/* Directory is encrypted */
-					err = ext4_fname_disk_to_usr(inode,
-						NULL, de, &fname_crypto_str);
-					fname_crypto_str.len = save_len;
-					if (err < 0)
+					err = fscrypt_fname_disk_to_usr(inode,
+						0, 0, &de_name, &fstr);
+					de_name = fstr;
+					fstr.len = save_len;
+					if (err)
 						goto errout;
 					if (!dir_emit(ctx,
-					    fname_crypto_str.name, err,
+					    de_name.name, de_name.len,
 					    le32_to_cpu(de->inode),
 					    get_dtype(sb, de->file_type)))
 						goto done;
@@ -269,7 +278,7 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 			ctx->pos += ext4_rec_len_from_disk(de->rec_len,
 						sb->s_blocksize);
 		}
-		if ((ctx->pos < inode->i_size) && !dir_relax(inode))
+		if ((ctx->pos < inode->i_size) && !dir_relax_shared(inode))
 			goto done;
 		brelse(bh);
 		bh = NULL;
@@ -278,9 +287,7 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 done:
 	err = 0;
 errout:
-#ifdef CONFIG_EXT4_FS_ENCRYPTION
-	ext4_fname_crypto_free_buffer(&fname_crypto_str);
-#endif
+	fscrypt_fname_free_buffer(&fstr);
 	brelse(bh);
 	return err;
 }
@@ -288,7 +295,7 @@ errout:
 static inline int is_32bit_api(void)
 {
 #ifdef CONFIG_COMPAT
-	return is_compat_task();
+	return in_compat_syscall();
 #else
 	return (BITS_PER_LONG == 32);
 #endif
@@ -430,7 +437,7 @@ void ext4_htree_free_dir_info(struct dir_private_info *p)
 int ext4_htree_store_dirent(struct file *dir_file, __u32 hash,
 			     __u32 minor_hash,
 			    struct ext4_dir_entry_2 *dirent,
-			    struct ext4_str *ent_name)
+			    struct fscrypt_str *ent_name)
 {
 	struct rb_node **p, *parent = NULL;
 	struct fname *fname, *new_fn;
@@ -606,8 +613,8 @@ finished:
 
 static int ext4_dir_open(struct inode * inode, struct file * filp)
 {
-	if (ext4_encrypted_inode(inode))
-		return ext4_get_encryption_info(inode) ? -EACCES : 0;
+	if (IS_ENCRYPTED(inode))
+		return fscrypt_get_encryption_info(inode) ? -EACCES : 0;
 	return 0;
 }
 
@@ -623,7 +630,7 @@ int ext4_check_all_de(struct inode *dir, struct buffer_head *bh, void *buf,
 		      int buf_size)
 {
 	struct ext4_dir_entry_2 *de;
-	int nlen, rlen;
+	int rlen;
 	unsigned int offset = 0;
 	char *top;
 
@@ -632,14 +639,13 @@ int ext4_check_all_de(struct inode *dir, struct buffer_head *bh, void *buf,
 	while ((char *) de < top) {
 		if (ext4_check_dir_entry(dir, NULL, de, bh,
 					 buf, buf_size, offset))
-			return -EIO;
-		nlen = EXT4_DIR_REC_LEN(de->name_len);
+			return -EFSCORRUPTED;
 		rlen = ext4_rec_len_from_disk(de->rec_len, buf_size);
 		de = (struct ext4_dir_entry_2 *)((char *)de + rlen);
 		offset += rlen;
 	}
 	if ((char *) de > top)
-		return -EIO;
+		return -EFSCORRUPTED;
 
 	return 0;
 }
@@ -647,7 +653,7 @@ int ext4_check_all_de(struct inode *dir, struct buffer_head *bh, void *buf,
 const struct file_operations ext4_dir_operations = {
 	.llseek		= ext4_dir_llseek,
 	.read		= generic_read_dir,
-	.iterate	= ext4_readdir,
+	.iterate_shared	= ext4_readdir,
 	.unlocked_ioctl = ext4_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= ext4_compat_ioctl,

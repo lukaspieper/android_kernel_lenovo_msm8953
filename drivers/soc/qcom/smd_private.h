@@ -1,7 +1,7 @@
 /* drivers/soc/qcom/smd_private.h
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2014, 2017, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -64,7 +64,7 @@ struct smd_alloc_elm {
 #define SMD_XFER_TYPE(x)    (((x) & 0x00000F00) >> 8)
 
 struct smd_half_channel {
-	unsigned state;
+	unsigned int state;
 	unsigned char fDSR;
 	unsigned char fCTS;
 	unsigned char fCD;
@@ -73,73 +73,76 @@ struct smd_half_channel {
 	unsigned char fTAIL;
 	unsigned char fSTATE;
 	unsigned char fBLOCKREADINTR;
-	unsigned tail;
-	unsigned head;
+	unsigned int tail;
+	unsigned int head;
 };
 
 struct smd_half_channel_word_access {
-	unsigned state;
-	unsigned fDSR;
-	unsigned fCTS;
-	unsigned fCD;
-	unsigned fRI;
-	unsigned fHEAD;
-	unsigned fTAIL;
-	unsigned fSTATE;
-	unsigned fBLOCKREADINTR;
-	unsigned tail;
-	unsigned head;
+	unsigned int state;
+	unsigned int fDSR;
+	unsigned int fCTS;
+	unsigned int fCD;
+	unsigned int fRI;
+	unsigned int fHEAD;
+	unsigned int fTAIL;
+	unsigned int fSTATE;
+	unsigned int fBLOCKREADINTR;
+	unsigned int tail;
+	unsigned int head;
 };
 
 struct smd_half_channel_access {
-	void (*set_state)(volatile void __iomem *half_channel, unsigned data);
-	unsigned (*get_state)(volatile void __iomem *half_channel);
+	void (*set_state)(volatile void __iomem *half_channel,
+					unsigned int data);
+	unsigned int (*get_state)(volatile void __iomem *half_channel);
 	void (*set_fDSR)(volatile void __iomem *half_channel,
 					unsigned char data);
-	unsigned (*get_fDSR)(volatile void __iomem *half_channel);
+	unsigned int (*get_fDSR)(volatile void __iomem *half_channel);
 	void (*set_fCTS)(volatile void __iomem *half_channel,
 					unsigned char data);
-	unsigned (*get_fCTS)(volatile void __iomem *half_channel);
+	unsigned int (*get_fCTS)(volatile void __iomem *half_channel);
 	void (*set_fCD)(volatile void __iomem *half_channel,
 					unsigned char data);
-	unsigned (*get_fCD)(volatile void __iomem *half_channel);
+	unsigned int (*get_fCD)(volatile void __iomem *half_channel);
 	void (*set_fRI)(volatile void __iomem *half_channel,
 					unsigned char data);
-	unsigned (*get_fRI)(volatile void __iomem *half_channel);
+	unsigned int (*get_fRI)(volatile void __iomem *half_channel);
 	void (*set_fHEAD)(volatile void __iomem *half_channel,
 					unsigned char data);
-	unsigned (*get_fHEAD)(volatile void __iomem *half_channel);
+	unsigned int (*get_fHEAD)(volatile void __iomem *half_channel);
 	void (*set_fTAIL)(volatile void __iomem *half_channel,
 					unsigned char data);
-	unsigned (*get_fTAIL)(volatile void __iomem *half_channel);
+	unsigned int (*get_fTAIL)(volatile void __iomem *half_channel);
 	void (*set_fSTATE)(volatile void __iomem *half_channel,
 					unsigned char data);
-	unsigned (*get_fSTATE)(volatile void __iomem *half_channel);
+	unsigned int (*get_fSTATE)(volatile void __iomem *half_channel);
 	void (*set_fBLOCKREADINTR)(volatile void __iomem *half_channel,
 					unsigned char data);
-	unsigned (*get_fBLOCKREADINTR)(volatile void __iomem *half_channel);
-	void (*set_tail)(volatile void __iomem *half_channel, unsigned data);
-	unsigned (*get_tail)(volatile void __iomem *half_channel);
-	void (*set_head)(volatile void __iomem *half_channel, unsigned data);
-	unsigned (*get_head)(volatile void __iomem *half_channel);
+	unsigned int (*get_fBLOCKREADINTR)(volatile void __iomem *half_channel);
+	void (*set_tail)(volatile void __iomem *half_channel,
+					unsigned int data);
+	unsigned int (*get_tail)(volatile void __iomem *half_channel);
+	void (*set_head)(volatile void __iomem *half_channel,
+					unsigned int data);
+	unsigned int (*get_head)(volatile void __iomem *half_channel);
 };
 
-int is_word_access_ch(unsigned ch_type);
+int is_word_access_ch(unsigned int ch_type);
 
-struct smd_half_channel_access *get_half_ch_funcs(unsigned ch_type);
+struct smd_half_channel_access *get_half_ch_funcs(unsigned int ch_type);
 
 struct smd_channel {
 	volatile void __iomem *send; /* some variant of smd_half_channel */
 	volatile void __iomem *recv; /* some variant of smd_half_channel */
 	unsigned char *send_data;
 	unsigned char *recv_data;
-	unsigned fifo_size;
+	unsigned int fifo_size;
 	struct list_head ch_list;
 
-	unsigned current_packet;
-	unsigned n;
+	unsigned int current_packet;
+	unsigned int n;
 	void *priv;
-	void (*notify)(void *priv, unsigned flags);
+	void (*notify)(void *priv, unsigned int flags);
 
 	int (*read)(smd_channel_t *ch, void *data, int len);
 	int (*write)(smd_channel_t *ch, const void *data, int len,
@@ -149,14 +152,14 @@ struct smd_channel {
 	int (*read_from_cb)(smd_channel_t *ch, void *data, int len);
 
 	void (*update_state)(smd_channel_t *ch);
-	unsigned last_state;
+	unsigned int last_state;
 	void (*notify_other_cpu)(smd_channel_t *ch);
 	void * (*read_from_fifo)(void *dest, const void *src, size_t num_bytes);
 	void * (*write_to_fifo)(void *dest, const void *src, size_t num_bytes);
 
 	char name[20];
 	struct platform_device pdev;
-	unsigned type;
+	unsigned int type;
 
 	int pending_pkt_sz;
 
@@ -228,7 +231,7 @@ extern irqreturn_t smd_rpm_irq_handler(int irq, void *data);
 extern irqreturn_t smd_modemfw_irq_handler(int irq, void *data);
 
 extern int msm_smd_driver_register(void);
-extern void smd_post_init(unsigned remote_pid);
+extern void smd_post_init(unsigned int remote_pid);
 extern int smsm_post_init(void);
 
 extern struct interrupt_config *smd_get_intr_config(uint32_t edge);
@@ -236,7 +239,7 @@ extern int smd_edge_to_remote_pid(uint32_t edge);
 extern int smd_edge_to_local_pid(uint32_t edge);
 extern void smd_set_edge_subsys_name(uint32_t edge, const char *subsys_name);
 extern void smd_reset_all_edge_subsys_name(void);
-extern void smd_proc_set_skip_pil(unsigned pid, bool skip_pil);
+extern void smd_proc_set_skip_pil(unsigned int pid, bool skip_pil);
 extern void smd_set_edge_initialized(uint32_t edge);
 extern void smd_cfg_smd_intr(uint32_t proc, uint32_t mask, void *ptr);
 extern void smd_cfg_smsm_intr(uint32_t proc, uint32_t mask, void *ptr);

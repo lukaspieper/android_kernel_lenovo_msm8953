@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -169,7 +169,7 @@ struct tx_pkt_info {
 	uint32_t len;
 	struct work_struct work;
 	struct list_head list_node;
-	unsigned ts_sec;
+	unsigned int ts_sec;
 	unsigned long ts_nsec;
 };
 

@@ -1,6 +1,6 @@
 /* include/linux/msm_hdmi.h
  *
- * Copyright (c) 2014-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2018, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -18,7 +18,7 @@
 #include <linux/platform_device.h>
 
 /*
- * HDMI cable notify handler sturcture.
+ * HDMI cable notify handler structure.
  * link A link for the linked list
  * status Current status of HDMI cable connection
  * hpd_notify Callback function to provide cable status
@@ -26,7 +26,7 @@
 struct hdmi_cable_notify {
 	struct list_head link;
 	int status;
-	void (*hpd_notify) (struct hdmi_cable_notify *h);
+	void (*hpd_notify)(struct hdmi_cable_notify *h);
 };
 
 struct msm_hdmi_audio_edid_blk {
@@ -48,9 +48,9 @@ struct msm_hdmi_audio_setup_params {
 struct msm_hdmi_audio_codec_ops {
 	int (*audio_info_setup)(struct platform_device *pdev,
 		struct msm_hdmi_audio_setup_params *params);
-	int (*get_audio_edid_blk) (struct platform_device *pdev,
+	int (*get_audio_edid_blk)(struct platform_device *pdev,
 		struct msm_hdmi_audio_edid_blk *blk);
-	int (*hdmi_cable_status) (struct platform_device *pdev, u32 vote);
+	int (*hdmi_cable_status)(struct platform_device *pdev, u32 vote);
 };
 
 #ifdef CONFIG_FB_MSM_MDSS_HDMI_PANEL

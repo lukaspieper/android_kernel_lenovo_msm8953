@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,8 +11,8 @@
  * GNU General Public License for more details.
  */
 
-#ifndef _GOVERNOR_BW_HWMON_H
-#define _GOVERNOR_BW_HWMON_H
+#ifndef _GOVERNOR_MEMLAT_H
+#define _GOVERNOR_MEMLAT_H
 
 #include <linux/kernel.h>
 #include <linux/devfreq.h>
@@ -29,6 +29,12 @@ struct dev_stats {
 	unsigned long inst_count;
 	unsigned long mem_count;
 	unsigned long freq;
+	unsigned long stall_pct;
+};
+
+struct core_dev_map {
+	unsigned int core_mhz;
+	unsigned int target_freq;
 };
 
 /**
@@ -63,14 +69,21 @@ struct memlat_hwmon {
 	struct dev_stats *core_stats;
 
 	struct devfreq *df;
+	struct core_dev_map *freq_map;
 };
 
 #ifdef CONFIG_DEVFREQ_GOV_MEMLAT
 int register_memlat(struct device *dev, struct memlat_hwmon *hw);
+int register_compute(struct device *dev, struct memlat_hwmon *hw);
 int update_memlat(struct memlat_hwmon *hw);
 #else
 static inline int register_memlat(struct device *dev,
-					struct memlat_hwmon *hw)
+				  struct memlat_hwmon *hw)
+{
+	return 0;
+}
+static inline int register_compute(struct device *dev,
+				   struct memlat_hwmon *hw)
 {
 	return 0;
 }

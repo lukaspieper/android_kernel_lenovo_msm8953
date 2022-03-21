@@ -809,8 +809,8 @@ static int inv_gyro_read_bootsampl(struct inv_mpu_state *st,
 {
 	int i = 0;
 
+	st->gyro_buffer_inv_samples = false;
 	if (enable_read) {
-		st->gyro_buffer_inv_samples = false;
 		for (i = 0; i < st->gyro_bufsample_cnt; i++) {
 			dev_dbg(st->dev, "gyro_cnt=%d,x=%d,y=%d,z=%d,tsec=%d,nsec=%lld\n",
 					i, st->inv_gyro_samplist[i]->xyz[0],
@@ -853,8 +853,8 @@ static int inv_acc_read_bootsampl(struct inv_mpu_state *st,
 {
 	int i = 0;
 
+	st->acc_buffer_inv_samples = false;
 	if (enable_read) {
-		st->acc_buffer_inv_samples = false;
 		for (i = 0; i < st->acc_bufsample_cnt; i++) {
 			dev_dbg(st->dev, "acc_cnt=%d,x=%d,y=%d,z=%d,tsec=%d,nsec=%lld\n",
 					i, st->inv_acc_samplist[i]->xyz[0],
@@ -918,11 +918,13 @@ static ssize_t read_gyro_boot_sample_store(struct device *dev,
 	if (err)
 		return err;
 	if (enable > 1) {
-		err = dev_err(st->dev,
+		dev_err(st->dev,
 				"Invalid value of input, input=%ld\n", enable);
 		return -EINVAL;
 	}
+	mutex_lock(&st->gyro_sensor_buff);
 	err = inv_gyro_read_bootsampl(st, enable);
+	mutex_unlock(&st->gyro_sensor_buff);
 	if (err)
 		return err;
 	st->read_gyro_boot_sample = enable;
@@ -954,11 +956,13 @@ static ssize_t read_acc_boot_sample_store(struct device *dev,
 	if (err)
 		return err;
 	if (enable > 1) {
-		err = dev_err(st->dev,
+		dev_err(st->dev,
 				"Invalid value of input, input=%ld\n", enable);
 		return -EINVAL;
 	}
+	mutex_lock(&st->acc_sensor_buff);
 	err = inv_acc_read_bootsampl(st, enable);
+	mutex_unlock(&st->acc_sensor_buff);
 	if (err)
 		return err;
 	st->read_acc_boot_sample = enable;
@@ -976,9 +980,9 @@ static DEVICE_ATTR(out_temperature, S_IRUGO | S_IWUSR,
 			inv_temperature_show, NULL);
 static DEVICE_ATTR(misc_self_test, S_IRUGO | S_IWUSR, inv_self_test, NULL);
 #ifdef CONFIG_ENABLE_IAM_ACC_GYRO_BUFFERING
-static IIO_DEVICE_ATTR(read_acc_boot_sample, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(read_acc_boot_sample, 0644,
 	read_acc_boot_sample_show, read_acc_boot_sample_store, SENSOR_L_ACCEL);
-static IIO_DEVICE_ATTR(read_gyro_boot_sample, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(read_gyro_boot_sample, 0644,
 	read_gyro_boot_sample_show, read_gyro_boot_sample_store, SENSOR_L_GYRO);
 #endif
 

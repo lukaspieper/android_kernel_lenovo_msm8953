@@ -5,6 +5,7 @@
  *
  * Copyright (C) 2012 Alexandra Chin <alexandra.chin@tw.synaptics.com>
  * Copyright (C) 2012 Scott Lin <scott.lin@tw.synaptics.com>
+ * Copyright (C) 2018 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -218,7 +219,7 @@ static ssize_t concat(test_sysfs, _##propname##_store)(\
 		const char *buf, size_t count);\
 \
 static struct device_attribute dev_attr_##propname =\
-		__ATTR(propname, (S_IRUGO | S_IWUGO),\
+		__ATTR(propname, 0664,\
 		concat(test_sysfs, _##propname##_show),\
 		concat(test_sysfs, _##propname##_store));
 

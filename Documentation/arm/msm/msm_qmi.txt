@@ -1,12 +1,13 @@
 Introduction
 ============
 
-Qualcomm MSM Interface(QMI) is a messaging format used to communicate
-between software components in the modem and other peripheral subsystems.
-This document proposes an architecture to introduce the QMI messaging
-into the kernel. This document proposes introducing a QMI encode/decode
-library to enable QMI message marshaling and an interface library to enable
-sending and receiving QMI messages through MSM IPC Router.
+Qualcomm Technologies, Inc. MSM Interface(QMI) is a messaging format used
+to communicate between software components in the modem and other
+peripheral subsystems. This document proposes an architecture to introduce
+the QMI messaging into the kernel. This document proposes introducing a
+QMI encode/decode library to enable QMI message marshaling and an
+interface library to enable sending and receiving QMI messages through
+MSM IPC Router.
 
 Hardware description
 ====================
@@ -484,7 +485,7 @@ The QMI encode/decode library will be enabled by default in the kernel.
 It can be disabled using CONFIG_QMI_ENCDEC kernel config option.
 
 The QMI Interface library will be disabled by default in the kernel,
-since it depends on other components which are disabled by dafault.
+since it depends on other components which are disabled by default.
 It can be enabled using CONFIG_MSM_QMI_INTERFACE kernel config option.
 
 Dependencies

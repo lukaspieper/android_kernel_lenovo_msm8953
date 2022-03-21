@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,10 +30,9 @@
 #include <linux/msm-bus-board.h>
 #include <linux/netdevice.h>
 #include <linux/delay.h>
-#include <linux/qcom_iommu.h>
 #include <linux/time.h>
 #include <linux/hashtable.h>
-#include <linux/hash.h>
+#include <linux/jhash.h>
 #include "ipa_i.h"
 #include "../ipa_rm_i.h"
 
@@ -168,6 +167,9 @@
 #define IPA_IOC_MDFY_RT_RULE32 _IOWR(IPA_IOC_MAGIC, \
 				IPA_IOCTL_MDFY_RT_RULE, \
 				compat_uptr_t)
+#define IPA_IOC_GET_HW_VERSION32 _IOWR(IPA_IOC_MAGIC, \
+				IPA_IOCTL_GET_HW_VERSION, \
+				compat_uptr_t)
 
 /**
  * struct ipa_ioc_nat_alloc_mem32 - nat table memory allocation
@@ -207,7 +209,6 @@ struct platform_device *ipa_pdev;
 static struct {
 	bool present;
 	bool arm_smmu;
-	bool disable_htw;
 	bool fast_map;
 	bool s1_bypass;
 	u32 ipa_base;
@@ -387,6 +388,8 @@ void ipa2_active_clients_log_clear(void)
 static void ipa2_active_clients_log_destroy(void)
 {
 	ipa_ctx->ipa2_active_clients_logging.log_rdy = 0;
+	kfree(active_clients_table_buf);
+	active_clients_table_buf = NULL;
 	kfree(ipa_ctx->ipa2_active_clients_logging.log_buffer[0]);
 	ipa_ctx->ipa2_active_clients_logging.log_head = 0;
 	ipa_ctx->ipa2_active_clients_logging.log_tail =
@@ -554,8 +557,8 @@ static void ipa_wan_msg_free_cb(void *buff, u32 len, u32 type)
 	kfree(buff);
 }
 
-static int ipa_send_wan_msg(unsigned long usr_param,
-			uint8_t msg_type, bool is_cache)
+static int ipa_send_wan_msg(unsigned long usr_param, uint8_t msg_type,
+	bool is_cache)
 {
 	int retval;
 	struct ipa_wan_msg *wan_msg;
@@ -626,8 +629,6 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	if (_IOC_TYPE(cmd) != IPA_IOC_MAGIC)
 		return -ENOTTY;
-	if (_IOC_NR(cmd) >= IPA_IOCTL_MAX)
-		return -ENOTTY;
 
 	IPA_ACTIVE_CLIENTS_INC_SIMPLE();
 
@@ -690,7 +691,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			IPAERR_RL("current %d pre %d\n",
 				((struct ipa_ioc_nat_dma_cmd *)param)->entries,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_nat_dma_cmd((struct ipa_ioc_nat_dma_cmd *)param)) {
@@ -737,7 +738,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			IPAERR_RL("current %d pre %d\n",
 				((struct ipa_ioc_add_hdr *)param)->num_hdrs,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_add_hdr_usr((struct ipa_ioc_add_hdr *)param,
@@ -777,7 +778,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			IPAERR_RL("current %d pre %d\n",
 				((struct ipa_ioc_del_hdr *)param)->num_hdls,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_del_hdr_by_user((struct ipa_ioc_del_hdr *)param,
@@ -818,7 +819,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				((struct ipa_ioc_add_rt_rule *)param)->
 				num_rules,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_add_rt_rule_usr((struct ipa_ioc_add_rt_rule *)param,
@@ -859,7 +860,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				((struct ipa_ioc_mdfy_rt_rule *)param)->
 				num_rules,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_mdfy_rt_rule((struct ipa_ioc_mdfy_rt_rule *)param)) {
@@ -898,7 +899,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			IPAERR_RL("current %d pre %d\n",
 				((struct ipa_ioc_del_rt_rule *)param)->num_hdls,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_del_rt_rule((struct ipa_ioc_del_rt_rule *)param)) {
@@ -938,7 +939,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				((struct ipa_ioc_add_flt_rule *)param)->
 				num_rules,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_add_flt_rule_usr((struct ipa_ioc_add_flt_rule *)param,
@@ -979,7 +980,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				((struct ipa_ioc_del_flt_rule *)param)->
 				num_hdls,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_del_flt_rule((struct ipa_ioc_del_flt_rule *)param)) {
@@ -1019,7 +1020,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				((struct ipa_ioc_mdfy_flt_rule *)param)->
 				num_rules,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_mdfy_flt_rule((struct ipa_ioc_mdfy_flt_rule *)param)) {
@@ -1156,7 +1157,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			IPAERR_RL("current %d pre %d\n",
 				((struct ipa_ioc_query_intf_tx_props *)
 				param)->num_tx_props, pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa_query_intf_tx_props(
@@ -1201,7 +1202,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			IPAERR_RL("current %d pre %d\n",
 				((struct ipa_ioc_query_intf_rx_props *)
 				param)->num_rx_props, pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa_query_intf_rx_props(
@@ -1246,7 +1247,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			IPAERR_RL("current %d pre %d\n",
 				((struct ipa_ioc_query_intf_ext_props *)
 				param)->num_ext_props, pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa_query_intf_ext_props(
@@ -1284,7 +1285,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			IPAERR_RL("current %d pre %d\n",
 				((struct ipa_msg_meta *)param)->msg_len,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa_pull_msg((struct ipa_msg_meta *)param,
@@ -1424,7 +1425,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			IPAERR_RL("current %d pre %d\n",
 				((struct ipa_ioc_add_hdr_proc_ctx *)
 				param)->num_proc_ctxs, pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_add_hdr_proc_ctx(
@@ -1464,7 +1465,7 @@ static long ipa_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				((struct ipa_ioc_del_hdr_proc_ctx *)param)->
 				num_hdls,
 				pre_entry);
-			retval = -EINVAL;
+			retval = -EFAULT;
 			break;
 		}
 		if (ipa2_del_hdr_proc_ctx_by_user(
@@ -3008,6 +3009,9 @@ ret:
 	case IPA_IOC_MDFY_RT_RULE32:
 		cmd = IPA_IOC_MDFY_RT_RULE;
 		break;
+	case IPA_IOC_GET_HW_VERSION32:
+		cmd = IPA_IOC_GET_HW_VERSION;
+		break;
 	case IPA_IOC_COMMIT_HDR:
 	case IPA_IOC_RESET_HDR:
 	case IPA_IOC_COMMIT_RT:
@@ -3326,7 +3330,7 @@ void ipa2_active_clients_log_mod(struct ipa_active_client_logging_info *id,
 	hfound = NULL;
 	memset(str_to_hash, 0, IPA2_ACTIVE_CLIENTS_LOG_NAME_LEN);
 	strlcpy(str_to_hash, id->id_string, IPA2_ACTIVE_CLIENTS_LOG_NAME_LEN);
-	hkey = arch_fast_hash(str_to_hash, IPA2_ACTIVE_CLIENTS_LOG_NAME_LEN,
+	hkey = jhash(str_to_hash, IPA2_ACTIVE_CLIENTS_LOG_NAME_LEN,
 			0);
 	hash_for_each_possible(ipa_ctx->ipa2_active_clients_logging.htable,
 			hentry, list, hkey) {
@@ -3492,14 +3496,11 @@ void ipa_inc_acquire_wakelock(enum ipa_wakelock_ref_client ref_client)
 		return;
 	spin_lock_irqsave(&ipa_ctx->wakelock_ref_cnt.spinlock, flags);
 	if (ipa_ctx->wakelock_ref_cnt.cnt & (1 << ref_client))
-		IPADBG("client enum %d mask already set. ref cnt = %d\n",
+		IPAERR("client enum %d mask already set. ref cnt = %d\n",
 		ref_client, ipa_ctx->wakelock_ref_cnt.cnt);
 	ipa_ctx->wakelock_ref_cnt.cnt |= (1 << ref_client);
-	if (ipa_ctx->wakelock_ref_cnt.cnt &&
-		!ipa_ctx->wakelock_ref_cnt.wakelock_acquired) {
+	if (ipa_ctx->wakelock_ref_cnt.cnt)
 		__pm_stay_awake(&ipa_ctx->w_lock);
-		ipa_ctx->wakelock_ref_cnt.wakelock_acquired = true;
-	}
 	IPADBG_LOW("active wakelock ref cnt = %d client enum %d\n",
 		ipa_ctx->wakelock_ref_cnt.cnt, ref_client);
 	spin_unlock_irqrestore(&ipa_ctx->wakelock_ref_cnt.spinlock, flags);
@@ -3523,11 +3524,8 @@ void ipa_dec_release_wakelock(enum ipa_wakelock_ref_client ref_client)
 	ipa_ctx->wakelock_ref_cnt.cnt &= ~(1 << ref_client);
 	IPADBG_LOW("active wakelock ref cnt = %d client enum %d\n",
 		ipa_ctx->wakelock_ref_cnt.cnt, ref_client);
-	if (ipa_ctx->wakelock_ref_cnt.cnt == 0 &&
-		ipa_ctx->wakelock_ref_cnt.wakelock_acquired) {
+	if (ipa_ctx->wakelock_ref_cnt.cnt == 0)
 		__pm_relax(&ipa_ctx->w_lock);
-		ipa_ctx->wakelock_ref_cnt.wakelock_acquired = false;
-	}
 	spin_unlock_irqrestore(&ipa_ctx->wakelock_ref_cnt.spinlock, flags);
 }
 
@@ -3640,10 +3638,9 @@ int ipa2_set_required_perf_profile(enum ipa_voltage_level floor_voltage,
 		IPA_ACTIVE_CLIENTS_DEC_SIMPLE();
 	} else {
 		IPADBG_LOW("clocks are gated, not setting rate\n");
-		 ipa_active_clients_unlock();
+		ipa_active_clients_unlock();
 	}
 	IPADBG_LOW("Done\n");
-
 	return 0;
 }
 
@@ -3778,6 +3775,12 @@ void ipa_suspend_handler(enum ipa_irq_type interrupt,
 					atomic_set(
 						&ipa_ctx->sps_pm.dec_clients,
 						1);
+					/*
+					 * acquire wake lock as long as suspend
+					 * vote is held
+					 */
+					ipa_inc_acquire_wakelock(
+						IPA_WAKELOCK_REF_CLIENT_SPS);
 					ipa_sps_process_irq_schedule_rel();
 				}
 				mutex_unlock(&ipa_ctx->sps_pm.sps_pm_lock);
@@ -3785,7 +3788,7 @@ void ipa_suspend_handler(enum ipa_irq_type interrupt,
 				resource = ipa2_get_rm_resource_from_ep(i);
 				res = ipa_rm_request_resource_with_timer(
 					resource);
-				if (res == -EPERM &&
+				if ((res == -EPERM) &&
 				    IPA_CLIENT_IS_CONS(
 					ipa_ctx->ep[i].client)) {
 					holb_cfg.en = 1;
@@ -3809,7 +3812,7 @@ void ipa_suspend_handler(enum ipa_irq_type interrupt,
 * Return codes:
 * 0: success
 * -EPERM: failed to remove current handler or failed to add original handler
-* */
+*/
 int ipa2_restore_suspend_handler(void)
 {
 	int result = 0;
@@ -3850,6 +3853,7 @@ static void ipa_sps_release_resource(struct work_struct *work)
 			ipa_sps_process_irq_schedule_rel();
 		} else {
 			atomic_set(&ipa_ctx->sps_pm.dec_clients, 0);
+			ipa_dec_release_wakelock(IPA_WAKELOCK_REF_CLIENT_SPS);
 			IPA_ACTIVE_CLIENTS_DEC_SPECIAL("SPS_RESOURCE");
 		}
 	}
@@ -3954,6 +3958,8 @@ static int ipa_init(const struct ipa_plat_drv_res *resource_p,
 	ipa_ctx->ipa_wrapper_size = resource_p->ipa_mem_size;
 	ipa_ctx->ipa_hw_type = resource_p->ipa_hw_type;
 	ipa_ctx->ipa_hw_mode = resource_p->ipa_hw_mode;
+	ipa_ctx->ipa_uc_monitor_holb =
+		resource_p->ipa_uc_monitor_holb;
 	ipa_ctx->use_ipa_teth_bridge = resource_p->use_ipa_teth_bridge;
 	ipa_ctx->ipa_bam_remote_mode = resource_p->ipa_bam_remote_mode;
 	ipa_ctx->modem_cfg_emb_pipe_flt = resource_p->modem_cfg_emb_pipe_flt;
@@ -4014,14 +4020,16 @@ static int ipa_init(const struct ipa_plat_drv_res *resource_p,
 				ipa_ctx->ctrl->msm_bus_data_ptr);
 		if (!ipa_ctx->ipa_bus_hdl) {
 			IPAERR("fail to register with bus mgr!\n");
-			result = -ENODEV;
+			result = -EPROBE_DEFER;
+			bus_scale_table = NULL;
 			goto fail_bus_reg;
 		}
 	} else {
 		IPADBG("Skipping bus scaling registration on Virtual plat\n");
 	}
 
-	if (ipa2_active_clients_log_init())
+	result = ipa2_active_clients_log_init();
+	if (result)
 		goto fail_init_active_client;
 
 	/* get IPA clocks */
@@ -4398,7 +4406,7 @@ static int ipa_init(const struct ipa_plat_drv_res *resource_p,
 	else
 		IPADBG(":ipa Uc interface init ok\n");
 
-	result = ipa_wdi_init();
+	result = ipa2_wdi_init();
 	if (result)
 		IPAERR(":wdi init failed (%d)\n", -result);
 	else
@@ -4474,16 +4482,15 @@ fail_clk:
 	ipa2_active_clients_log_destroy();
 fail_init_active_client:
 	msm_bus_scale_unregister_client(ipa_ctx->ipa_bus_hdl);
-fail_bus_reg:
 	if (bus_scale_table) {
 		msm_bus_cl_clear_pdata(bus_scale_table);
 		bus_scale_table = NULL;
 	}
+fail_bus_reg:
 fail_bind:
 	kfree(ipa_ctx->ctrl);
 fail_mem_ctrl:
-	if (ipa_ctx->logbuf)
-		ipc_log_context_destroy(ipa_ctx->logbuf);
+	ipc_log_context_destroy(ipa_ctx->logbuf);
 	kfree(ipa_ctx);
 	ipa_ctx = NULL;
 fail_mem_ctx:
@@ -4501,14 +4508,12 @@ static int get_ipa_dts_configuration(struct platform_device *pdev,
 	ipa_drv_res->ipa_pipe_mem_size = IPA_PIPE_MEM_SIZE;
 	ipa_drv_res->ipa_hw_type = 0;
 	ipa_drv_res->ipa_hw_mode = 0;
+	ipa_drv_res->ipa_uc_monitor_holb = false;
 	ipa_drv_res->ipa_bam_remote_mode = false;
 	ipa_drv_res->modem_cfg_emb_pipe_flt = false;
 	ipa_drv_res->ipa_wdi2 = false;
 	ipa_drv_res->wan_rx_ring_size = IPA_GENERIC_RX_POOL_SZ;
 	ipa_drv_res->lan_rx_ring_size = IPA_GENERIC_RX_POOL_SZ;
-
-	smmu_info.disable_htw = of_property_read_bool(pdev->dev.of_node,
-			"qcom,smmu-disable-htw");
 
 	/* Get IPA HW Version */
 	result = of_property_read_u32(pdev->dev.of_node, "qcom,ipa-hw-ver",
@@ -4527,6 +4532,14 @@ static int get_ipa_dts_configuration(struct platform_device *pdev,
 	else
 		IPADBG(": found ipa_drv_res->ipa_hw_mode = %d",
 				ipa_drv_res->ipa_hw_mode);
+
+	/* Check ipa_uc_monitor_holb enabled or disabled */
+	ipa_drv_res->ipa_uc_monitor_holb =
+		of_property_read_bool(pdev->dev.of_node,
+		"qcom,ipa-uc-monitor-holb");
+	IPADBG(": ipa uc monitor holb = %s\n",
+		ipa_drv_res->ipa_uc_monitor_holb
+		? "Enabled" : "Disabled");
 
 	/* Get IPA WAN / LAN RX  pool sizes */
 	result = of_property_read_u32(pdev->dev.of_node,
@@ -4696,7 +4709,6 @@ static int get_ipa_dts_configuration(struct platform_device *pdev,
 static int ipa_smmu_wlan_cb_probe(struct device *dev)
 {
 	struct ipa_smmu_cb_ctx *cb = ipa2_get_wlan_smmu_ctx();
-	int disable_htw = 1;
 	int atomic_ctx = 1;
 	int fast = 1;
 	int bypass = 1;
@@ -4705,24 +4717,13 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 	IPADBG("sub pdev=%p\n", dev);
 
 	cb->dev = dev;
-	cb->iommu = iommu_domain_alloc(msm_iommu_get_bus(dev));
+	cb->iommu = iommu_domain_alloc(&platform_bus_type);
 	if (!cb->iommu) {
 		IPAERR("could not alloc iommu domain\n");
 		/* assume this failure is because iommu driver is not ready */
 		return -EPROBE_DEFER;
 	}
 	cb->valid = true;
-
-	if (smmu_info.disable_htw) {
-		ret = iommu_domain_set_attr(cb->iommu,
-			DOMAIN_ATTR_COHERENT_HTW_DISABLE,
-			&disable_htw);
-		if (ret) {
-			IPAERR("couldn't disable coherent HTW\n");
-			cb->valid = false;
-			return -EIO;
-		}
-	}
 
 	if (smmu_info.s1_bypass) {
 		if (iommu_domain_set_attr(cb->iommu,
@@ -4767,7 +4768,7 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 			rounddown(smmu_info.ipa_base, PAGE_SIZE),
 			rounddown(smmu_info.ipa_base, PAGE_SIZE),
 			roundup(smmu_info.ipa_size, PAGE_SIZE),
-			IOMMU_READ | IOMMU_WRITE | IOMMU_DEVICE);
+			IOMMU_READ | IOMMU_WRITE | IOMMU_MMIO);
 		if (ret) {
 			IPAERR("map IPA to WLAN_CB IOMMU failed ret=%d\n",
 				ret);
@@ -4783,7 +4784,6 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 static int ipa_smmu_uc_cb_probe(struct device *dev)
 {
 	struct ipa_smmu_cb_ctx *cb = ipa2_get_uc_smmu_ctx();
-	int disable_htw = 1;
 	int atomic_ctx = 1;
 	int ret;
 	int fast = 1;
@@ -4812,7 +4812,7 @@ static int ipa_smmu_uc_cb_probe(struct device *dev)
 	IPADBG("UC CB PROBE=%p create IOMMU mapping\n", dev);
 
 	cb->dev = dev;
-	cb->mapping = arm_iommu_create_mapping(msm_iommu_get_bus(dev),
+	cb->mapping = arm_iommu_create_mapping(&platform_bus_type,
 				cb->va_start, cb->va_size);
 	if (IS_ERR_OR_NULL(cb->mapping)) {
 		IPADBG("Fail to create mapping\n");
@@ -4821,18 +4821,6 @@ static int ipa_smmu_uc_cb_probe(struct device *dev)
 	}
 	IPADBG("SMMU mapping created\n");
 	cb->valid = true;
-
-	IPADBG("UC CB PROBE sub pdev=%p disable htw\n", dev);
-	if (smmu_info.disable_htw) {
-		if (iommu_domain_set_attr(cb->mapping->domain,
-				DOMAIN_ATTR_COHERENT_HTW_DISABLE,
-				 &disable_htw)) {
-			IPAERR("couldn't disable coherent HTW\n");
-			arm_iommu_release_mapping(cb->mapping);
-			cb->valid = false;
-			return -EIO;
-		}
-	}
 
 	IPADBG("UC CB PROBE sub pdev=%p set attribute\n", dev);
 	if (smmu_info.s1_bypass) {
@@ -4888,7 +4876,6 @@ static int ipa_smmu_ap_cb_probe(struct device *dev)
 {
 	struct ipa_smmu_cb_ctx *cb = ipa2_get_smmu_ctx();
 	int result;
-	int disable_htw = 1;
 	int atomic_ctx = 1;
 	int fast = 1;
 	int bypass = 1;
@@ -4914,7 +4901,7 @@ static int ipa_smmu_ap_cb_probe(struct device *dev)
 	}
 
 	cb->dev = dev;
-	cb->mapping = arm_iommu_create_mapping(msm_iommu_get_bus(dev),
+	cb->mapping = arm_iommu_create_mapping(&platform_bus_type,
 					       cb->va_start,
 					       cb->va_size);
 	if (IS_ERR_OR_NULL(cb->mapping)) {
@@ -4924,18 +4911,6 @@ static int ipa_smmu_ap_cb_probe(struct device *dev)
 	}
 	IPADBG("SMMU mapping created\n");
 	cb->valid = true;
-
-	if (smmu_info.disable_htw) {
-		if (iommu_domain_set_attr(cb->mapping->domain,
-				DOMAIN_ATTR_COHERENT_HTW_DISABLE,
-				 &disable_htw)) {
-			IPAERR("couldn't disable coherent HTW\n");
-			arm_iommu_release_mapping(cb->mapping);
-			cb->valid = false;
-			return -EIO;
-		}
-		IPADBG("SMMU disable HTW\n");
-	}
 
 	if (smmu_info.s1_bypass) {
 		if (iommu_domain_set_attr(cb->mapping->domain,
@@ -4982,7 +4957,7 @@ static int ipa_smmu_ap_cb_probe(struct device *dev)
 				rounddown(smmu_info.ipa_base, PAGE_SIZE),
 				rounddown(smmu_info.ipa_base, PAGE_SIZE),
 				roundup(smmu_info.ipa_size, PAGE_SIZE),
-				IOMMU_READ | IOMMU_WRITE | IOMMU_DEVICE);
+				IOMMU_READ | IOMMU_WRITE | IOMMU_MMIO);
 		if (result) {
 			IPAERR("map IPA region to AP_CB IOMMU failed ret=%d\n",
 				result);
@@ -5011,7 +4986,8 @@ static int ipa_smmu_ap_cb_probe(struct device *dev)
 }
 
 int ipa_plat_drv_probe(struct platform_device *pdev_p,
-	struct ipa_api_controller *api_ctrl, struct of_device_id *pdrv_match)
+	struct ipa_api_controller *api_ctrl,
+	const struct of_device_id *pdrv_match)
 {
 	int result;
 	struct device *dev = &pdev_p->dev;
@@ -5143,24 +5119,20 @@ int ipa_iommu_map(struct iommu_domain *domain,
 	IPADBG("domain =0x%p iova 0x%lx\n", domain, iova);
 	IPADBG("paddr =0x%pa size 0x%x\n", &paddr, (u32)size);
 
-	/* make sure no overlapping */
+	/* Checking the address overlapping */
 	if (domain == ipa2_get_smmu_domain()) {
 		if (iova >= ap_cb->va_start && iova < ap_cb->va_end) {
 			IPAERR("iommu AP overlap addr 0x%lx\n", iova);
-			BUG();
-			return -EFAULT;
 		}
 	} else if (domain == ipa2_get_wlan_smmu_domain()) {
 		/* wlan is one time map */
 	} else if (domain == ipa2_get_uc_smmu_domain()) {
 		if (iova >= uc_cb->va_start && iova < uc_cb->va_end) {
 			IPAERR("iommu uC overlap addr 0x%lx\n", iova);
-			BUG();
-			return -EFAULT;
 		}
 	} else {
 		IPAERR("Unexpected domain 0x%p\n", domain);
-		BUG();
+		ipa_assert();
 		return -EFAULT;
 	}
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -49,6 +49,16 @@ struct diag_smd_info smd_data[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_DATA,
 		.name = "SENSORS_DATA"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_DATA,
+		.name = "DIAG_DATA"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DATA,
+		.name = "CDSP_DATA"
 	}
 };
 
@@ -72,6 +82,16 @@ struct diag_smd_info smd_cntl[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_CNTL,
 		.name = "SENSORS_CNTL"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_CNTL,
+		.name = "DIAG_CTRL"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_CNTL,
+		.name = "CDSP_CNTL"
 	}
 };
 
@@ -95,6 +115,16 @@ struct diag_smd_info smd_dci[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_DCI,
 		.name = "SENSORS_DCI"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_DCI,
+		.name = "DIAG_DCI_DATA"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DCI,
+		.name = "CDSP_DCI"
 	}
 };
 
@@ -118,6 +148,16 @@ struct diag_smd_info smd_cmd[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_CMD,
 		.name = "SENSORS_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_CMD,
+		.name = "DIAG_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_CMD,
+		.name = "CDSP_CMD"
 	}
 };
 
@@ -141,14 +181,25 @@ struct diag_smd_info smd_dci_cmd[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_DCI_CMD,
 		.name = "SENSORS_DCI_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_DCI_CMD,
+		.name = "DIAG_DCI_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DCI_CMD,
+		.name = "CDSP_DCI_CMD"
 	}
 };
 
 static void diag_state_open_smd(void *ctxt);
 static void diag_state_close_smd(void *ctxt);
-static void smd_notify(void *ctxt, unsigned event);
+static void smd_notify(void *ctxt, unsigned int event);
 static int diag_smd_write(void *ctxt, unsigned char *buf, int len);
-static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len);
+static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len,
+			struct diagfwd_buf_t *fwd_buf);
 static void diag_smd_queue_read(void *ctxt);
 
 static struct diag_peripheral_ops smd_ops = {
@@ -403,6 +454,18 @@ static void smd_read_work_fn(struct work_struct *work)
 	diagfwd_channel_read(smd_info->fwd_ctxt);
 }
 
+static void diag_smd_late_init_work_fn(struct work_struct *work)
+{
+	struct diag_smd_info *smd_info = container_of(work,
+							struct diag_smd_info,
+							late_init_work);
+	if (!smd_info || !smd_info->hdl)
+		return;
+	diagfwd_channel_open(smd_info->fwd_ctxt);
+	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "smd late init p: %d t: %d\n",
+			smd_info->peripheral, smd_info->type);
+}
+
 static void diag_smd_queue_read(void *ctxt)
 {
 	struct diag_smd_info *smd_info = NULL;
@@ -445,6 +508,7 @@ void diag_smd_invalidate(void *ctxt, struct diagfwd_info *fwd_ctxt)
 static void __diag_smd_init(struct diag_smd_info *smd_info)
 {
 	char wq_name[DIAG_SMD_NAME_SZ + 10];
+
 	if (!smd_info)
 		return;
 
@@ -461,6 +525,7 @@ static void __diag_smd_init(struct diag_smd_info *smd_info)
 	INIT_WORK(&(smd_info->open_work), smd_open_work_fn);
 	INIT_WORK(&(smd_info->close_work), smd_close_work_fn);
 	INIT_WORK(&(smd_info->read_work), smd_read_work_fn);
+	INIT_WORK(&(smd_info->late_init_work), diag_smd_late_init_work_fn);
 	smd_info->fifo_size = 0;
 	smd_info->hdl = NULL;
 	smd_info->fwd_ctxt = NULL;
@@ -477,6 +542,8 @@ int diag_smd_init(void)
 	struct diag_smd_info *smd_info = NULL;
 
 	for (peripheral = 0; peripheral < NUM_PERIPHERALS; peripheral++) {
+		if (peripheral == PERIPHERAL_WDSP)
+			continue;
 		smd_info = &smd_cntl[peripheral];
 		__diag_smd_init(smd_info);
 		diagfwd_cntl_register(TRANSPORT_SMD, smd_info->peripheral,
@@ -503,6 +570,7 @@ int diag_smd_init(void)
 static void smd_late_init(struct diag_smd_info *smd_info)
 {
 	struct diagfwd_info *fwd_info = NULL;
+
 	if (!smd_info)
 		return;
 
@@ -518,7 +586,7 @@ static void smd_late_init(struct diag_smd_info *smd_info)
 	 * peripheral. Inform the diag fwd layer that the channel is open.
 	 */
 	if (atomic_read(&smd_info->opened))
-		diagfwd_channel_open(smd_info->fwd_ctxt);
+		queue_work(smd_info->wq, &(smd_info->late_init_work));
 
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "%s exiting\n",
 		 smd_info->name);
@@ -563,8 +631,11 @@ void diag_smd_early_exit(void)
 {
 	int i = 0;
 
-	for (i = 0; i < NUM_PERIPHERALS; i++)
+	for (i = 0; i < NUM_PERIPHERALS; i++) {
+		if (i == PERIPHERAL_WDSP)
+			continue;
 		__diag_smd_exit(&smd_cntl[i]);
+	}
 
 	platform_driver_unregister(&diag_smd_cntl_driver);
 	platform_driver_unregister(&diag_smd_lite_cntl_driver);
@@ -575,6 +646,8 @@ void diag_smd_exit(void)
 	int i = 0;
 
 	for (i = 0; i < NUM_PERIPHERALS; i++) {
+		if (i == PERIPHERAL_WDSP)
+			continue;
 		__diag_smd_exit(&smd_data[i]);
 		__diag_smd_exit(&smd_cmd[i]);
 		__diag_smd_exit(&smd_dci[i]);
@@ -708,7 +781,8 @@ static int diag_smd_write(void *ctxt, unsigned char *buf, int len)
 	return 0;
 }
 
-static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len)
+static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len,
+			struct diagfwd_buf_t *fwd_buf)
 {
 	int pkt_len = 0;
 	int err = 0;
@@ -719,7 +793,7 @@ static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len)
 	uint32_t read_len = 0;
 	struct diag_smd_info *smd_info = NULL;
 
-	if (!ctxt || !buf || buf_len <= 0)
+	if (!ctxt || !buf || buf_len <= 0 || !fwd_buf)
 		return -EIO;
 
 	smd_info = (struct diag_smd_info *)ctxt;
@@ -738,7 +812,15 @@ static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len)
 		diagfwd_channel_read_done(smd_info->fwd_ctxt, buf, 0);
 		return -ERESTARTSYS;
 	}
-
+	if (atomic_read(&fwd_buf->in_busy) == 0) {
+		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+			"%s closing read thread. Buffer is already marked freed p: %d t: %d buf_num: %d\n",
+			 smd_info->name, GET_BUF_PERIPHERAL(fwd_buf->ctxt),
+			 GET_BUF_TYPE(fwd_buf->ctxt),
+			 GET_BUF_NUM(fwd_buf->ctxt));
+		diag_ws_release();
+		return 0;
+	}
 	/*
 	 * Reset the buffers. Also release the wake source hold earlier.
 	 */
@@ -773,9 +855,12 @@ static int diag_smd_read(void *ctxt, unsigned char *buf, int buf_len)
 		while (total_recd_partial < pkt_len) {
 			read_len = smd_read_avail(smd_info->hdl);
 			if (!read_len) {
-				wait_event_interruptible(smd_info->read_wait_q,
-					   ((atomic_read(&smd_info->opened)) &&
-					    smd_read_avail(smd_info->hdl)));
+				err = wait_event_interruptible(smd_info->
+					read_wait_q,
+					((atomic_read(&smd_info->opened)) &&
+					smd_read_avail(smd_info->hdl)));
+				if (err)
+					goto fail_return;
 
 				if (!smd_info->hdl ||
 				    !atomic_read(&smd_info->opened)) {
@@ -815,7 +900,7 @@ fail_return:
 	return -EINVAL;
 }
 
-static void smd_notify(void *ctxt, unsigned event)
+static void smd_notify(void *ctxt, unsigned int event)
 {
 	struct diag_smd_info *smd_info = NULL;
 

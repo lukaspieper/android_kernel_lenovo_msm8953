@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, 2017 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014,2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,56 +25,50 @@ DEFINE_PER_CPU(u32[NUM_L1_CTRS], previous_l1_cnts);
 DEFINE_PER_CPU(u32, old_pid);
 DEFINE_PER_CPU(u32, hotplug_flag);
 
-static int tracectr_cpu_hotplug_notifier(struct notifier_block *self,
-					 unsigned long action, void *hcpu)
+#define USE_CPUHP_STATE CPUHP_AP_ONLINE
+
+static int tracectr_cpu_hotplug_coming_up(unsigned int cpu)
 {
-	unsigned long cpu = (unsigned long)hcpu;
+	per_cpu(hotplug_flag, cpu) = 1;
 
-	if ((action & (~CPU_TASKS_FROZEN)) == CPU_STARTING)
-		per_cpu(hotplug_flag, cpu) = 1;
-
-	return NOTIFY_OK;
+	return 0;
 }
-
-static struct notifier_block tracectr_cpu_hotplug_notifier_block = {
-	.notifier_call = tracectr_cpu_hotplug_notifier,
-};
 
 static void setup_prev_cnts(u32 cpu, u32 cnten_val)
 {
 	int i;
 
 	if (cnten_val & CC)
-		asm volatile("mrs %0, pmccntr_el0"
-			: "=r"(per_cpu(previous_ccnt, cpu)));
+		per_cpu(previous_ccnt, cpu) =
+			read_sysreg(pmccntr_el0);
 
 	for (i = 0; i < NUM_L1_CTRS; i++) {
 		if (cnten_val & (1 << i)) {
 			/* Select */
-			asm volatile("msr pmselr_el0, %0" : : "r"(i));
+			write_sysreg(i, pmselr_el0);
 			isb();
 			/* Read value */
-			asm volatile("mrs %0, pmxevcntr_el0"
-				: "=r"(per_cpu(previous_l1_cnts[i], cpu)));
+			per_cpu(previous_l1_cnts[i], cpu) =
+				read_sysreg(pmxevcntr_el0);
 		}
 	}
 }
 
-void tracectr_notifier(void *ignore, struct task_struct *prev,
-					struct task_struct *next)
+void tracectr_notifier(void *ignore, bool preempt,
+			struct task_struct *prev, struct task_struct *next)
 {
 	u32 cnten_val;
 	int current_pid;
-	u32 cpu = task_thread_info(next)->cpu;
+	u32 cpu = task_cpu(next);
 
 	if (tp_pid_state != 1)
 		return;
 	current_pid = next->pid;
 	if (per_cpu(old_pid, cpu) != -1) {
-		asm volatile("mrs %0, pmcntenset_el0" : "=r" (cnten_val));
+		cnten_val = read_sysreg(pmcntenset_el0);
 		per_cpu(cntenset_val, cpu) = cnten_val;
 		/* Disable all the counters that were enabled */
-		asm volatile("msr pmcntenclr_el0, %0" : : "r" (cnten_val));
+		write_sysreg(cnten_val, pmcntenclr_el0);
 
 		if (per_cpu(hotplug_flag, cpu) == 1) {
 			per_cpu(hotplug_flag, cpu) = 0;
@@ -85,7 +79,7 @@ void tracectr_notifier(void *ignore, struct task_struct *prev,
 		}
 
 		/* Enable all the counters that were disabled */
-		asm volatile("msr pmcntenset_el0, %0" : : "r" (cnten_val));
+		write_sysreg(cnten_val, pmcntenset_el0);
 	}
 	per_cpu(old_pid, cpu) = current_pid;
 }
@@ -110,6 +104,7 @@ static ssize_t read_enabled_perftp_file_bool(struct file *file,
 		char __user *user_buf, size_t count, loff_t *ppos)
 {
 	char buf[2];
+
 	buf[1] = '\n';
 	if (tp_pid_state == 0)
 		buf[0] = '0';
@@ -124,7 +119,6 @@ static ssize_t write_enabled_perftp_file_bool(struct file *file,
 	char buf[32];
 	size_t buf_size;
 
-	buf[0] = 0;
 	buf_size = min(count, (sizeof(buf)-1));
 	if (copy_from_user(buf, user_buf, buf_size))
 		return -EFAULT;
@@ -155,7 +149,7 @@ int __init init_tracecounters(void)
 	struct dentry *dir;
 	struct dentry *file;
 	unsigned int value = 1;
-	int cpu;
+	int cpu, rc;
 
 	dir = debugfs_create_dir("perf_debug_tp", NULL);
 	if (!dir)
@@ -168,13 +162,16 @@ int __init init_tracecounters(void)
 	}
 	for_each_possible_cpu(cpu)
 		per_cpu(old_pid, cpu) = -1;
-	register_cpu_notifier(&tracectr_cpu_hotplug_notifier_block);
+	rc = cpuhp_setup_state_nocalls(USE_CPUHP_STATE,
+		"tracectr_cpu_hotplug",
+		tracectr_cpu_hotplug_coming_up,
+		NULL);
 	return 0;
 }
 
 int __exit exit_tracecounters(void)
 {
-	unregister_cpu_notifier(&tracectr_cpu_hotplug_notifier_block);
+	cpuhp_remove_state_nocalls(USE_CPUHP_STATE);
 	return 0;
 }
 late_initcall(init_tracecounters);

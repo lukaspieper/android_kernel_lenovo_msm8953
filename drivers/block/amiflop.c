@@ -1860,7 +1860,6 @@ out_blkdev:
 static struct platform_driver amiga_floppy_driver = {
 	.driver   = {
 		.name	= "amiga-floppy",
-		.owner	= THIS_MODULE,
 	},
 };
 

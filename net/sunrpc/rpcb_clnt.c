@@ -32,7 +32,7 @@
 
 #include "netns.h"
 
-#ifdef RPC_DEBUG
+#if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
 # define RPCDBG_FACILITY	RPCDBG_BIND
 #endif
 
@@ -648,10 +648,10 @@ static struct rpc_task *rpcb_call_async(struct rpc_clnt *rpcb_clnt, struct rpcbi
 static struct rpc_clnt *rpcb_find_transport_owner(struct rpc_clnt *clnt)
 {
 	struct rpc_clnt *parent = clnt->cl_parent;
-	struct rpc_xprt *xprt = rcu_dereference(clnt->cl_xprt);
+	struct rpc_xprt_switch *xps = rcu_access_pointer(clnt->cl_xpi.xpi_xpswitch);
 
 	while (parent != clnt) {
-		if (rcu_dereference(parent->cl_xprt) != xprt)
+		if (rcu_access_pointer(parent->cl_xpi.xpi_xpswitch) != xps)
 			break;
 		if (clnt->cl_autobind)
 			break;
@@ -683,11 +683,9 @@ void rpcb_getport_async(struct rpc_task *task)
 	int status;
 
 	rcu_read_lock();
-	do {
-		clnt = rpcb_find_transport_owner(task->tk_client);
-		xprt = xprt_get(rcu_dereference(clnt->cl_xprt));
-	} while (xprt == NULL);
+	clnt = rpcb_find_transport_owner(task->tk_client);
 	rcu_read_unlock();
+	xprt = xprt_get(task->tk_xprt);
 
 	dprintk("RPC: %5u %s(%s, %u, %u, %d)\n",
 		task->tk_pid, __func__,
@@ -977,8 +975,8 @@ static int rpcb_dec_getaddr(struct rpc_rqst *req, struct xdr_stream *xdr,
 	p = xdr_inline_decode(xdr, len);
 	if (unlikely(p == NULL))
 		goto out_fail;
-	dprintk("RPC: %5u RPCB_%s reply: %*pE\n", req->rq_task->tk_pid,
-			req->rq_task->tk_msg.rpc_proc->p_name, len, (char *)p);
+	dprintk("RPC: %5u RPCB_%s reply: %s\n", req->rq_task->tk_pid,
+			req->rq_task->tk_msg.rpc_proc->p_name, (char *)p);
 
 	if (rpc_uaddr2sockaddr(req->rq_xprt->xprt_net, (char *)p, len,
 				sap, sizeof(address)) == 0)

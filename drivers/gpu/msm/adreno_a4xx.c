@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -304,7 +304,7 @@ static void a4xx_enable_hwcg(struct kgsl_device *device)
 	kgsl_regwrite(device, A4XX_RBBM_CLOCK_CTL_TSE_RAS_RBBM, 0x00222222);
 	kgsl_regwrite(device, A4XX_RBBM_CLOCK_HYST_TSE_RAS_RBBM, 0x00004104);
 	kgsl_regwrite(device, A4XX_RBBM_CLOCK_DELAY_TSE_RAS_RBBM, 0x00000222);
-	kgsl_regwrite(device, A4XX_RBBM_CLOCK_CTL_HLSQ , 0x00000000);
+	kgsl_regwrite(device, A4XX_RBBM_CLOCK_CTL_HLSQ, 0x00000000);
 	kgsl_regwrite(device, A4XX_RBBM_CLOCK_HYST_HLSQ, 0x00000000);
 	kgsl_regwrite(device, A4XX_RBBM_CLOCK_DELAY_HLSQ, 0x00220000);
 	/*
@@ -524,7 +524,7 @@ static void a4xx_protect_init(struct adreno_device *adreno_dev)
 	iommu_regs = kgsl_mmu_get_prot_regs(&device->mmu);
 	if (iommu_regs)
 		adreno_set_protected_registers(adreno_dev, &index,
-				iommu_regs->base, iommu_regs->range);
+				iommu_regs->base, ilog2(iommu_regs->range));
 }
 
 static struct adreno_snapshot_sizes a4xx_snap_sizes = {
@@ -616,6 +616,7 @@ static void a4xx_start(struct adreno_device *adreno_dev)
 	 */
 	if (adreno_is_a420(adreno_dev)) {
 		unsigned int val;
+
 		kgsl_regread(device, A4XX_RBBM_CLOCK_DELAY_HLSQ, &val);
 		val &= ~A4XX_CGC_HLSQ_TP_EARLY_CYC_MASK;
 		val |= 2 << A4XX_CGC_HLSQ_TP_EARLY_CYC_SHIFT;
@@ -694,6 +695,7 @@ static void a4xx_err_callback(struct adreno_device *adreno_dev, int bit)
 	case A4XX_INT_CP_HW_FAULT:
 	{
 		struct adreno_gpudev *gpudev = ADRENO_GPU_DEVICE(adreno_dev);
+
 		kgsl_regread(device, A4XX_CP_HW_FAULT, &reg);
 		KGSL_DRV_CRIT_RATELIMIT(device,
 			"CP | Ringbuffer HW fault | status=%x\n", reg);
@@ -1376,7 +1378,7 @@ static int _a4xx_pwron_fixup(struct adreno_device *adreno_dev)
 
 	/* Return if the fixup is already in place */
 	if (test_bit(ADRENO_DEVICE_PWRON_FIXUP, &adreno_dev->priv))
-			return 0;
+		return 0;
 
 	ret = kgsl_allocate_global(KGSL_DEVICE(adreno_dev),
 		&adreno_dev->pwron_fixup, PAGE_SIZE,
@@ -1537,7 +1539,7 @@ static int a4xx_send_me_init(struct adreno_device *adreno_dev,
 		struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 
 		dev_err(device->dev, "CP initialization failed to idle\n");
-		kgsl_device_snapshot(device, NULL);
+		kgsl_device_snapshot(device, NULL, false);
 	}
 
 	return ret;
@@ -1788,7 +1790,7 @@ struct adreno_gpudev adreno_a4xx_gpudev = {
 	.rb_start = a4xx_rb_start,
 	.init = a4xx_init,
 	.microcode_read = a3xx_microcode_read,
-	.coresight = &a4xx_coresight,
+	.coresight = {&a4xx_coresight},
 	.start = a4xx_start,
 	.snapshot = a4xx_snapshot,
 	.is_sptp_idle = a4xx_is_sptp_idle,

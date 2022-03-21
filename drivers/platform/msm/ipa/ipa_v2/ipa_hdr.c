@@ -956,8 +956,8 @@ int __ipa_del_hdr(u32 hdr_hdl, bool by_user)
 }
 
 /**
- * ipa2_add_hdr() - add the specified headers to SW and optionally commit them to
- * IPA HW
+ * ipa2_add_hdr() - add the specified headers to SW and optionally commit them
+ * to IPA HW
  * @hdrs:	[inout] set of headers to add
  *
  * Returns:	0 on success, negative on failure
@@ -1066,8 +1066,8 @@ bail:
 }
 
 /**
- * ipa2_del_hdr() - Remove the specified headers from SW and optionally commit them
- * to IPA HW
+ * ipa2_del_hdr() - Remove the specified headers from SW
+ * and optionally commit them to IPA HW
  * @hdls:	[inout] set of headers to delete
  *
  * Returns:	0 on success, negative on failure
@@ -1397,7 +1397,6 @@ int ipa2_reset_hdr(bool user_only)
 		ipa_ctx->hdr_proc_ctx_tbl.proc_ctx_cnt = 0;
 	}
 
-
 	/* commit the change to IPA-HW */
 	if (ipa_ctx->ctrl->ipa_commit_hdr()) {
 		IPAERR_RL("fail to commit hdr\n");
@@ -1416,7 +1415,7 @@ static struct ipa_hdr_entry *__ipa_find_hdr(const char *name)
 
 	list_for_each_entry(entry, &ipa_ctx->hdr_tbl.head_hdr_entry_list,
 			link) {
-		if (!strncmp(name, entry->name, IPA_RESOURCE_NAME_MAX))
+		if (!strcmp(name, entry->name))
 			return entry;
 	}
 
@@ -1449,6 +1448,7 @@ int ipa2_get_hdr(struct ipa_ioc_get_hdr *lookup)
 		return -EINVAL;
 	}
 	mutex_lock(&ipa_ctx->lock);
+	lookup->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	entry = __ipa_find_hdr(lookup->name);
 	if (entry) {
 		lookup->hdl = entry->id;
@@ -1550,7 +1550,8 @@ bail:
 }
 
 /**
- * ipa2_copy_hdr() - Lookup the specified header resource and return a copy of it
+ * ipa2_copy_hdr() - Lookup the specified header resource and return a copy of
+ * it
  * @copy:	[inout] header to lookup and its copy
  *
  * lookup the specified header resource and return a copy of it (along with its
@@ -1570,6 +1571,7 @@ int ipa2_copy_hdr(struct ipa_ioc_copy_hdr *copy)
 		return -EINVAL;
 	}
 	mutex_lock(&ipa_ctx->lock);
+	copy->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	entry = __ipa_find_hdr(copy->name);
 	if (entry) {
 		memcpy(copy->hdr, entry->hdr, entry->hdr_len);

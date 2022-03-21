@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -34,24 +34,54 @@
 #include <linux/platform_device.h>
 #include <soc/qcom/subsystem_restart.h>
 #include <soc/qcom/subsystem_notif.h>
-#include <soc/qcom/socinfo.h>
 #include <soc/qcom/sysmon.h>
+#include <trace/events/trace_msm_pil_event.h>
 
 #include <asm/current.h>
+#include <linux/timer.h>
 
 #include "peripheral-loader.h"
 
 #define DISABLE_SSR 0x9889deed
 /* If set to 0x9889deed, call to subsystem_restart_dev() returns immediately */
 static uint disable_restart_work;
-module_param(disable_restart_work, uint, S_IRUGO | S_IWUSR);
+module_param(disable_restart_work, uint, 0644);
 
 static int enable_debug;
-module_param(enable_debug, int, S_IRUGO | S_IWUSR);
+module_param(enable_debug, int, 0644);
 
 /* The maximum shutdown timeout is the product of MAX_LOOPS and DELAY_MS. */
 #define SHUTDOWN_ACK_MAX_LOOPS	100
 #define SHUTDOWN_ACK_DELAY_MS	100
+
+#ifdef CONFIG_SETUP_SSR_NOTIF_TIMEOUTS
+/* Timeout used for detection of notification hangs. In seconds.*/
+#define SYSMON_COMM_TIMEOUT	CONFIG_SSR_SYSMON_NOTIF_TIMEOUT
+#define SUBSYS_NOTIF_TIMEOUT	CONFIG_SSR_SUBSYS_NOTIF_TIMEOUT
+
+#define setup_timeout(dest_ss, source_ss, comm_type) \
+	_setup_timeout(dest_ss, source_ss, comm_type)
+#define cancel_timeout(subsys) del_timer_sync(&subsys->timeout_data.timer)
+#define init_subsys_timer(subsys) _init_subsys_timer(subsys)
+
+/* Timeout values */
+static unsigned long timeout_vals[NUM_SSR_COMMS] = {
+	[SUBSYS_TO_SUBSYS_SYSMON] = SYSMON_COMM_TIMEOUT,
+	[SUBSYS_TO_HLOS] = SUBSYS_NOTIF_TIMEOUT,
+	[HLOS_TO_SUBSYS_SYSMON_SHUTDOWN] = SYSMON_COMM_TIMEOUT,
+};
+
+#ifdef CONFIG_PANIC_ON_SSR_NOTIF_TIMEOUT
+#define SSR_NOTIF_TIMEOUT_WARN(fmt...) panic(fmt)
+#else /* CONFIG_PANIC_ON_SSR_NOTIF_TIMEOUT */
+#define SSR_NOTIF_TIMEOUT_WARN(fmt...) WARN(1, fmt)
+#endif /* CONFIG_PANIC_ON_SSR_NOTIF_TIMEOUT */
+
+#else /* CONFIG_SETUP_SSR_NOTIF_TIMEOUTS */
+#define setup_timeout(dest_ss, source_ss, sysmon_comm)
+#define cancel_timeout(subsys)
+#define init_subsys_timer(subsys)
+#endif /* CONFIG_SETUP_SSR_NOTIF_TIMEOUTS */
 
 /**
  * enum p_subsys_state - state of a subsystem (private)
@@ -147,7 +177,6 @@ struct restart_log {
  * @count: reference count of subsystem_get()/subsystem_put()
  * @id: ida
  * @restart_level: restart level (0 - panic, 1 - related, 2 - independent, etc.)
- * @keep_alive: whether keep alive during AP's panic
  * @restart_order: order of other devices this devices restarts with
  * @crash_count: number of times the device has crashed
  * @do_ramdump_on_put: ramdump on subsystem_put() if true
@@ -160,7 +189,6 @@ struct subsys_device {
 	struct work_struct work;
 	struct wakeup_source ssr_wlock;
 	char wlname[64];
-	char error_buf[64];
 	struct work_struct device_restart_work;
 	struct subsys_tracking track;
 
@@ -170,14 +198,13 @@ struct subsys_device {
 	int count;
 	int id;
 	int restart_level;
-	bool keep_alive;
 	int crash_count;
 	struct subsys_soc_restart_order *restart_order;
 	bool do_ramdump_on_put;
 	struct cdev char_dev;
 	dev_t dev_no;
 	struct completion err_ready;
-	bool crashed;
+	enum crash_status crashed;
 	int notif_state;
 	struct list_head list;
 };
@@ -212,6 +239,7 @@ static ssize_t state_show(struct device *dev, struct device_attribute *attr,
 		char *buf)
 {
 	enum subsys_state state = to_subsys(dev)->track.state;
+
 	return snprintf(buf, PAGE_SIZE, "%s\n", subsys_states[state]);
 }
 
@@ -225,6 +253,7 @@ static ssize_t
 restart_level_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int level = to_subsys(dev)->restart_level;
+
 	return snprintf(buf, PAGE_SIZE, "%s\n", restart_levels[level]);
 }
 
@@ -306,31 +335,6 @@ static ssize_t system_debug_store(struct device *dev,
 	return orig_count;
 }
 
-static ssize_t keep_alive_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	struct subsys_device *subsys = to_subsys(dev);
-
-	return snprintf(buf, PAGE_SIZE, "%d\n", subsys->keep_alive);
-}
-
-static ssize_t keep_alive_store(struct device *dev,
-				struct device_attribute *attr, const char *buf,
-				size_t count)
-{
-	struct subsys_device *subsys = to_subsys(dev);
-	unsigned long value;
-
-	if (kstrtoul(buf, 0, &value) != 0)
-		return -EINVAL;
-	if (value > 1)
-		return -EINVAL;
-
-	subsys->keep_alive = (bool)value;
-
-	return count;
-}
-
 int subsys_get_restart_level(struct subsys_device *dev)
 {
 	return dev->restart_level;
@@ -352,12 +356,6 @@ static void subsys_set_state(struct subsys_device *subsys,
 	spin_unlock_irqrestore(&subsys->track.s_lock, flags);
 }
 
-static ssize_t error_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
-{
-	return snprintf(buf, PAGE_SIZE, "%s\n", to_subsys(dev)->error_buf);
-}
-
 /**
  * subsytem_default_online() - Mark a subsystem as online by default
  * @dev: subsystem to mark as online
@@ -376,11 +374,9 @@ static struct device_attribute subsys_attrs[] = {
 	__ATTR_RO(name),
 	__ATTR_RO(state),
 	__ATTR_RO(crash_count),
-	__ATTR_RO(error),
 	__ATTR(restart_level, 0644, restart_level_show, restart_level_store),
 	__ATTR(firmware_name, 0644, firmware_name_show, firmware_name_store),
 	__ATTR(system_debug, 0644, system_debug_show, system_debug_store),
-	__ATTR(keep_alive, 0644, keep_alive_show, keep_alive_store),
 	__ATTR_NULL,
 };
 
@@ -393,10 +389,10 @@ EXPORT_SYMBOL(subsys_bus_type);
 static DEFINE_IDA(subsys_ida);
 
 static int enable_ramdumps;
-module_param(enable_ramdumps, int, S_IRUGO | S_IWUSR);
+module_param(enable_ramdumps, int, 0644);
 
 static int enable_mini_ramdumps;
-module_param(enable_mini_ramdumps, int, S_IRUGO | S_IWUSR);
+module_param(enable_mini_ramdumps, int, 0644);
 
 struct workqueue_struct *ssr_wq;
 static struct class *char_class;
@@ -488,9 +484,8 @@ static void do_epoch_check(struct subsys_device *dev)
 	if (time_first && n >= max_restarts_check) {
 		if ((curr_time->tv_sec - time_first->tv_sec) <
 				max_history_time_check)
-			panic("Subsystems have crashed %d times in less than "
-				"%ld seconds!", max_restarts_check,
-				max_history_time_check);
+			panic("Subsystems have crashed %d times in less than %ld seconds!",
+				max_restarts_check, max_history_time_check);
 	}
 
 out:
@@ -505,24 +500,100 @@ static int is_ramdump_enabled(struct subsys_device *dev)
 	return enable_ramdumps;
 }
 
+#ifdef CONFIG_SETUP_SSR_NOTIF_TIMEOUTS
+static void notif_timeout_handler(unsigned long data)
+{
+	char *sysmon_msg = "Sysmon communication from %s to %s taking too long";
+	char *subsys_notif_msg = "Subsys notifier chain for %s taking too long";
+	char *sysmon_shutdwn_msg = "sysmon_send_shutdown to %s taking too long";
+	char *unknown_err_msg = "Unknown communication occurred";
+	struct subsys_notif_timeout *timeout_data =
+		(struct subsys_notif_timeout *) data;
+	enum ssr_comm comm_type = timeout_data->comm_type;
+
+	switch (comm_type) {
+	case SUBSYS_TO_SUBSYS_SYSMON:
+		SSR_NOTIF_TIMEOUT_WARN(sysmon_msg, timeout_data->source_name,
+				       timeout_data->dest_name);
+		break;
+	case SUBSYS_TO_HLOS:
+		SSR_NOTIF_TIMEOUT_WARN(subsys_notif_msg,
+				       timeout_data->source_name);
+		break;
+	case HLOS_TO_SUBSYS_SYSMON_SHUTDOWN:
+		SSR_NOTIF_TIMEOUT_WARN(sysmon_shutdwn_msg,
+				       timeout_data->dest_name);
+		break;
+	default:
+		SSR_NOTIF_TIMEOUT_WARN(unknown_err_msg);
+	}
+
+}
+
+static void _setup_timeout(struct subsys_desc *source_ss,
+			   struct subsys_desc *dest_ss, enum ssr_comm comm_type)
+{
+	struct subsys_notif_timeout *timeout_data;
+	unsigned long timeout;
+
+	switch (comm_type) {
+	case SUBSYS_TO_SUBSYS_SYSMON:
+		timeout_data = &source_ss->timeout_data;
+		timeout_data->dest_name = dest_ss->name;
+		timeout_data->source_name = source_ss->name;
+		break;
+	case SUBSYS_TO_HLOS:
+		timeout_data = &source_ss->timeout_data;
+		timeout_data->dest_name = NULL;
+		timeout_data->source_name = source_ss->name;
+		break;
+	case HLOS_TO_SUBSYS_SYSMON_SHUTDOWN:
+		timeout_data = &dest_ss->timeout_data;
+		timeout_data->dest_name = dest_ss->name;
+		timeout_data->source_name = NULL;
+		break;
+	default:
+		return;
+	}
+
+	timeout_data->timer.data = (unsigned long) timeout_data;
+	timeout_data->comm_type = comm_type;
+	timeout = jiffies + msecs_to_jiffies(timeout_vals[comm_type]);
+	mod_timer(&timeout_data->timer, timeout);
+}
+
+static void _init_subsys_timer(struct subsys_desc *subsys)
+{
+	init_timer(&subsys->timeout_data.timer);
+	subsys->timeout_data.timer.function = notif_timeout_handler;
+}
+
+#endif /* CONFIG_SETUP_SSR_NOTIF_TIMEOUTS */
+
 static void send_sysmon_notif(struct subsys_device *dev)
 {
 	struct subsys_device *subsys;
 
 	mutex_lock(&subsys_list_lock);
 	list_for_each_entry(subsys, &subsys_list, list)
-		if ((subsys->notif_state > 0) && (subsys != dev))
+		if ((subsys->notif_state > 0) && (subsys != dev)) {
+			setup_timeout(subsys->desc, dev->desc,
+				      SUBSYS_TO_SUBSYS_SYSMON);
 			sysmon_send_event(dev->desc, subsys->desc,
 						subsys->notif_state);
+			cancel_timeout(subsys->desc);
+		}
 	mutex_unlock(&subsys_list_lock);
 }
 
-static int for_each_subsys_device(struct subsys_device **list, unsigned count,
-		void *data, int (*fn)(struct subsys_device *, void *))
+static int for_each_subsys_device(struct subsys_device **list,
+		unsigned int count, void *data,
+		int (*fn)(struct subsys_device *, void *))
 {
 	int ret;
 	while (count--) {
 		struct subsys_device *dev = *list++;
+
 		if (!dev)
 			continue;
 		ret = fn(dev, data);
@@ -533,7 +604,7 @@ static int for_each_subsys_device(struct subsys_device **list, unsigned count,
 }
 
 static void notify_each_subsys_device(struct subsys_device **list,
-		unsigned count,
+		unsigned int count,
 		enum subsys_notif_type notif, void *data)
 {
 	struct subsys_device *subsys;
@@ -553,9 +624,13 @@ static void notify_each_subsys_device(struct subsys_device **list,
 		mutex_lock(&subsys_list_lock);
 		list_for_each_entry(subsys, &subsys_list, list)
 			if (dev != subsys &&
-				subsys->track.state == SUBSYS_ONLINE)
+				subsys->track.state == SUBSYS_ONLINE) {
+				setup_timeout(dev->desc, subsys->desc,
+					      SUBSYS_TO_SUBSYS_SYSMON);
 				sysmon_send_event(subsys->desc, dev->desc,
-								notif);
+						  notif);
+				cancel_timeout(dev->desc);
+			}
 		mutex_unlock(&subsys_list_lock);
 
 		if (notif == SUBSYS_AFTER_POWERUP &&
@@ -568,8 +643,12 @@ static void notify_each_subsys_device(struct subsys_device **list,
 		notif_data.no_auth = dev->desc->no_auth;
 		notif_data.pdev = pdev;
 
+		trace_pil_notif("before_send_notif", notif, dev->desc->fw_name);
+		setup_timeout(dev->desc, NULL, SUBSYS_TO_HLOS);
 		subsys_notif_queue_notification(dev->notify, notif,
 								&notif_data);
+		cancel_timeout(dev->desc);
+		trace_pil_notif("after_send_notif", notif, dev->desc->fw_name);
 	}
 }
 
@@ -640,10 +719,10 @@ static int subsystem_shutdown(struct subsys_device *dev, void *data)
 			current->comm, current->pid, name);
 	ret = dev->desc->shutdown(dev->desc, true);
 	if (ret < 0) {
-		if (!dev->desc->ignore_ssr_failure)
+		if (!dev->desc->ignore_ssr_failure) {
 			panic("subsys-restart: [%s:%d]: Failed to shutdown %s!",
-			current->comm, current->pid, name);
-		else {
+				current->comm, current->pid, name);
+		} else {
 			pr_err("Shutdown failure on %s\n", name);
 			return ret;
 		}
@@ -710,7 +789,7 @@ static int subsystem_powerup(struct subsys_device *dev, void *data)
 			return ret;
 	}
 	subsys_set_state(dev, SUBSYS_ONLINE);
-	subsys_set_crash_status(dev, false);
+	subsys_set_crash_status(dev, CRASH_STATUS_NO_CRASH);
 
 	return 0;
 }
@@ -718,6 +797,7 @@ static int subsystem_powerup(struct subsys_device *dev, void *data)
 static int __find_subsys(struct device *dev, void *data)
 {
 	struct subsys_device *subsys = to_subsys(dev);
+
 	return !strcmp(subsys->desc->name, data);
 }
 
@@ -764,9 +844,8 @@ static int subsys_start(struct subsys_device *subsys)
 		subsys->desc->shutdown(subsys->desc, false);
 		disable_all_irqs(subsys);
 		return ret;
-	} else {
-		subsys_set_state(subsys, SUBSYS_ONLINE);
 	}
+	subsys_set_state(subsys, SUBSYS_ONLINE);
 
 	notify_each_subsys_device(&subsys, 1, SUBSYS_AFTER_POWERUP,
 								NULL);
@@ -777,21 +856,46 @@ static void subsys_stop(struct subsys_device *subsys)
 {
 	const char *name = subsys->desc->name;
 
+	notify_each_subsys_device(&subsys, 1, SUBSYS_BEFORE_SHUTDOWN, NULL);
 	if (!of_property_read_bool(subsys->desc->dev->of_node,
 					"qcom,pil-force-shutdown")) {
 		subsys_set_state(subsys, SUBSYS_OFFLINING);
+		setup_timeout(NULL, subsys->desc,
+			      HLOS_TO_SUBSYS_SYSMON_SHUTDOWN);
 		subsys->desc->sysmon_shutdown_ret =
 				sysmon_send_shutdown(subsys->desc);
+		cancel_timeout(subsys->desc);
 		if (subsys->desc->sysmon_shutdown_ret)
 			pr_debug("Graceful shutdown failed for %s\n", name);
 	}
 
-	notify_each_subsys_device(&subsys, 1, SUBSYS_BEFORE_SHUTDOWN, NULL);
 	subsys->desc->shutdown(subsys->desc, false);
 	subsys_set_state(subsys, SUBSYS_OFFLINE);
 	disable_all_irqs(subsys);
 	notify_each_subsys_device(&subsys, 1, SUBSYS_AFTER_SHUTDOWN, NULL);
 }
+
+int subsystem_set_fwname(const char *name, const char *fw_name)
+{
+	struct subsys_device *subsys;
+
+	if (!name)
+		return -EINVAL;
+
+	if (!fw_name)
+		return -EINVAL;
+
+	subsys = find_subsys(name);
+	if (!subsys)
+		return -EINVAL;
+
+	pr_debug("Changing subsys [%s] fw_name to [%s]\n", name, fw_name);
+	strlcpy(subsys->desc->fw_name, fw_name,
+		sizeof(subsys->desc->fw_name));
+
+	return 0;
+}
+EXPORT_SYMBOL(subsystem_set_fwname);
 
 int wait_for_shutdown_ack(struct subsys_desc *desc)
 {
@@ -886,7 +990,7 @@ void *subsystem_get(const char *name)
 EXPORT_SYMBOL(subsystem_get);
 
 /**
- * subsystem_get_with_fwname() - Boot a subsystem using the firmware name passed in
+ * subsystem_get_with_fwname() - Boot a subsystem using the firmware name passed
  * @name: pointer to a string containing the name of the subsystem to boot
  * @fw_name: pointer to a string containing the subsystem firmware image name
  *
@@ -950,7 +1054,7 @@ static void subsystem_restart_wq_func(struct work_struct *work)
 	struct subsys_desc *desc = dev->desc;
 	struct subsys_soc_restart_order *order = dev->restart_order;
 	struct subsys_tracking *track;
-	unsigned count;
+	unsigned int count;
 	unsigned long flags;
 	int ret;
 
@@ -1115,7 +1219,7 @@ int subsystem_restart_dev(struct subsys_device *dev)
 		name, restart_levels[dev->restart_level]);
 
 	if (disable_restart_work == DISABLE_SSR) {
-		pr_warn("subsys-restart: Ignoring restart request for %s.\n",
+		pr_warn("subsys-restart: Ignoring restart request for %s\n",
 									name);
 		return 0;
 	}
@@ -1181,23 +1285,16 @@ int subsystem_crashed(const char *name)
 }
 EXPORT_SYMBOL(subsystem_crashed);
 
-void subsys_set_crash_status(struct subsys_device *dev, bool crashed)
+void subsys_set_crash_status(struct subsys_device *dev,
+				enum crash_status crashed)
 {
 	dev->crashed = crashed;
 }
+EXPORT_SYMBOL(subsys_set_crash_status);
 
-bool subsys_get_crash_status(struct subsys_device *dev)
+enum crash_status subsys_get_crash_status(struct subsys_device *dev)
 {
 	return dev->crashed;
-}
-
-void subsys_set_error(struct subsys_device *dev, const char *error_msg)
-{
-	if (dev) {
-		snprintf(dev->error_buf, sizeof(dev->error_buf), "%s",
-							   error_msg);
-		sysfs_notify(&dev->dev.kobj, NULL, "error");
-	}
 }
 
 static struct subsys_device *desc_to_subsys(struct device *d)
@@ -1285,6 +1382,7 @@ static void subsys_device_release(struct device *dev)
 static irqreturn_t subsys_err_ready_intr_handler(int irq, void *subsys)
 {
 	struct subsys_device *subsys_dev = subsys;
+
 	dev_info(subsys_dev->desc->dev,
 		"Subsystem error monitoring/handling services are up\n");
 
@@ -1473,11 +1571,11 @@ static int __get_irq(struct subsys_desc *desc, const char *prop,
 		pr_err("[%s]: Error getting IRQ \"%s\"\n", desc->name,
 				prop);
 		return irql;
-	} else {
-		if (gpio)
-			*gpio = gpiol;
-		*irq = irql;
 	}
+
+	if (gpio)
+		*gpio = gpiol;
+	*irq = irql;
 
 	return 0;
 }
@@ -1654,6 +1752,7 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 	INIT_WORK(&subsys->work, subsystem_restart_wq_func);
 	INIT_WORK(&subsys->device_restart_work, device_restart_work_hdlr);
 	spin_lock_init(&subsys->track.s_lock);
+	init_subsys_timer(desc);
 
 	subsys->id = ida_simple_get(&subsys_ida, 0, 0, GFP_KERNEL);
 	if (subsys->id < 0) {
@@ -1674,9 +1773,8 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 	}
 
 	ret = subsys_char_device_add(subsys);
-	if (ret) {
+	if (ret)
 		goto err_register;
-	}
 
 	if (ofnode) {
 		ret = subsys_parse_devicetree(desc);
@@ -1771,12 +1869,6 @@ static int subsys_panic(struct device *dev, void *data)
 {
 	struct subsys_device *subsys = to_subsys(dev);
 
-	/* Keeping the subsys alive during panic */
-	if (!panic_timeout && subsys->keep_alive) {
-		dev_warn(dev, "keeping %s alive\n", subsys->desc->name);
-		return 0;
-	}
-
 	if (subsys->desc->crash_shutdown)
 		subsys->desc->crash_shutdown(subsys->desc);
 	return 0;
@@ -1797,7 +1889,8 @@ static int __init subsys_restart_init(void)
 {
 	int ret;
 
-	ssr_wq = alloc_workqueue("ssr_wq", WQ_CPU_INTENSIVE, 0);
+	ssr_wq = alloc_workqueue("ssr_wq",
+		WQ_UNBOUND | WQ_HIGHPRI | WQ_CPU_INTENSIVE, 0);
 	BUG_ON(!ssr_wq);
 
 	ret = bus_register(&subsys_bus_type);

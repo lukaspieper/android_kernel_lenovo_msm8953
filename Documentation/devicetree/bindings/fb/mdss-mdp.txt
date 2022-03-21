@@ -1,4 +1,4 @@
-Qualcomm MDSS MDP
+Qualcomm Technologies, Inc. MDSS MDP
 
 MDSS is Mobile Display SubSystem which implements Linux framebuffer APIs to
 drive user interface to different panel interfaces. MDP driver is the core of
@@ -384,7 +384,7 @@ Optional properties:
 - qcom,regs-dump-mdp:		This array represents the registers offsets that
 				will be dumped from the mdp when the debug logging
 				is enabled; each entry in the table is an start and
-				end offset from the MDP addres "mdp_phys", the
+				end offset from the MDP address "mdp_phys", the
 				format of each entry is as follows:
 				<start_offset end_offset>
 				Ex:
@@ -427,7 +427,7 @@ Fudge Factors:			Fudge factors are used to boost demand for
 				that can be supported without underflow.
 				This is a low bandwidth threshold which should
 				be applied in most scenarios to be safe from
-				underflows when unable to satisfy bandwith
+				underflows when unable to satisfy bandwidth
 				requirements.
 - qcom,max-bandwidth-high-kbps:	This value indicates the max bandwidth in KB
 				that can be supported without underflow.
@@ -453,7 +453,7 @@ Fudge Factors:			Fudge factors are used to boost demand for
 				in KB that has to be supported when particular
 				scenarios are involved such as camera, flip.
 				The first parameter indicate the
-				scenario/usecase and second paramter indicate
+				scenario/usecase and second parameter indicate
 				the maximum bandwidth for that usecase.
 				Following are the enum values for modes in different
 				cases:

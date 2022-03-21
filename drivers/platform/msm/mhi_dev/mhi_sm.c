@@ -257,8 +257,7 @@ const struct file_operations mhi_sm_stats_ops = {
 
 static void mhi_sm_debugfs_init(void)
 {
-	const mode_t read_write_mode = S_IRUSR | S_IRGRP | S_IROTH |
-			S_IWUSR | S_IWGRP | S_IWOTH;
+	const mode_t read_write_mode = 0666;
 
 	dent = debugfs_create_dir("mhi_sm", 0);
 	if (IS_ERR(dent)) {
@@ -685,8 +684,8 @@ exit:
 		MHI_SM_ERR("EP-PCIE Link is disable cannot set MMIO to %s\n",
 			mhi_sm_mstate_str(MHI_DEV_SYSERR_STATE));
 
-	MHI_SM_ERR("/n/n/nASSERT ON DEVICE !!!!/n/n/n");
-	BUG();
+	MHI_SM_ERR("/n/n/nError ON DEVICE !!!!/n/n/n");
+	WARN_ON(1);
 
 	MHI_SM_FUNC_EXIT();
 	return res;
@@ -1094,7 +1093,7 @@ int mhi_dev_notify_sm_event(enum mhi_dev_event event)
 	if (!mhi_sm_ctx) {
 		MHI_SM_ERR("Failed, MHI SM is not initialized\n");
 		return -EFAULT;
-	 }
+	}
 
 	MHI_SM_DBG("received: %s\n",
 		mhi_sm_dev_event_str(event));
@@ -1193,7 +1192,7 @@ void mhi_dev_sm_pcie_handler(struct ep_pcie_notify *notify)
 		spin_lock_irqsave(&mhi_sm_ctx->mhi_dev->lock, flags);
 		if ((mhi_sm_ctx->mhi_dev->mhi_int) &&
 				(mhi_sm_ctx->mhi_dev->mhi_int_en)) {
-			disable_irq(mhi_sm_ctx->mhi_dev->mhi_irq);
+			disable_irq_nosync(mhi_sm_ctx->mhi_dev->mhi_irq);
 			mhi_sm_ctx->mhi_dev->mhi_int_en = false;
 			MHI_SM_DBG("Disable MHI IRQ during D3 HOT");
 		}

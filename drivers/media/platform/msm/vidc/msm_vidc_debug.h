@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, 2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +23,6 @@
 #endif
 
 #define VIDC_DBG_TAG VIDC_DBG_LABEL ": %4s: "
-#define VIDC_DBG_WARN_ENABLE (msm_vidc_debug & VIDC_INFO)
 
 /* To enable messages OR these values and
  * echo the result to debugfs file.
@@ -58,16 +57,11 @@ extern int msm_vidc_debug_out;
 extern int msm_vidc_fw_debug;
 extern int msm_vidc_fw_debug_mode;
 extern int msm_vidc_fw_low_power_mode;
-extern int msm_vidc_hw_rsp_timeout;
-extern int msm_vidc_fw_coverage;
-extern int msm_vidc_vpe_csc_601_to_709;
-extern int msm_vidc_dec_dcvs_mode;
-extern int msm_vidc_enc_dcvs_mode;
-extern int msm_vidc_sys_idle_indicator;
-extern int msm_vidc_firmware_unload_delay;
-extern int msm_vidc_thermal_mitigation_disabled;
-extern int msm_vidc_bitrate_clock_scaling;
-extern int msm_vidc_debug_timeout;
+extern bool msm_vidc_fw_coverage;
+extern bool msm_vidc_sys_idle_indicator;
+extern bool msm_vidc_thermal_mitigation_disabled;
+extern bool msm_vidc_clock_scaling;
+extern bool msm_vidc_syscache_disable;
 
 #define VIDC_MSG_PRIO2STRING(__level) ({ \
 	char *__str; \
@@ -109,10 +103,18 @@ extern int msm_vidc_debug_timeout;
 				pr_info(VIDC_DBG_TAG __fmt, \
 						VIDC_MSG_PRIO2STRING(__level), \
 						## arg); \
+			} else if (msm_vidc_debug_out == VIDC_OUT_FTRACE) { \
+				trace_printk(KERN_DEBUG VIDC_DBG_TAG __fmt, \
+						VIDC_MSG_PRIO2STRING(__level), \
+						## arg); \
 			} \
 		} \
 	} while (0)
 
+#define MSM_VIDC_ERROR(value)					\
+	do {							\
+		BUG_ON(value);					\
+	} while (0)
 
 
 struct dentry *msm_vidc_debugfs_init_drv(void);
@@ -128,6 +130,7 @@ static inline void tic(struct msm_vidc_inst *i, enum profiling_points p,
 				 char *b)
 {
 	struct timeval __ddl_tv;
+
 	if (!i->debug.pdata[p].name[0])
 		memcpy(i->debug.pdata[p].name, b, 64);
 	if ((msm_vidc_debug & VIDC_PROF) &&
@@ -142,6 +145,7 @@ static inline void tic(struct msm_vidc_inst *i, enum profiling_points p,
 static inline void toc(struct msm_vidc_inst *i, enum profiling_points p)
 {
 	struct timeval __ddl_tv;
+
 	if ((msm_vidc_debug & VIDC_PROF) &&
 		!i->debug.pdata[p].sampling) {
 		do_gettimeofday(&__ddl_tv);
@@ -156,6 +160,7 @@ static inline void toc(struct msm_vidc_inst *i, enum profiling_points p)
 static inline void show_stats(struct msm_vidc_inst *i)
 {
 	int x;
+
 	for (x = 0; x < MAX_PROFILING_POINTS; x++) {
 		if (i->debug.pdata[x].name[0] &&
 				(msm_vidc_debug & VIDC_PROF)) {
@@ -171,6 +176,36 @@ static inline void show_stats(struct msm_vidc_inst *i)
 					i->debug.samples);
 		}
 	}
+}
+
+static inline void msm_vidc_res_handle_fatal_hw_error(
+	struct msm_vidc_platform_resources *resources,
+	bool enable_fatal)
+{
+	enable_fatal &= resources->debug_timeout;
+	MSM_VIDC_ERROR(enable_fatal);
+}
+
+static inline void msm_vidc_handle_hw_error(struct msm_vidc_core *core)
+{
+	bool enable_fatal = true;
+
+	/*
+	 * In current implementation user-initiated SSR triggers
+	 * a fatal error from hardware. However, there is no way
+	 * to know if fatal error is due to SSR or not. Handle
+	 * user SSR as non-fatal.
+	 */
+	if (core->trigger_ssr) {
+		core->trigger_ssr = false;
+		enable_fatal = false;
+	}
+
+	/* Video driver can decide FATAL handling of HW errors
+	 * based on multiple factors. This condition check will
+	 * be enhanced later.
+	 */
+	msm_vidc_res_handle_fatal_hw_error(&core->resources, enable_fatal);
 }
 
 #endif

@@ -87,7 +87,7 @@ struct qce_f8_req {
  *   In one request, multiple packets can be ciphered, and output to the
  *   data_out stream.
  *
- *   Packet data are layed out contiguously in sequence in data_in,
+ *   Packet data are laid out contiguously in sequence in data_in,
  *   and data_out area. Every packet is identical size.
  *   If the PDU is not byte aligned, set the data_len value of
  *   to the rounded up value of the packet size. Eg, PDU size of
@@ -105,7 +105,7 @@ struct qce_f8_req {
  *   unchanged and output to the dataOut area.
  *
  *   For each packet the input arguments of bearer, direction,
- *   ckey, algoritm have to be the same. count_c is the ciphering sequence
+ *   ckey, algorithm have to be the same. count_c is the ciphering sequence
  *   number of the first packet. The 2nd packet's ciphering sequence
  *   number is assumed to be count_c + 1. The 3rd packet's ciphering sequence
  *   number is count_c + 2.....
@@ -156,7 +156,7 @@ struct qce_f8_multi_pkt_req {
  *   packet.
  *
  *   For each packet the input arguments of bearer, direction,
- *   ckey, algoritm have to be the same. count_c is the ciphering sequence
+ *   ckey, algorithm have to be the same. count_c is the ciphering sequence
  *   number of the first packet. The 2nd packet's ciphering sequence
  *   number is assumed to be count_c + 1. The 3rd packet's ciphering sequence
  *   number is count_c + 2.....

@@ -724,7 +724,7 @@ static inline u32 bam_get_register_offset(void *base, enum bam_regs reg,
 				index = 0x80;
 		} else
 			index = 0x1000;
-	} else if (P_TRUST_REG == reg) {
+	} else if (reg == P_TRUST_REG) {
 		if (bam_type == SPS_BAM_LEGACY)
 			index = 0x80;
 		else
@@ -902,8 +902,9 @@ int bam_init(void *base, u32 ee,
 		SPS_ERR(dev, "sps:bam 0x%pK(va) Invalid BAM REVISION 0x%x.\n",
 				dev->base, ver);
 		return -ENODEV;
-	} else
-		SPS_DBG(dev, "sps:REVISION of BAM 0x%pK is 0x%x.\n",
+	}
+
+	SPS_DBG(dev, "sps:REVISION of BAM 0x%pK is 0x%x.\n",
 				dev->base, ver);
 
 	if (summing_threshold == 0) {
@@ -1202,17 +1203,18 @@ u32 bam_check_irq_source(void *base, u32 ee, u32 mask,
 
 	if (clr) {
 		u32 status = 0;
+
 		status = bam_read_reg(base, IRQ_STTS, 0);
 
 		if (status & IRQ_STTS_BAM_ERROR_IRQ) {
-			SPS_ERR(dev, "sps:bam %pa 0x%pK(va);bam irq status="
-				"0x%x.\nsps: BAM_ERROR_IRQ\n",
+			SPS_ERR(dev,
+				"sps:bam %pa 0x%pK(va);bam irq status=0x%x.\nsps: BAM_ERROR_IRQ\n",
 				BAM_ID(dev), dev->base, status);
 			bam_output_register_content(base, ee);
 			*cb_case = SPS_CALLBACK_BAM_ERROR_IRQ;
 		} else if (status & IRQ_STTS_BAM_HRESP_ERR_IRQ) {
-			SPS_ERR(dev, "sps:bam %pa 0x%pK(va);bam irq status="
-				"0x%x.\nsps: BAM_HRESP_ERR_IRQ\n",
+			SPS_ERR(dev,
+				"sps:bam %pa 0x%pK(va);bam irq status=0x%x.\nsps: BAM_HRESP_ERR_IRQ\n",
 				BAM_ID(dev), dev->base, status);
 			bam_output_register_content(base, ee);
 			*cb_case = SPS_CALLBACK_BAM_HRESP_ERR_IRQ;
@@ -1388,8 +1390,8 @@ int bam_pipe_init(void *base, u32 pipe,	struct bam_pipe_parameters *param,
 
 		bam_write_reg(base, P_EVNT_DEST_ADDR, pipe, peer_dest_addr);
 
-		SPS_DBG2(dev, "sps:bam=0x%pK(va).pipe=%d.peer_bam=0x%x."
-			"peer_pipe=%d.\n",
+		SPS_DBG2(dev,
+			"sps:bam=0x%pK(va).pipe=%d.peer_bam=0x%x.peer_pipe=%d.\n",
 			dev->base, pipe,
 			(u32) param->peer_phys_addr,
 			param->peer_pipe);

@@ -89,10 +89,16 @@ static void virtio_gpu_unref_list(struct list_head *head)
 	}
 }
 
-static int virtio_gpu_execbuffer(struct drm_device *dev,
-				 struct drm_virtgpu_execbuffer *exbuf,
+/*
+ * Usage of execbuffer:
+ * Relocations need to take into account the full VIRTIO_GPUDrawable size.
+ * However, the command as passed from user space must *not* contain the initial
+ * VIRTIO_GPUReleaseInfo struct (first XXX bytes)
+ */
+static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 				 struct drm_file *drm_file)
 {
+	struct drm_virtgpu_execbuffer *exbuf = data;
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct virtio_gpu_fpriv *vfpriv = drm_file->driver_priv;
 	struct drm_gem_object *gobj;
@@ -133,8 +139,7 @@ static int virtio_gpu_execbuffer(struct drm_device *dev,
 		}
 
 		for (i = 0; i < exbuf->num_bo_handles; i++) {
-			gobj = drm_gem_object_lookup(dev,
-						     drm_file, bo_handles[i]);
+			gobj = drm_gem_object_lookup(drm_file, bo_handles[i]);
 			if (!gobj) {
 				drm_free_large(bo_handles);
 				drm_free_large(buflist);
@@ -153,15 +158,10 @@ static int virtio_gpu_execbuffer(struct drm_device *dev,
 	if (ret)
 		goto out_free;
 
-	buf = kmalloc(exbuf->size, GFP_KERNEL);
-	if (!buf) {
-		ret = -ENOMEM;
-		goto out_unresv;
-	}
-	if (copy_from_user(buf, (void __user *)(uintptr_t)exbuf->command,
-			   exbuf->size)) {
-		kfree(buf);
-		ret = -EFAULT;
+	buf = memdup_user((void __user *)(uintptr_t)exbuf->command,
+			  exbuf->size);
+	if (IS_ERR(buf)) {
+		ret = PTR_ERR(buf);
 		goto out_unresv;
 	}
 	virtio_gpu_cmd_submit(vgdev, buf, exbuf->size,
@@ -183,20 +183,6 @@ out_free:
 	return ret;
 }
 
-/*
- * Usage of execbuffer:
- * Relocations need to take into account the full VIRTIO_GPUDrawable size.
- * However, the command as passed from user space must *not* contain the initial
- * VIRTIO_GPUReleaseInfo struct (first XXX bytes)
- */
-static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
-				       struct drm_file *file_priv)
-{
-	struct drm_virtgpu_execbuffer *execbuffer = data;
-	return virtio_gpu_execbuffer(dev, execbuffer, file_priv);
-}
-
-
 static int virtio_gpu_getparam_ioctl(struct drm_device *dev, void *data,
 				     struct drm_file *file_priv)
 {
@@ -207,6 +193,9 @@ static int virtio_gpu_getparam_ioctl(struct drm_device *dev, void *data,
 	switch (param->param) {
 	case VIRTGPU_PARAM_3D_FEATURES:
 		value = vgdev->has_virgl_3d == true ? 1 : 0;
+		break;
+	case VIRTGPU_PARAM_CAPSET_QUERY_FIX:
+		value = 1;
 		break;
 	default:
 		return -EINVAL;
@@ -345,7 +334,7 @@ static int virtio_gpu_resource_info_ioctl(struct drm_device *dev, void *data,
 	struct drm_gem_object *gobj = NULL;
 	struct virtio_gpu_object *qobj = NULL;
 
-	gobj = drm_gem_object_lookup(dev, file_priv, ri->bo_handle);
+	gobj = drm_gem_object_lookup(file_priv, ri->bo_handle);
 	if (gobj == NULL)
 		return -ENOENT;
 
@@ -374,7 +363,7 @@ static int virtio_gpu_transfer_from_host_ioctl(struct drm_device *dev,
 	if (vgdev->has_virgl_3d == false)
 		return -ENOSYS;
 
-	gobj = drm_gem_object_lookup(dev, file, args->bo_handle);
+	gobj = drm_gem_object_lookup(file, args->bo_handle);
 	if (gobj == NULL)
 		return -ENOENT;
 
@@ -418,7 +407,7 @@ static int virtio_gpu_transfer_to_host_ioctl(struct drm_device *dev, void *data,
 	int ret;
 	u32 offset = args->offset;
 
-	gobj = drm_gem_object_lookup(dev, file, args->bo_handle);
+	gobj = drm_gem_object_lookup(file, args->bo_handle);
 	if (gobj == NULL)
 		return -ENOENT;
 
@@ -464,7 +453,7 @@ static int virtio_gpu_wait_ioctl(struct drm_device *dev, void *data,
 	int ret;
 	bool nowait = false;
 
-	gobj = drm_gem_object_lookup(dev, file, args->handle);
+	gobj = drm_gem_object_lookup(file, args->handle);
 	if (gobj == NULL)
 		return -ENOENT;
 
@@ -483,7 +472,7 @@ static int virtio_gpu_get_caps_ioctl(struct drm_device *dev,
 {
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct drm_virtgpu_get_caps *args = data;
-	int size;
+	unsigned size, host_caps_size;
 	int i;
 	int found_valid = -1;
 	int ret;
@@ -491,6 +480,10 @@ static int virtio_gpu_get_caps_ioctl(struct drm_device *dev,
 	void *ptr;
 	if (vgdev->num_capsets == 0)
 		return -ENOSYS;
+
+	/* don't allow userspace to pass 0 */
+	if (args->size == 0)
+		return -EINVAL;
 
 	spin_lock(&vgdev->display_info_lock);
 	for (i = 0; i < vgdev->num_capsets; i++) {
@@ -507,11 +500,9 @@ static int virtio_gpu_get_caps_ioctl(struct drm_device *dev,
 		return -EINVAL;
 	}
 
-	size = vgdev->capsets[found_valid].max_size;
-	if (args->size > size) {
-		spin_unlock(&vgdev->display_info_lock);
-		return -EINVAL;
-	}
+	host_caps_size = vgdev->capsets[found_valid].max_size;
+	/* only copy to user the minimum of the host caps size or the guest caps size */
+	size = min(args->size, host_caps_size);
 
 	list_for_each_entry(cache_ent, &vgdev->cap_cache, head) {
 		if (cache_ent->id == args->cap_set_id &&
@@ -529,6 +520,9 @@ static int virtio_gpu_get_caps_ioctl(struct drm_device *dev,
 
 	ret = wait_event_timeout(vgdev->resp_wq,
 				 atomic_read(&cache_ent->is_valid), 5 * HZ);
+
+	/* is_valid check must proceed before copy of the cache entry. */
+	smp_rmb();
 
 	ptr = cache_ent->caps_cache;
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -43,6 +43,8 @@
 #define LPASS_INST_BASE		64
 #define WCNSS_INST_BASE		128
 #define SENSORS_INST_BASE	192
+#define CDSP_INST_BASE	256
+#define WDSP_INST_BASE  320
 
 #define INST_ID_CNTL		0
 #define INST_ID_CMD		1
@@ -73,6 +75,16 @@ struct diag_socket_info socket_data[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_DATA,
 		.name = "SENSORS_DATA"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_DATA,
+		.name = "DIAG_DATA"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DATA,
+		.name = "CDSP_DATA"
 	}
 };
 
@@ -96,6 +108,16 @@ struct diag_socket_info socket_cntl[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_CNTL,
 		.name = "SENSORS_CNTL"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_CNTL,
+		.name = "DIAG_CTRL"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_CNTL,
+		.name = "CDSP_CNTL"
 	}
 };
 
@@ -119,6 +141,16 @@ struct diag_socket_info socket_dci[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_DCI,
 		.name = "SENSORS_DCI"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_DCI,
+		.name = "DIAG_DCI_DATA"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DCI,
+		.name = "CDSP_DCI"
 	}
 };
 
@@ -142,7 +174,18 @@ struct diag_socket_info socket_cmd[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_CMD,
 		.name = "SENSORS_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_CMD,
+		.name = "DIAG_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_CMD,
+		.name = "CDSP_CMD"
 	}
+
 };
 
 struct diag_socket_info socket_dci_cmd[NUM_PERIPHERALS] = {
@@ -165,13 +208,24 @@ struct diag_socket_info socket_dci_cmd[NUM_PERIPHERALS] = {
 		.peripheral = PERIPHERAL_SENSORS,
 		.type = TYPE_DCI_CMD,
 		.name = "SENSORS_DCI_CMD"
-	}
+	},
+	{
+		.peripheral = PERIPHERAL_WDSP,
+		.type = TYPE_DCI_CMD,
+		.name = "DIAG_DCI_CMD"
+	},
+	{
+		.peripheral = PERIPHERAL_CDSP,
+		.type = TYPE_DCI_CMD,
+		.name = "CDSP_DCI_CMD"
+	},
 };
 
 static void diag_state_open_socket(void *ctxt);
 static void diag_state_close_socket(void *ctxt);
 static int diag_socket_write(void *ctxt, unsigned char *buf, int len);
-static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len);
+static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len,
+			struct diagfwd_buf_t *fwd_buf);
 static void diag_socket_queue_read(void *ctxt);
 static void socket_init_work_fn(struct work_struct *work);
 static int socket_ready_notify(struct notifier_block *nb,
@@ -240,7 +294,6 @@ static void socket_data_ready(struct sock *sk_ptr)
 
 	queue_work(info->wq, &(info->read_work));
 	wake_up_interruptible(&info->read_wait_q);
-	return;
 }
 
 static void cntl_socket_data_ready(struct sock *sk_ptr)
@@ -443,16 +496,18 @@ static void __socket_close_channel(struct diag_socket_info *info)
 	if (!atomic_read(&info->opened))
 		return;
 
-	if (bootup_req[info->peripheral] == PEPIPHERAL_SSR_UP) {
+	if ((bootup_req[info->peripheral] == PERIPHERAL_SSR_UP) &&
+		(info->port_type == PORT_TYPE_SERVER)) {
 		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
-		"Modem is powered up, stopping cleanup: bootup_req[%s] = %d\n",
+		"diag: %s is up, stopping cleanup: bootup_req = %d\n",
 		info->name, (int)bootup_req[info->peripheral]);
 		return;
 	}
 
-	memset(&info->remote_addr, 0, sizeof(struct sockaddr_msm_ipc));
-	diagfwd_channel_close(info->fwd_ctxt);
-
+	if (info->type != TYPE_CNTL) {
+		memset(&info->remote_addr, 0, sizeof(struct sockaddr_msm_ipc));
+		diagfwd_channel_close(info->fwd_ctxt);
+	}
 	atomic_set(&info->opened, 0);
 
 	/* Don't close the server. Server should always remain open */
@@ -461,13 +516,13 @@ static void __socket_close_channel(struct diag_socket_info *info)
 		info->hdl->sk->sk_user_data = NULL;
 		info->hdl->sk->sk_data_ready = NULL;
 		write_unlock_bh(&info->hdl->sk->sk_callback_lock);
+		mutex_lock(&info->socket_info_mutex);
 		sock_release(info->hdl);
 		info->hdl = NULL;
+		mutex_unlock(&info->socket_info_mutex);
 		wake_up_interruptible(&info->read_wait_q);
 	}
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS, "%s exiting\n", info->name);
-
-	return;
 }
 
 static void socket_close_channel(struct diag_socket_info *info)
@@ -584,7 +639,7 @@ static int restart_notifier_cb(struct notifier_block *this,
 				  void *data);
 
 struct restart_notifier_block {
-	unsigned processor;
+	unsigned int processor;
 	char *name;
 	struct notifier_block nb;
 };
@@ -594,6 +649,7 @@ static struct restart_notifier_block restart_notifiers[] = {
 	{SOCKET_ADSP, "adsp", .nb.notifier_call = restart_notifier_cb},
 	{SOCKET_WCNSS, "wcnss", .nb.notifier_call = restart_notifier_cb},
 	{SOCKET_SLPI, "slpi", .nb.notifier_call = restart_notifier_cb},
+	{SOCKET_CDSP, "cdsp", .nb.notifier_call = restart_notifier_cb},
 };
 
 
@@ -698,6 +754,7 @@ static void __diag_socket_init(struct diag_socket_info *info)
 	uint16_t ins_offset = 0;
 
 	char wq_name[DIAG_SOCKET_NAME_SZ + 10];
+
 	if (!info)
 		return;
 
@@ -712,8 +769,8 @@ static void __diag_socket_init(struct diag_socket_info *info)
 	info->data_ready = 0;
 	atomic_set(&info->flow_cnt, 0);
 	spin_lock_init(&info->lock);
-	strlcpy(wq_name, "DIAG_SOCKET_", 10);
-	strlcat(wq_name, info->name, sizeof(info->name));
+	strlcpy(wq_name, "DIAG_SOCKET_", sizeof(wq_name));
+	strlcpy(wq_name, info->name, sizeof(wq_name));
 	init_waitqueue_head(&info->read_wait_q);
 	info->wq = create_singlethread_workqueue(wq_name);
 	if (!info->wq) {
@@ -736,6 +793,12 @@ static void __diag_socket_init(struct diag_socket_info *info)
 		break;
 	case PERIPHERAL_SENSORS:
 		ins_base = SENSORS_INST_BASE;
+		break;
+	case PERIPHERAL_WDSP:
+		ins_base = WDSP_INST_BASE;
+		break;
+	case PERIPHERAL_CDSP:
+		ins_base = CDSP_INST_BASE;
 		break;
 	}
 
@@ -762,6 +825,8 @@ static void __diag_socket_init(struct diag_socket_info *info)
 		break;
 	}
 
+	if (info->port_type == PORT_TYPE_CLIENT)
+		mutex_init(&info->socket_info_mutex);
 	info->svc_id = DIAG_SVC_ID;
 	info->ins_id = ins_base + ins_offset;
 	info->inited = 1;
@@ -843,10 +908,13 @@ int diag_socket_init(void)
 
 	for (i = 0; i < ARRAY_SIZE(restart_notifiers); i++) {
 		nb = &restart_notifiers[i];
-		handle = subsys_notif_register_notifier(nb->name, &nb->nb);
-		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
-		"%s: registering notifier for '%s', handle=%p\n",
-		__func__, nb->name, handle);
+		if (nb) {
+			handle = subsys_notif_register_notifier(nb->name,
+				&nb->nb);
+			DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+			"%s: registering notifier for '%s', handle=%p\n",
+			__func__, nb->name, handle);
+		}
 	}
 
 	register_ipcrtr_af_init_notifier(&socket_notify);
@@ -888,26 +956,41 @@ static int restart_notifier_cb(struct notifier_block *this, unsigned long code,
 	void *_cmd)
 {
 	struct restart_notifier_block *notifier;
+	struct diag_socket_info *info = NULL;
 
 	notifier = container_of(this,
 			struct restart_notifier_block, nb);
+	if (!notifier) {
+		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+		"diag: %s: invalid notifier block\n", __func__);
+		return NOTIFY_DONE;
+	}
 
-	mutex_lock(&driver->diag_notifier_mutex);
 	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 	"%s: ssr for processor %d ('%s')\n",
 	__func__, notifier->processor, notifier->name);
 
+	info = &socket_cntl[notifier->processor];
 	switch (code) {
 
 	case SUBSYS_BEFORE_SHUTDOWN:
 		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 		"diag: %s: SUBSYS_BEFORE_SHUTDOWN\n", __func__);
-		bootup_req[notifier->processor] = PEPIPHERAL_SSR_DOWN;
+		mutex_lock(&driver->diag_notifier_mutex);
+		bootup_req[notifier->processor] = PERIPHERAL_SSR_DOWN;
+		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+		"diag: bootup_req[%s] = %d\n",
+		notifier->name, (int)bootup_req[notifier->processor]);
+		mutex_unlock(&driver->diag_notifier_mutex);
 		break;
 
 	case SUBSYS_AFTER_SHUTDOWN:
 		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 		"diag: %s: SUBSYS_AFTER_SHUTDOWN\n", __func__);
+		mutex_lock(&driver->diag_notifier_mutex);
+		memset(&info->remote_addr, 0, sizeof(struct sockaddr_msm_ipc));
+		diagfwd_channel_close(info->fwd_ctxt);
+		mutex_unlock(&driver->diag_notifier_mutex);
 		break;
 
 	case SUBSYS_BEFORE_POWERUP:
@@ -918,11 +1001,20 @@ static int restart_notifier_cb(struct notifier_block *this, unsigned long code,
 	case SUBSYS_AFTER_POWERUP:
 		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 		"diag: %s: SUBSYS_AFTER_POWERUP\n", __func__);
+		mutex_lock(&driver->diag_notifier_mutex);
 		if (!bootup_req[notifier->processor]) {
-			bootup_req[notifier->processor] = PEPIPHERAL_SSR_DOWN;
+			bootup_req[notifier->processor] = PERIPHERAL_SSR_DOWN;
+			DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+			"diag: bootup_req[%s] = %d\n",
+			notifier->name, (int)bootup_req[notifier->processor]);
+			mutex_unlock(&driver->diag_notifier_mutex);
 			break;
 		}
-		bootup_req[notifier->processor] = PEPIPHERAL_SSR_UP;
+		bootup_req[notifier->processor] = PERIPHERAL_SSR_UP;
+		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+		"diag: bootup_req[%s] = %d\n",
+		notifier->name, (int)bootup_req[notifier->processor]);
+		mutex_unlock(&driver->diag_notifier_mutex);
 		break;
 
 	default:
@@ -930,10 +1022,6 @@ static int restart_notifier_cb(struct notifier_block *this, unsigned long code,
 		"diag: code: %lu\n", code);
 		break;
 	}
-	mutex_unlock(&driver->diag_notifier_mutex);
-	DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
-	"diag: bootup_req[%s] = %d\n",
-	notifier->name, (int)bootup_req[notifier->processor]);
 
 	return NOTIFY_DONE;
 }
@@ -965,6 +1053,8 @@ static void __diag_socket_exit(struct diag_socket_info *info)
 	diagfwd_deregister(info->peripheral, info->type, (void *)info);
 	info->fwd_ctxt = NULL;
 	info->hdl = NULL;
+	if (info->port_type == PORT_TYPE_CLIENT)
+		mutex_destroy(&info->socket_info_mutex);
 	if (info->wq)
 		destroy_workqueue(info->wq);
 
@@ -990,7 +1080,8 @@ void diag_socket_exit(void)
 	}
 }
 
-static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
+static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len,
+			struct diagfwd_buf_t *fwd_buf)
 {
 	int err = 0;
 	int pkt_len = 0;
@@ -1010,7 +1101,7 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 	if (!info)
 		return -ENODEV;
 
-	if (!buf || !ctxt || buf_len <= 0)
+	if (!buf || !ctxt || buf_len <= 0 || !fwd_buf)
 		return -EINVAL;
 
 	temp = buf;
@@ -1019,13 +1110,17 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 	err = wait_event_interruptible(info->read_wait_q,
 				      (info->data_ready > 0) || (!info->hdl) ||
 				      (atomic_read(&info->diag_state) == 0));
-	if (err) {
-		mutex_lock(&driver->diagfwd_channel_mutex[info->peripheral]);
-		diagfwd_channel_read_done(info->fwd_ctxt, buf, 0);
-		mutex_unlock(&driver->diagfwd_channel_mutex[info->peripheral]);
-		return -ERESTARTSYS;
+	if (err)
+		goto fail;
+	if (atomic_read(&fwd_buf->in_busy) == 0) {
+		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+			"%s closing read thread. Buffer is already marked freed p: %d t: %d buf_num: %d\n",
+			 info->name, GET_BUF_PERIPHERAL(fwd_buf->ctxt),
+			 GET_BUF_TYPE(fwd_buf->ctxt),
+			 GET_BUF_NUM(fwd_buf->ctxt));
+		diag_ws_release();
+		return 0;
 	}
-
 	/*
 	 * There is no need to continue reading over peripheral in this case.
 	 * Release the wake source hold earlier.
@@ -1034,10 +1129,7 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 			 "%s closing read thread. diag state is closed\n",
 			 info->name);
-		mutex_lock(&driver->diagfwd_channel_mutex[info->peripheral]);
-		diagfwd_channel_read_done(info->fwd_ctxt, buf, 0);
-		mutex_unlock(&driver->diagfwd_channel_mutex[info->peripheral]);
-		return 0;
+		goto fail;
 	}
 
 	if (!info->hdl) {
@@ -1053,13 +1145,28 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 		read_msg.msg_name = &src_addr;
 		read_msg.msg_namelen = sizeof(src_addr);
 
+		if (info->port_type != PORT_TYPE_SERVER) {
+			mutex_lock(&info->socket_info_mutex);
+			if (!info->hdl) {
+				DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
+				"%s closing read thread\n",
+					info->name);
+				mutex_unlock(&info->socket_info_mutex);
+				goto fail;
+			}
+		}
 		pkt_len = kernel_recvmsg(info->hdl, &read_msg, &iov, 1, 0,
 					 MSG_PEEK);
-		if (pkt_len <= 0)
+		if (pkt_len <= 0) {
+			if (info->port_type != PORT_TYPE_SERVER)
+				mutex_unlock(&info->socket_info_mutex);
 			break;
+		}
 
 		if (pkt_len > bytes_remaining) {
 			buf_full = 1;
+			if (info->port_type != PORT_TYPE_SERVER)
+				mutex_unlock(&info->socket_info_mutex);
 			break;
 		}
 
@@ -1069,11 +1176,17 @@ static int diag_socket_read(void *ctxt, unsigned char *buf, int buf_len)
 
 		read_len = kernel_recvmsg(info->hdl, &read_msg, &iov, 1,
 					  pkt_len, 0);
+		if (info->port_type != PORT_TYPE_SERVER)
+			mutex_unlock(&info->socket_info_mutex);
 		if (read_len <= 0)
 			goto fail;
 
-		if (!atomic_read(&info->opened) &&
-		    info->port_type == PORT_TYPE_SERVER) {
+		if (info->type == TYPE_CNTL) {
+			memcpy(&info->remote_addr, &src_addr, sizeof(src_addr));
+			if (!atomic_read(&info->opened))
+				__socket_open_channel(info);
+		} else if (!atomic_read(&info->opened) &&
+			info->port_type == PORT_TYPE_SERVER) {
 			/*
 			 * This is the first packet from the client. Copy its
 			 * address to the connection object. Consider this
@@ -1122,7 +1235,7 @@ fail:
 	mutex_lock(&driver->diagfwd_channel_mutex[info->peripheral]);
 	diagfwd_channel_read_done(info->fwd_ctxt, buf, 0);
 	mutex_unlock(&driver->diagfwd_channel_mutex[info->peripheral]);
-	return -EIO;
+	return 0;
 }
 
 static int diag_socket_write(void *ctxt, unsigned char *buf, int len)
@@ -1145,7 +1258,16 @@ static int diag_socket_write(void *ctxt, unsigned char *buf, int len)
 	write_msg.msg_name = &info->remote_addr;
 	write_msg.msg_namelen = sizeof(info->remote_addr);
 	write_msg.msg_flags |= MSG_DONTWAIT;
+	if (info->port_type != PORT_TYPE_SERVER) {
+		mutex_lock(&info->socket_info_mutex);
+		if (!info->hdl) {
+			mutex_unlock(&info->socket_info_mutex);
+			return -ENODEV;
+		}
+	}
 	write_len = kernel_sendmsg(info->hdl, &write_msg, &iov, 1, len);
+	if (info->port_type != PORT_TYPE_SERVER)
+		mutex_unlock(&info->socket_info_mutex);
 	if (write_len < 0) {
 		err = write_len;
 		/*

@@ -1,4 +1,4 @@
-Qualcomm IPC Router SMD Transport
+Qualcomm Technologies, Inc. IPC Router SMD Transport
 
 Required properties:
 -compatible:		should be "qcom,ipc_router_smd_xprt"

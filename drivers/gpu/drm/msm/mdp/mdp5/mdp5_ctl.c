@@ -60,9 +60,6 @@ struct mdp5_ctl {
 
 	bool cursor_on;
 
-	/* cursor id assigned to this control path */
-	u32 cursor_id;
-
 	/* True if the current CTL has FLUSH bits pending for single FLUSH. */
 	bool flush_pending;
 
@@ -121,31 +118,31 @@ static void set_display_intf(struct mdp5_kms *mdp5_kms,
 	u32 intf_sel;
 
 	spin_lock_irqsave(&mdp5_kms->resource_lock, flags);
-	intf_sel = mdp5_read(mdp5_kms, REG_MDP5_MDP_DISP_INTF_SEL(0));
+	intf_sel = mdp5_read(mdp5_kms, REG_MDP5_DISP_INTF_SEL);
 
 	switch (intf->num) {
 	case 0:
-		intf_sel &= ~MDP5_MDP_DISP_INTF_SEL_INTF0__MASK;
-		intf_sel |= MDP5_MDP_DISP_INTF_SEL_INTF0(intf->type);
+		intf_sel &= ~MDP5_DISP_INTF_SEL_INTF0__MASK;
+		intf_sel |= MDP5_DISP_INTF_SEL_INTF0(intf->type);
 		break;
 	case 1:
-		intf_sel &= ~MDP5_MDP_DISP_INTF_SEL_INTF1__MASK;
-		intf_sel |= MDP5_MDP_DISP_INTF_SEL_INTF1(intf->type);
+		intf_sel &= ~MDP5_DISP_INTF_SEL_INTF1__MASK;
+		intf_sel |= MDP5_DISP_INTF_SEL_INTF1(intf->type);
 		break;
 	case 2:
-		intf_sel &= ~MDP5_MDP_DISP_INTF_SEL_INTF2__MASK;
-		intf_sel |= MDP5_MDP_DISP_INTF_SEL_INTF2(intf->type);
+		intf_sel &= ~MDP5_DISP_INTF_SEL_INTF2__MASK;
+		intf_sel |= MDP5_DISP_INTF_SEL_INTF2(intf->type);
 		break;
 	case 3:
-		intf_sel &= ~MDP5_MDP_DISP_INTF_SEL_INTF3__MASK;
-		intf_sel |= MDP5_MDP_DISP_INTF_SEL_INTF3(intf->type);
+		intf_sel &= ~MDP5_DISP_INTF_SEL_INTF3__MASK;
+		intf_sel |= MDP5_DISP_INTF_SEL_INTF3(intf->type);
 		break;
 	default:
 		BUG();
 		break;
 	}
 
-	mdp5_write(mdp5_kms, REG_MDP5_MDP_DISP_INTF_SEL(0), intf_sel);
+	mdp5_write(mdp5_kms, REG_MDP5_DISP_INTF_SEL, intf_sel);
 	spin_unlock_irqrestore(&mdp5_kms->resource_lock, flags);
 }
 
@@ -223,24 +220,6 @@ static bool start_signal_needed(struct mdp5_ctl *ctl)
 	}
 }
 
-static u32 cursor_blend_mask(int cursor_id)
-{
-	switch (cursor_id) {
-	case 0: return MDP5_CTL_LAYER_EXT_REG_CURSOR0__MASK;
-	case 1: return MDP5_CTL_LAYER_EXT_REG_CURSOR1__MASK;
-	default: return 0;
-	}
-}
-
-static u32 cursor_blend_value(int cursor_id, enum mdp_mixer_stage_id val)
-{
-	switch (cursor_id) {
-	case 0: return MDP5_CTL_LAYER_EXT_REG_CURSOR0(val);
-	case 1: return MDP5_CTL_LAYER_EXT_REG_CURSOR1(val);
-	default: return 0;
-	}
-}
-
 /*
  * send_start_signal() - Overlay Processor Start Signal
  *
@@ -305,7 +284,7 @@ int mdp5_ctl_set_cursor(struct mdp5_ctl *ctl, int cursor_id, bool enable)
 {
 	struct mdp5_ctl_manager *ctl_mgr = ctl->ctlm;
 	unsigned long flags;
-	u32 blend_ext_cfg;
+	u32 blend_cfg;
 	int lm = ctl->lm;
 
 	if (unlikely(WARN_ON(lm < 0))) {
@@ -316,26 +295,19 @@ int mdp5_ctl_set_cursor(struct mdp5_ctl *ctl, int cursor_id, bool enable)
 
 	spin_lock_irqsave(&ctl->hw_lock, flags);
 
-	blend_ext_cfg = ctl_read(ctl, REG_MDP5_CTL_LAYER_EXT_REG(ctl->id, lm));
+	blend_cfg = ctl_read(ctl, REG_MDP5_CTL_LAYER_REG(ctl->id, lm));
 
-	/*
-	 * For now, just use toppest stage FG for cursor layer, need to report
-	 * this information back to pipe list and make usre blend strategy is
-	 * aware of this and don't reuse this stage for other pipe's blending.
-	 */
 	if (enable)
-		blend_ext_cfg |= cursor_blend_value(cursor_id, STAGE6);
+		blend_cfg |=  MDP5_CTL_LAYER_REG_CURSOR_OUT;
 	else
-		blend_ext_cfg &= ~(cursor_blend_mask(cursor_id));
+		blend_cfg &= ~MDP5_CTL_LAYER_REG_CURSOR_OUT;
 
-	ctl_write(ctl, REG_MDP5_CTL_LAYER_EXT_REG(ctl->id, lm), blend_ext_cfg);
+	ctl_write(ctl, REG_MDP5_CTL_LAYER_REG(ctl->id, lm), blend_cfg);
 	ctl->cursor_on = enable;
-	ctl->cursor_id = cursor_id;
 
 	spin_unlock_irqrestore(&ctl->hw_lock, flags);
 
-	ctl->pending_ctl_trigger = (mdp_ctl_flush_mask_cursor(cursor_id)|
-					mdp_ctl_flush_mask_lm(ctl->lm));
+	ctl->pending_ctl_trigger = mdp_ctl_flush_mask_cursor(cursor_id);
 
 	return 0;
 }
@@ -375,8 +347,6 @@ static u32 mdp_ctl_blend_ext_mask(enum mdp5_pipe pipe,
 	case SSPP_DMA1: return MDP5_CTL_LAYER_EXT_REG_DMA1_BIT3;
 	case SSPP_VIG3: return MDP5_CTL_LAYER_EXT_REG_VIG3_BIT3;
 	case SSPP_RGB3: return MDP5_CTL_LAYER_EXT_REG_RGB3_BIT3;
-	case SSPP_CURSOR0: return MDP5_CTL_LAYER_EXT_REG_CURSOR0__MASK;
-	case SSPP_CURSOR1: return MDP5_CTL_LAYER_EXT_REG_CURSOR1__MASK;
 	default:	return 0;
 	}
 }
@@ -402,7 +372,7 @@ int mdp5_ctl_blend(struct mdp5_ctl *ctl, u8 *stage, u32 stage_cnt,
 
 	spin_lock_irqsave(&ctl->hw_lock, flags);
 	if (ctl->cursor_on)
-		blend_ext_cfg |= cursor_blend_value(ctl->cursor_id, STAGE6);
+		blend_cfg |=  MDP5_CTL_LAYER_REG_CURSOR_OUT;
 
 	ctl_write(ctl, REG_MDP5_CTL_LAYER_REG(ctl->id, ctl->lm), blend_cfg);
 	ctl_write(ctl, REG_MDP5_CTL_LAYER_EXT_REG(ctl->id, ctl->lm), blend_ext_cfg);
@@ -587,7 +557,7 @@ int mdp5_ctl_pair(struct mdp5_ctl *ctlx, struct mdp5_ctl *ctly, bool enable)
 	if (!enable) {
 		ctlx->pair = NULL;
 		ctly->pair = NULL;
-		mdp5_write(mdp5_kms, REG_MDP5_MDP_SPARE_0(0), 0);
+		mdp5_write(mdp5_kms, REG_MDP5_SPARE_0, 0);
 		return 0;
 	} else if ((ctlx->pair != NULL) || (ctly->pair != NULL)) {
 		dev_err(ctl_mgr->dev->dev, "CTLs already paired\n");
@@ -600,8 +570,8 @@ int mdp5_ctl_pair(struct mdp5_ctl *ctlx, struct mdp5_ctl *ctly, bool enable)
 	ctlx->pair = ctly;
 	ctly->pair = ctlx;
 
-	mdp5_write(mdp5_kms, REG_MDP5_MDP_SPARE_0(0),
-		MDP5_MDP_SPARE_0_SPLIT_DPL_SINGLE_FLUSH_EN);
+	mdp5_write(mdp5_kms, REG_MDP5_SPARE_0,
+		   MDP5_SPARE_0_SPLIT_DPL_SINGLE_FLUSH_EN);
 
 	return 0;
 }

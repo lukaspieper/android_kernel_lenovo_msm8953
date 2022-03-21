@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -53,9 +53,9 @@ static int sharedmem_mmap(struct uio_info *info, struct vm_area_struct *vma)
 	mem = info->mem + mem_index;
 
 	if (vma->vm_end - vma->vm_start > mem->size) {
-		pr_err("vm_end[%lu] - vm_start[%lu] [%lu] > mem->size[%lu]\n",
+		pr_err("vm_end[%lu] - vm_start[%lu] [%lu] > mem->size[%pa]\n",
 			vma->vm_end, vma->vm_start,
-			(vma->vm_end - vma->vm_start), mem->size);
+			(vma->vm_end - vma->vm_start), &mem->size);
 		return -EINVAL;
 	}
 	pr_debug("Attempting to setup mmap.\n");
@@ -83,7 +83,7 @@ static void setup_shared_ram_perms(u32 client_id, phys_addr_t addr, u32 size)
 	int ret;
 	u32 source_vmlist[1] = {VMID_HLOS};
 	int dest_vmids[2] = {VMID_HLOS, VMID_MSS_MSA};
-	int dest_perms[2] = {PERM_READ|PERM_WRITE ,
+	int dest_perms[2] = {PERM_READ|PERM_WRITE,
 			     PERM_READ|PERM_WRITE};
 
 	if (client_id != MPSS_RMTS_CLIENT_ID)
@@ -92,7 +92,7 @@ static void setup_shared_ram_perms(u32 client_id, phys_addr_t addr, u32 size)
 	ret = hyp_assign_phys(addr, size, source_vmlist, 1, dest_vmids,
 				dest_perms, 2);
 	if (ret != 0) {
-		if (ret == -ENOSYS)
+		if (ret == -EINVAL)
 			pr_warn("hyp_assign_phys is not supported!");
 		else
 			pr_err("hyp_assign_phys failed IPA=0x016%pa size=%u err=%d\n",
@@ -107,10 +107,12 @@ static int msm_sharedmem_probe(struct platform_device *pdev)
 	struct resource *clnt_res = NULL;
 	u32 client_id = ((u32)~0U);
 	u32 shared_mem_size = 0;
+	u32 shared_mem_tot_sz = 0;
 	void *shared_mem = NULL;
 	phys_addr_t shared_mem_pyhsical = 0;
 	bool is_addr_dynamic = false;
 	struct sharemem_qmi_entry qmi_entry;
+	bool guard_memory = false;
 
 	/* Get the addresses from platform-data */
 	if (!pdev->dev.of_node) {
@@ -145,13 +147,30 @@ static int msm_sharedmem_probe(struct platform_device *pdev)
 
 	if (shared_mem_pyhsical == 0) {
 		is_addr_dynamic = true;
-		shared_mem = dma_alloc_coherent(&pdev->dev, shared_mem_size,
+
+		/*
+		 * If guard_memory is set, then the shared memory region
+		 * will be guarded by SZ_4K at the start and at the end.
+		 * This is needed to overcome the XPU limitation on few
+		 * MSM HW, so as to make this memory not contiguous with
+		 * other allocations that may possibly happen from other
+		 * clients in the system.
+		 */
+		guard_memory = of_property_read_bool(pdev->dev.of_node,
+				"qcom,guard-memory");
+
+		shared_mem_tot_sz = guard_memory ? shared_mem_size + SZ_8K :
+					shared_mem_size;
+
+		shared_mem = dma_alloc_coherent(&pdev->dev, shared_mem_tot_sz,
 					&shared_mem_pyhsical, GFP_KERNEL);
 		if (shared_mem == NULL) {
 			pr_err("Shared mem alloc client=%s, size=%u\n",
 				clnt_res->name, shared_mem_size);
 			return -ENOMEM;
 		}
+		if (guard_memory)
+			shared_mem_pyhsical += SZ_4K;
 	}
 
 	/* Set up the permissions for the shared ram that was allocated. */
@@ -193,7 +212,7 @@ static int msm_sharedmem_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msm_sharedmem_of_match[] = {
+static const struct of_device_id msm_sharedmem_of_match[] = {
 	{.compatible = "qcom,sharedmem-uio",},
 	{},
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, 2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -42,6 +42,7 @@ static int regulator_stub_set_voltage(struct regulator_dev *rdev, int min_uV,
 				  int max_uV, unsigned *selector)
 {
 	struct regulator_stub *vreg_priv = rdev_get_drvdata(rdev);
+
 	vreg_priv->voltage = min_uV;
 	return 0;
 }
@@ -49,6 +50,7 @@ static int regulator_stub_set_voltage(struct regulator_dev *rdev, int min_uV,
 static int regulator_stub_get_voltage(struct regulator_dev *rdev)
 {
 	struct regulator_stub *vreg_priv = rdev_get_drvdata(rdev);
+
 	return vreg_priv->voltage;
 }
 
@@ -68,6 +70,7 @@ static int regulator_stub_list_voltage(struct regulator_dev *rdev,
 static unsigned int regulator_stub_get_mode(struct regulator_dev *rdev)
 {
 	struct regulator_stub *vreg_priv = rdev_get_drvdata(rdev);
+
 	return vreg_priv->mode;
 }
 
@@ -102,6 +105,7 @@ static unsigned int regulator_stub_get_optimum_mode(struct regulator_dev *rdev,
 static int regulator_stub_enable(struct regulator_dev *rdev)
 {
 	struct regulator_stub *vreg_priv = rdev_get_drvdata(rdev);
+
 	vreg_priv->enabled = true;
 	return 0;
 }
@@ -109,6 +113,7 @@ static int regulator_stub_enable(struct regulator_dev *rdev)
 static int regulator_stub_disable(struct regulator_dev *rdev)
 {
 	struct regulator_stub *vreg_priv = rdev_get_drvdata(rdev);
+
 	vreg_priv->enabled = false;
 	return 0;
 }
@@ -116,6 +121,7 @@ static int regulator_stub_disable(struct regulator_dev *rdev)
 static int regulator_stub_is_enabled(struct regulator_dev *rdev)
 {
 	struct regulator_stub *vreg_priv = rdev_get_drvdata(rdev);
+
 	return vreg_priv->enabled;
 }
 
@@ -150,16 +156,13 @@ static int regulator_stub_probe(struct platform_device *pdev)
 	int rc;
 
 	vreg_priv = kzalloc(sizeof(*vreg_priv), GFP_KERNEL);
-	if (!vreg_priv) {
-		dev_err(dev, "%s: Unable to allocate memory\n",
-				__func__);
+	if (!vreg_priv)
 		return -ENOMEM;
-	}
 
 	if (dev->of_node) {
 		/* Use device tree. */
-		init_data = of_get_regulator_init_data(dev,
-						       dev->of_node);
+		init_data = of_get_regulator_init_data(dev, dev->of_node,
+							&vreg_priv->rdesc);
 		if (!init_data) {
 			dev_err(dev, "%s: unable to allocate memory\n",
 					__func__);
@@ -264,7 +267,7 @@ static int regulator_stub_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id regulator_stub_match_table[] = {
+static const struct of_device_id regulator_stub_match_table[] = {
 	{ .compatible = "qcom," STUB_REGULATOR_DRIVER_NAME, },
 	{}
 };
@@ -285,12 +288,13 @@ int __init regulator_stub_init(void)
 
 	if (registered)
 		return 0;
-	else
-		registered = 1;
+
+	registered = 1;
+
 	return platform_driver_register(&regulator_stub_driver);
 }
-postcore_initcall(regulator_stub_init);
 EXPORT_SYMBOL(regulator_stub_init);
+postcore_initcall(regulator_stub_init);
 
 static void __exit regulator_stub_exit(void)
 {
@@ -300,5 +304,4 @@ module_exit(regulator_stub_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("stub regulator driver");
-MODULE_VERSION("1.0");
 MODULE_ALIAS("platform: " STUB_REGULATOR_DRIVER_NAME);

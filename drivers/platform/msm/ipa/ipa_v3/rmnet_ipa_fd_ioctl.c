@@ -47,6 +47,12 @@
 #define WAN_IOC_QUERY_DL_FILTER_STATS32 _IOWR(WAN_IOC_MAGIC, \
 		WAN_IOCTL_QUERY_DL_FILTER_STATS, \
 		compat_uptr_t)
+#define WAN_IOC_QUERY_TETHER_STATS_ALL32 _IOWR(WAN_IOC_MAGIC, \
+		WAN_IOCTL_QUERY_TETHER_STATS_ALL, \
+		compat_uptr_t)
+#define WAN_IOC_NOTIFY_WAN_STATE32 _IOWR(WAN_IOC_MAGIC, \
+		WAN_IOCTL_NOTIFY_WAN_STATE, \
+		compat_uptr_t)
 #define WAN_IOCTL_ENABLE_PER_CLIENT_STATS32 _IOWR(WAN_IOC_MAGIC, \
 			WAN_IOCTL_ENABLE_PER_CLIENT_STATS, \
 			compat_uptr_t)
@@ -56,9 +62,6 @@
 #define WAN_IOCTL_SET_LAN_CLIENT_INFO32 _IOWR(WAN_IOC_MAGIC, \
 			WAN_IOCTL_SET_LAN_CLIENT_INFO, \
 			compat_uptr_t)
-#define WAN_IOC_QUERY_TETHER_STATS_ALL32 _IOWR(WAN_IOC_MAGIC, \
-		WAN_IOCTL_QUERY_TETHER_STATS_ALL, \
-		compat_uptr_t)
 #endif
 
 static unsigned int dev_num = 1;
@@ -143,7 +146,7 @@ static long ipa3_wan_ioctl(struct file *filp,
 		}
 		break;
 
-		case WAN_IOC_ADD_UL_FLT_RULE:
+	case WAN_IOC_ADD_UL_FLT_RULE:
 		IPAWANDBG("device %s got WAN_IOC_UL_ADD_FLT_RULE :>>>\n",
 		DRIVER_NAME);
 		pyld_sz =
@@ -153,7 +156,7 @@ static long ipa3_wan_ioctl(struct file *filp,
 			retval = -ENOMEM;
 			break;
 		}
-		if (copy_from_user(param, (u8 *)arg, pyld_sz)) {
+		if (copy_from_user(param, (const void __user *)arg, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -164,7 +167,7 @@ static long ipa3_wan_ioctl(struct file *filp,
 			retval = -EFAULT;
 			break;
 		}
-		if (copy_to_user((u8 *)arg, param, pyld_sz)) {
+		if (copy_to_user((void __user *)arg, param, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -233,7 +236,7 @@ static long ipa3_wan_ioctl(struct file *filp,
 		}
 		if (rmnet_ipa3_poll_tethering_stats(
 		(struct wan_ioctl_poll_tethering_stats *)param)) {
-			IPAWANERR("WAN_IOCTL_POLL_TETHERING_STATS failed\n");
+			IPAWANERR_RL("WAN_IOCTL_POLL_TETHERING_STATS failed\n");
 			retval = -EFAULT;
 			break;
 		}
@@ -325,10 +328,11 @@ static long ipa3_wan_ioctl(struct file *filp,
 			retval = -ENOMEM;
 			break;
 		}
-		if (copy_from_user(param, (const void __user *)arg, pyld_sz)) {
+		if (copy_from_user(param, (u8 __user *)arg, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
+
 		if (rmnet_ipa3_query_tethering_stats_all(
 			(struct wan_ioctl_query_tether_stats_all *)param)) {
 			IPAWANERR("WAN_IOC_QUERY_TETHER_STATS failed\n");
@@ -356,13 +360,36 @@ static long ipa3_wan_ioctl(struct file *filp,
 			break;
 		}
 
-		if (rmnet_ipa3_query_tethering_stats(NULL, true)) {
-			IPAWANERR("WAN_IOC_QUERY_TETHER_STATS failed\n");
+		if (rmnet_ipa3_reset_tethering_stats(
+				(struct wan_ioctl_reset_tether_stats *)param)) {
+			IPAWANERR("WAN_IOC_RESET_TETHER_STATS failed\n");
 			retval = -EFAULT;
 			break;
 		}
 		break;
 
+	case WAN_IOC_NOTIFY_WAN_STATE:
+		IPAWANDBG_LOW("device %s got WAN_IOC_NOTIFY_WAN_STATE :>>>\n",
+			DRIVER_NAME);
+		pyld_sz = sizeof(struct wan_ioctl_notify_wan_state);
+		param = kzalloc(pyld_sz, GFP_KERNEL);
+		if (!param) {
+			retval = -ENOMEM;
+			break;
+		}
+		if (copy_from_user(param, (u8 __user *)arg, pyld_sz)) {
+			retval = -EFAULT;
+			break;
+		}
+
+		if (ipa3_wwan_set_modem_state(
+			(struct wan_ioctl_notify_wan_state *)param)) {
+			IPAWANERR("WAN_IOC_NOTIFY_WAN_STATE failed\n");
+			retval = -EFAULT;
+			break;
+		}
+
+		break;
 	case WAN_IOC_ENABLE_PER_CLIENT_STATS:
 		IPAWANDBG_LOW("got WAN_IOC_ENABLE_PER_CLIENT_STATS :>>>\n");
 		pyld_sz = sizeof(bool);
@@ -371,20 +398,17 @@ static long ipa3_wan_ioctl(struct file *filp,
 			retval = -ENOMEM;
 			break;
 		}
-		if (copy_from_user(param, (u8 *)arg, pyld_sz)) {
+		if (copy_from_user(param, (const void __user *)arg, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
-
 		if (rmnet_ipa3_enable_per_client_stats(
 			(bool *)param)) {
 			IPAWANERR("WAN_IOC_ENABLE_PER_CLIENT_STATS failed\n");
 			retval = -EFAULT;
 			break;
 		}
-
 		break;
-
 	case WAN_IOC_QUERY_PER_CLIENT_STATS:
 		IPAWANDBG_LOW("got WAN_IOC_QUERY_PER_CLIENT_STATS :>>>\n");
 		pyld_sz = sizeof(struct wan_ioctl_query_per_client_stats);
@@ -393,7 +417,7 @@ static long ipa3_wan_ioctl(struct file *filp,
 			retval = -ENOMEM;
 			break;
 		}
-		if (copy_from_user(param, (u8 *)arg, pyld_sz)) {
+		if (copy_from_user(param, (const void __user *)arg, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -405,7 +429,7 @@ static long ipa3_wan_ioctl(struct file *filp,
 			break;
 		}
 
-		if (copy_to_user((u8 *)arg, param, pyld_sz)) {
+		if (copy_to_user((void __user *)arg, param, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -419,7 +443,7 @@ static long ipa3_wan_ioctl(struct file *filp,
 			retval = -ENOMEM;
 			break;
 		}
-		if (copy_from_user(param, (u8 *)arg, pyld_sz)) {
+		if (copy_from_user(param, (const void __user *)arg, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -439,7 +463,7 @@ static long ipa3_wan_ioctl(struct file *filp,
 			retval = -ENOMEM;
 			break;
 		}
-		if (copy_from_user(param, (u8 *)arg, pyld_sz)) {
+		if (copy_from_user(param, (const void __user *)arg, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -460,7 +484,7 @@ static long ipa3_wan_ioctl(struct file *filp,
 			retval = -ENOMEM;
 			break;
 		}
-		if (copy_from_user(param, (u8 *)arg, pyld_sz)) {
+		if (copy_from_user(param, (const void __user *)arg, pyld_sz)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -472,7 +496,6 @@ static long ipa3_wan_ioctl(struct file *filp,
 			break;
 		}
 		break;
-
 
 	default:
 		retval = -ENOTTY;

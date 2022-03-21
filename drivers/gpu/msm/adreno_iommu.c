@@ -1,4 +1,4 @@
-/* Copyright (c) 2002,2007-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2002,2007-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -68,9 +68,10 @@ static unsigned int  _iommu_lock(struct adreno_device *adreno_dev,
 	/*
 	 * If we don't have this register, probe should have forced
 	 * global pagetables and we shouldn't get here.
-	 * BUG() so we don't debug a bad register write.
 	 */
-	BUG_ON(iommu->micro_mmu_ctrl == UINT_MAX);
+	if (WARN_ONCE(iommu->micro_mmu_ctrl == UINT_MAX,
+		"invalid GPU IOMMU lock sequence\n"))
+		return 0;
 
 	/*
 	 * glue commands together until next
@@ -103,7 +104,13 @@ static unsigned int _iommu_unlock(struct adreno_device *adreno_dev,
 	struct kgsl_iommu *iommu = KGSL_IOMMU_PRIV(device);
 	unsigned int *start = cmds;
 
-	BUG_ON(iommu->micro_mmu_ctrl == UINT_MAX);
+	/*
+	 * If we don't have this register, probe should have forced
+	 * global pagetables and we shouldn't get here.
+	 */
+	if (WARN_ONCE(iommu->micro_mmu_ctrl == UINT_MAX,
+		"invalid GPU IOMMU unlock sequence\n"))
+		return 0;
 
 	/* unlock the IOMMU lock */
 	*cmds++ = cp_packet(adreno_dev, CP_REG_RMW, 3);
@@ -139,7 +146,7 @@ static unsigned int _vbif_lock(struct adreno_device *adreno_dev,
 	/* OR to set the HALT bit */
 	*cmds++ = 0x1;
 
-	/* Wait for acknowledgement */
+	/* Wait for acknowledgment */
 	cmds += _wait_reg(adreno_dev, cmds,
 			A3XX_VBIF_DDR_OUTPUT_RECOVERABLE_HALT_CTRL1,
 			1, 0xFFFFFFFF, 0xF);
@@ -178,6 +185,7 @@ static unsigned int _cp_smmu_reg(struct adreno_device *adreno_dev,
 	offset = kgsl_mmu_get_reg_ahbaddr(KGSL_MMU(adreno_dev),
 					  KGSL_IOMMU_CONTEXT_USER, reg) >> 2;
 
+	/* Required for a3x, a4x, a5x families */
 	if (adreno_is_a5xx(adreno_dev) || iommu->version == 1) {
 		*cmds++ = cp_register(adreno_dev, offset, num);
 	} else if (adreno_is_a3xx(adreno_dev)) {
@@ -186,8 +194,6 @@ static unsigned int _cp_smmu_reg(struct adreno_device *adreno_dev,
 	} else if (adreno_is_a4xx(adreno_dev)) {
 		*cmds++ = cp_packet(adreno_dev, CP_WIDE_REG_WRITE, num + 1);
 		*cmds++ = offset;
-	} else  {
-		BUG();
 	}
 	return cmds - start;
 }
@@ -255,7 +261,7 @@ static void _invalidate_uche_cpu(struct adreno_device *adreno_dev)
 			ADRENO_REG_UCHE_INVALIDATE1,
 			0x90000000);
 	} else {
-		BUG();
+		WARN_ONCE(1, "GPU UCHE invalidate sequence not defined\n");
 	}
 }
 
@@ -330,7 +336,8 @@ static inline int _adreno_iommu_add_idle_indirect_cmds(
 	 * Adding an indirect buffer ensures that the prefetch stalls until
 	 * the commands in indirect buffer have completed. We need to stall
 	 * prefetch with a nop indirect buffer when updating pagetables
-	 * because it provides stabler synchronization */
+	 * because it provides stabler synchronization.
+	 */
 	cmds += cp_wait_for_me(adreno_dev, cmds);
 	*cmds++ = cp_mem_packet(adreno_dev, CP_INDIRECT_BUFFER_PFE, 2, 1);
 	cmds += cp_gpuaddr(adreno_dev, cmds, nop_gpuaddr);
@@ -567,6 +574,40 @@ static unsigned int _adreno_iommu_set_pt_v2_a5xx(struct kgsl_device *device,
 	return cmds - cmds_orig;
 }
 
+static unsigned int _adreno_iommu_set_pt_v2_a6xx(struct kgsl_device *device,
+					unsigned int *cmds_orig,
+					u64 ttbr0, u32 contextidr,
+					struct adreno_ringbuffer *rb,
+					unsigned int cb_num)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	unsigned int *cmds = cmds_orig;
+
+	cmds += _adreno_iommu_add_idle_cmds(adreno_dev, cmds);
+	cmds += cp_wait_for_me(adreno_dev, cmds);
+
+	/* CP switches the pagetable and flushes the Caches */
+	*cmds++ = cp_packet(adreno_dev, CP_SMMU_TABLE_UPDATE, 4);
+	*cmds++ = lower_32_bits(ttbr0);
+	*cmds++ = upper_32_bits(ttbr0);
+	*cmds++ = contextidr;
+	*cmds++ = cb_num;
+
+	*cmds++ = cp_mem_packet(adreno_dev, CP_MEM_WRITE, 4, 1);
+	cmds += cp_gpuaddr(adreno_dev, cmds, (rb->pagetable_desc.gpuaddr +
+		PT_INFO_OFFSET(ttbr0)));
+	*cmds++ = lower_32_bits(ttbr0);
+	*cmds++ = upper_32_bits(ttbr0);
+	*cmds++ = contextidr;
+
+	/* release all commands with wait_for_me */
+	cmds += cp_wait_for_me(adreno_dev, cmds);
+
+	cmds += _adreno_iommu_add_idle_cmds(adreno_dev, cmds);
+
+	return cmds - cmds_orig;
+}
+
 /**
  * adreno_iommu_set_pt_generate_cmds() - Generate commands to change pagetable
  * @rb: The RB pointer in which these commaands are to be submitted
@@ -581,6 +622,7 @@ unsigned int adreno_iommu_set_pt_generate_cmds(
 	struct adreno_device *adreno_dev = ADRENO_RB_DEVICE(rb);
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	struct kgsl_iommu *iommu = KGSL_IOMMU_PRIV(device);
+	struct kgsl_iommu_context *ctx = &iommu->ctx[KGSL_IOMMU_CONTEXT_USER];
 	u64 ttbr0;
 	u32 contextidr;
 	unsigned int *cmds_orig = cmds;
@@ -594,7 +636,11 @@ unsigned int adreno_iommu_set_pt_generate_cmds(
 		iommu->setstate.gpuaddr + KGSL_IOMMU_SETSTATE_NOP_OFFSET);
 
 	if (iommu->version >= 2) {
-		if (adreno_is_a5xx(adreno_dev))
+		if (adreno_is_a6xx(adreno_dev))
+			cmds += _adreno_iommu_set_pt_v2_a6xx(device, cmds,
+						ttbr0, contextidr, rb,
+						ctx->cb_num);
+		else if (adreno_is_a5xx(adreno_dev))
 			cmds += _adreno_iommu_set_pt_v2_a5xx(device, cmds,
 						ttbr0, contextidr, rb);
 		else if (adreno_is_a4xx(adreno_dev))
@@ -604,7 +650,8 @@ unsigned int adreno_iommu_set_pt_generate_cmds(
 			cmds += _adreno_iommu_set_pt_v2_a3xx(device, cmds,
 						ttbr0, contextidr);
 		else
-			BUG(); /* new GPU family? */
+			WARN_ONCE(1,
+			"GPU IOMMU set pagetable sequence not defined\n");
 	} else {
 		cmds += _adreno_iommu_set_pt_v1(rb, cmds, ttbr0, contextidr,
 						pt->name);
@@ -650,7 +697,10 @@ static unsigned int __add_curr_ctxt_cmds(struct adreno_ringbuffer *rb,
 	*cmds++ = (drawctxt ? drawctxt->base.id : 0);
 
 	/* Invalidate UCHE for new context */
-	if (adreno_is_a5xx(adreno_dev)) {
+	if (adreno_is_a6xx(adreno_dev)) {
+		*cmds++ = cp_packet(adreno_dev, CP_EVENT_WRITE, 1);
+		*cmds++ = 0x31; /* CACHE_INVALIDATE */
+	} else if (adreno_is_a5xx(adreno_dev)) {
 		*cmds++ = cp_register(adreno_dev,
 			adreno_getreg(adreno_dev,
 		ADRENO_REG_UCHE_INVALIDATE0), 1);
@@ -668,7 +718,7 @@ static unsigned int __add_curr_ctxt_cmds(struct adreno_ringbuffer *rb,
 		*cmds++ = 0;
 		*cmds++ = 0x90000000;
 	} else
-		BUG();
+		WARN_ONCE(1, "GPU UCHE invalidate sequence not defined\n");
 
 	return cmds - cmds_orig;
 }
@@ -711,7 +761,7 @@ static int _set_ctxt_gpu(struct adreno_ringbuffer *rb,
 
 	cmds = &link[0];
 	cmds += __add_curr_ctxt_cmds(rb, cmds, drawctxt);
-	result = adreno_ringbuffer_issuecmds(rb, 0, link,
+	result = adreno_ringbuffer_issue_internal_cmds(rb, 0, link,
 			(unsigned int)(cmds - link));
 	return result;
 }
@@ -773,13 +823,18 @@ static int _set_pagetable_gpu(struct adreno_ringbuffer *rb,
 	if ((unsigned int) (cmds - link) > (PAGE_SIZE / sizeof(unsigned int))) {
 		KGSL_DRV_ERR(KGSL_DEVICE(adreno_dev),
 			"Temp command buffer overflow\n");
+
+		/*
+		 * Temp buffer not large enough for pagetable switch commands.
+		 * Increase the size allocated above.
+		 */
 		BUG();
 	}
 	/*
 	 * This returns the per context timestamp but we need to
 	 * use the global timestamp for iommu clock disablement
 	 */
-	result = adreno_ringbuffer_issuecmds(rb,
+	result = adreno_ringbuffer_issue_internal_cmds(rb,
 			KGSL_CMD_FLAGS_PMODE, link,
 			(unsigned int)(cmds - link));
 
@@ -859,7 +914,7 @@ int adreno_iommu_set_pt_ctx(struct adreno_ringbuffer *rb,
 	/* Just do the context switch incase of NOMMU */
 	if (kgsl_mmu_get_mmutype(device) == KGSL_MMU_TYPE_NONE) {
 		if ((!(flags & ADRENO_CONTEXT_SWITCH_FORCE_GPU)) &&
-			adreno_isidle(device))
+			adreno_isidle(device) && !adreno_is_a6xx(adreno_dev))
 			_set_ctxt_cpu(rb, drawctxt);
 		else
 			result = _set_ctxt_gpu(rb, drawctxt);
@@ -885,7 +940,7 @@ int adreno_iommu_set_pt_ctx(struct adreno_ringbuffer *rb,
 		return result;
 
 	/* Context switch */
-	if (cpu_path)
+	if (cpu_path && !adreno_is_a6xx(adreno_dev))
 		_set_ctxt_cpu(rb, drawctxt);
 	else
 		result = _set_ctxt_gpu(rb, drawctxt);

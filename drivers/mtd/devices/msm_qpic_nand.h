@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -44,6 +44,7 @@
 #define PAGE_SIZE_4K 4096
 
 #undef WRITE /* To avoid redefinition in above header files */
+#undef READ /* To avoid redefinition in above header files */
 #define WRITE 1
 #define READ 0
 
@@ -296,6 +297,7 @@ struct msm_nand_clk_data {
 	uint32_t client_handle;
 	atomic_t clk_enabled;
 	atomic_t curr_vote;
+	bool rpmh_clk;
 };
 
 struct msm_nand_perf_stats {
@@ -341,7 +343,6 @@ struct msm_nand_info {
 	struct msm_nand_clk_data clk_data;
 	struct msm_nand_perf_stats perf;
 	u64 dma_mask;
-	struct work_struct	tout_work;
 };
 
 /* Structure that defines an ONFI parameter page (512B) */
@@ -412,9 +413,7 @@ struct flash_partition_table {
 	struct flash_partition_entry part_entry[FLASH_PTABLE_MAX_PARTS_V4];
 };
 
-#ifdef CONFIG_MSM_SMD
 static struct flash_partition_table ptable;
-#endif
 
 static struct mtd_partition mtd_part[FLASH_PTABLE_MAX_PARTS_V4];
 

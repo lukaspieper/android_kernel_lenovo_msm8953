@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015,2017 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,7 +10,6 @@
  * GNU General Public License for more details.
  *
  */
-#define pr_fmt(fmt) "COMPAT-QSEECOM: %s: " fmt, __func__
 
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
@@ -549,6 +548,7 @@ long compat_qseecom_ioctl(struct file *file,
 		unsigned int cmd, unsigned long arg)
 {
 	long ret;
+
 	switch (cmd) {
 
 	case COMPAT_QSEECOM_IOCTL_UNREGISTER_LISTENER_REQ:
@@ -920,4 +920,3 @@ long compat_qseecom_ioctl(struct file *file,
 	}
 	return 0;
 }
-

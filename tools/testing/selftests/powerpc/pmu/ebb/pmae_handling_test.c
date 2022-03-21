@@ -58,6 +58,8 @@ static int test_body(void)
 {
 	struct event event;
 
+	SKIP_IF(!ebb_is_supported());
+
 	event_init_named(&event, 0x1001e, "cycles");
 	event_leader_ebb_init(&event);
 
@@ -79,6 +81,8 @@ static int test_body(void)
 
 	ebb_global_disable();
 	ebb_freeze_pmcs();
+
+	count_pmc(1, sample_period);
 
 	dump_ebb_state();
 

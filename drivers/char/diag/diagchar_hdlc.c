@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2009, 2012-2014, The Linux Foundation.
+/* Copyright (c) 2008-2009, 2012-2014, 2016 The Linux Foundation.
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -43,124 +43,109 @@ void diag_hdlc_encode(struct diag_send_desc_type *src_desc,
 	enum diag_send_state_enum_type state;
 	unsigned int used = 0;
 
-	if (src_desc && enc) {
+	if (!src_desc || !enc)
+		return;
 
-		/* Copy parts to local variables. */
-		src = src_desc->pkt;
-		src_last = src_desc->last;
-		state = src_desc->state;
-		dest = enc->dest;
-		dest_last = enc->dest_last;
+	/* Copy parts to local variables. */
+	src = src_desc->pkt;
+	src_last = src_desc->last;
+	state = src_desc->state;
+	dest = enc->dest;
+	dest_last = enc->dest_last;
 
-		if (state == DIAG_STATE_START) {
-			crc = CRC_16_L_SEED;
-			state++;
-		} else {
-			/* Get a local copy of the CRC */
-			crc = enc->crc;
+	if (state == DIAG_STATE_START) {
+		crc = CRC_16_L_SEED;
+		state++;
+	} else {
+		/* Get a local copy of the CRC */
+		crc = enc->crc;
+	}
+
+	/* dest or dest_last may be NULL to trigger a
+	 * state transition only.
+	 */
+	if (dest && dest_last) {
+		/* This condition needs to include the possibility
+		 * of 2 dest bytes for an escaped byte
+		 */
+		while (src <= src_last && dest <= dest_last) {
+
+			src_byte = *src++;
+			if ((src_byte == CONTROL_CHAR) ||
+			    (src_byte == ESC_CHAR)) {
+				/* If the escape character is not the
+				 * last byte
+				 */
+				if (dest != dest_last) {
+					crc = CRC_16_L_STEP(crc, src_byte);
+					*dest++ = ESC_CHAR;
+					used++;
+					*dest++ = src_byte ^ ESC_MASK;
+					used++;
+				} else {
+					src--;
+					break;
+				}
+			} else {
+				crc = CRC_16_L_STEP(crc, src_byte);
+				*dest++ = src_byte;
+				used++;
+			}
 		}
 
-		/* dest or dest_last may be NULL to trigger a
-		   state transition only */
-		if (dest && dest_last) {
-			/* This condition needs to include the possibility
-			   of 2 dest bytes for an escaped byte */
-			while (src <= src_last && dest <= dest_last) {
+		if (src > src_last) {
+			if (state == DIAG_STATE_BUSY) {
+				if (src_desc->terminate) {
+					crc = ~crc;
+					state++;
+				} else {
+					/* Done with fragment */
+					state = DIAG_STATE_COMPLETE;
+				}
+			}
 
-				src_byte = *src++;
+			while (dest <= dest_last && state >= DIAG_STATE_CRC1
+					&& state < DIAG_STATE_TERM) {
+				/* Encode a byte of the CRC next */
+				src_byte = crc & 0xFF;
 
-				if ((src_byte == CONTROL_CHAR) ||
-				    (src_byte == ESC_CHAR)) {
+				if ((src_byte == CONTROL_CHAR)
+				    || (src_byte == ESC_CHAR)) {
 
-					/* If the escape character is not the
-					   last byte */
 					if (dest != dest_last) {
-						crc = CRC_16_L_STEP(crc,
-								    src_byte);
-
 						*dest++ = ESC_CHAR;
 						used++;
-
-						*dest++ = src_byte
-							  ^ ESC_MASK;
+						*dest++ = src_byte ^ ESC_MASK;
 						used++;
-					} else {
-
-						src--;
+						crc >>= 8;
+					} else
 						break;
-					}
-
 				} else {
-					crc = CRC_16_L_STEP(crc, src_byte);
+
+					crc >>= 8;
 					*dest++ = src_byte;
 					used++;
 				}
+				state++;
 			}
 
-			if (src > src_last) {
-
-				if (state == DIAG_STATE_BUSY) {
-					if (src_desc->terminate) {
-						crc = ~crc;
-						state++;
-					} else {
-						/* Done with fragment */
-						state = DIAG_STATE_COMPLETE;
-					}
-				}
-
-				while (dest <= dest_last &&
-				       state >= DIAG_STATE_CRC1 &&
-				       state < DIAG_STATE_TERM) {
-					/* Encode a byte of the CRC next */
-					src_byte = crc & 0xFF;
-
-					if ((src_byte == CONTROL_CHAR)
-					    || (src_byte == ESC_CHAR)) {
-
-						if (dest != dest_last) {
-
-							*dest++ = ESC_CHAR;
-							used++;
-							*dest++ = src_byte ^
-								  ESC_MASK;
-							used++;
-
-							crc >>= 8;
-						} else {
-
-							break;
-						}
-					} else {
-
-						crc >>= 8;
-						*dest++ = src_byte;
-						used++;
-					}
-
-					state++;
-				}
-
-				if (state == DIAG_STATE_TERM) {
-					if (dest_last >= dest) {
-						*dest++ = CONTROL_CHAR;
-						used++;
-						state++;	/* Complete */
-					}
+			if (state == DIAG_STATE_TERM) {
+				if (dest_last >= dest) {
+					*dest++ = CONTROL_CHAR;
+					used++;
+					state++;	/* Complete */
 				}
 			}
 		}
-		/* Copy local variables back into the encode structure. */
-
-		enc->dest = dest;
-		enc->dest_last = dest_last;
-		enc->crc = crc;
-		src_desc->pkt = src;
-		src_desc->last = src_last;
-		src_desc->state = state;
 	}
 
-	return;
+	/* Copy local variables back into the encode structure. */
+	enc->dest = dest;
+	enc->dest_last = dest_last;
+	enc->crc = crc;
+	src_desc->pkt = src;
+	src_desc->last = src_last;
+	src_desc->state = state;
 }
 
 
@@ -202,15 +187,14 @@ int diag_hdlc_decode(struct diag_hdlc_decode_type *hdlc)
 					hdlc->escaping = 1;
 					i++;
 					break;
-				} else {
-					dest_ptr[len++] = src_ptr[++i]
-							  ^ ESC_MASK;
 				}
+				dest_ptr[len++] = src_ptr[++i] ^ ESC_MASK;
 			} else if (src_byte == CONTROL_CHAR) {
 				if (msg_start && i == 0 && src_length > 1)
 					continue;
-				/* Byte 0x7E will be considered
-					as end of packet */
+				/* Byte 0x7E will be considered as end of
+				 * packet
+				 */
 				dest_ptr[len++] = src_byte;
 				i++;
 				pkt_bnd = HDLC_COMPLETE;

@@ -35,7 +35,7 @@ config ST_LSM6DS3_IIO_LIMIT_FIFO
 	help
 	  Limit atomic fifo read to #n byte. In some platform i2c/spi read
 	  can be limited by software or hardware.
-	  
+
 	  Set 0 to disable the limit.
 
 config ST_LSM6DS3_STEP_COUNTER_ON_DURING_SUSPEND

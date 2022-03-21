@@ -3045,7 +3045,8 @@ limAddStaSelf(tpAniSirGlobal pMac,tANI_U16 staIdx, tANI_U8 updateSta, tpPESessio
         {
             pAddStaParams->greenFieldCapable = limGetHTCapability( pMac, eHT_GREENFIELD, psessionEntry);
             pAddStaParams->txChannelWidthSet =
-                  pMac->roam.configParam.channelBondingMode5GHz;
+                  pMac->roam.configParam.channelBondingMode5GHz ^
+                  pMac->roam.configParam.channelBondingMode24GHz;
             // pAddStaParams->txChannelWidthSet = limGetHTCapability( pMac, eHT_SUPPORTED_CHANNEL_WIDTH_SET, psessionEntry);
             pAddStaParams->mimoPS             = limGetHTCapability( pMac, eHT_MIMO_POWER_SAVE, psessionEntry );
             pAddStaParams->rifsMode           = limGetHTCapability( pMac, eHT_RIFS_MODE, psessionEntry );
@@ -4164,8 +4165,7 @@ tSirRetStatus limStaSendAddBssPreAssoc( tpAniSirGlobal pMac, tANI_U8 updateEntry
 
     if(pMac->lim.gLimProtectionControl != WNI_CFG_FORCE_POLICY_PROTECTION_DISABLE)
         limDecideStaProtectionOnAssoc(pMac, pBeaconStruct, psessionEntry);
-
-    vos_mem_copy(pAddBssParams->bssId, bssDescription->bssId,
+        vos_mem_copy(pAddBssParams->bssId, bssDescription->bssId,
                      sizeof(tSirMacAddr));
 
     // Fill in tAddBssParams selfMacAddr
