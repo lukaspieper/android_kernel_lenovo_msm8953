@@ -1423,6 +1423,18 @@ config TOUCHSCREEN_GT9XX_v28
 
 source "drivers/input/touchscreen/gt9xx_v2.8/Kconfig"
 
+config TOUCHSCREEN_GT910P
+	bool "Goodix touchpanel GT9xx series"
+	depends on I2C
+	help
+	  Say Y here if you have a Goodix GT910P touchscreen.
+	  Gt9xx controllers are multi touch controllers which can
+	  report 5 touches at a time.
+
+          If unsure, say N.
+
+source "drivers/input/touchscreen/gt910P/Kconfig"
+
 config TOUCHSCREEN_HIMAX_CHIPSET
 	bool "Himax touchpanel CHIPSET"
 	depends on I2C

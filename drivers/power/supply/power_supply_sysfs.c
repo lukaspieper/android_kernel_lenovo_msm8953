@@ -18,7 +18,9 @@
 #include <linux/stat.h>
 
 #include "power_supply.h"
-
+#ifdef CONFIG_MACH_LENOVO_TBX704
+int g_chargerState = 0;
+#endif
 /*
  * This is because the name "current" breaks the device attr macro.
  * The "current" word resolves to "(get_current())" so instead of
@@ -469,6 +471,22 @@ int power_supply_uevent(struct device *dev, struct kobj_uevent_env *env)
 		}
 
 		ret = add_uevent_var(env, "POWER_SUPPLY_%s=%s", attrname, prop_buf);
+#ifdef CONFIG_MACH_LENOVO_TBX704
+                if(0==strcmp(attrname,"STATUS"))
+                   {
+                      //printk("psy====POWER_SUPPLY_%s=%s\n", attrname, prop_buf);
+                      if((0==strcmp(prop_buf,"Charging")) ||(0==strcmp(prop_buf,"Full")))
+                        {
+                           // printk("psy======charging!!!\n");
+                            g_chargerState =1;
+                        }
+                      else
+                      {
+                         // printk("psy======discharging!!!\n");
+                          g_chargerState =0;
+                        }
+                    }
+#endif
 		kfree(attrname);
 		if (ret)
 			goto out;

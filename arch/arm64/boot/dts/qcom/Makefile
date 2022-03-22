@@ -534,6 +534,8 @@ ifeq ($(CONFIG_MACH_LENOVO_MSM8953),y)
 dtb-$(CONFIG_MACH_LENOVO_KUNTAO) += \
 	msm8953-kuntao-p0.dtb \
 	msm8953-kuntao-p2b1.dtb
+dtb-$(CONFIG_MACH_LENOVO_TBX704) += \
+	tbx704-msm8953-qrd.dtb
 else
 dtb-$(CONFIG_ARCH_MSM8953) += msm8953-cdp.dtb \
 	msm8953-mtp.dtb \
