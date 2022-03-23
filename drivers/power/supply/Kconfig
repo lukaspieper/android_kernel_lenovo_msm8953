@@ -521,6 +521,13 @@ config NX30P6093
 	  usb_psy to disable CC detection on the event of any water/debris
 	  detected at USBIN.
 
+config COULO_METER
+	tristate "COULO_METER Battery"
+	depends on I2C
+	help
+	  Say Y to include support for Battery COULO_METER.
+	  COULO_METER is a meter of battery.
+
 source "drivers/power/supply/qcom/Kconfig"
 
 endif # POWER_SUPPLY
